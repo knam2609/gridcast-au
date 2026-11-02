@@ -31,15 +31,20 @@ class Settings(BaseSettings):
     )
     test_database_url: str | None = None
     config: Path = Path("configs/base.yaml")
+    data_root: Path | None = Field(
+        default=None,
+        description="Overrides paths.data_root, e.g. a directory on an external drive.",
+    )
     log_level: str = "INFO"
     log_format: Literal["console", "json"] = "console"
 
 
 class PathsConfig(BaseModel):
+    data_root: Path = Path("data")  # raw/interim/backtest dirs are relative to this
     raw_dir: Path
     interim_dir: Path
     backtest_dir: Path
-    reports_dir: Path
+    reports_dir: Path  # relative to the project root (reports are versioned)
 
 
 class NemConfig(BaseModel):
@@ -119,6 +124,25 @@ class AppConfig(BaseModel):
         """Resolve a config-relative path against the project root."""
         return path if path.is_absolute() else PROJECT_ROOT / path
 
+    def data_root(self) -> Path:
+        """Absolute data root. Created if it lives inside the project; otherwise it must
+        already exist (an unmounted external drive fails loudly instead of silently
+        writing somewhere else)."""
+        root = self.resolve(self.paths.data_root)
+        if not root.exists():
+            if root.is_relative_to(PROJECT_ROOT):
+                root.mkdir(parents=True, exist_ok=True)
+            else:
+                raise FileNotFoundError(
+                    f"Data root {root} does not exist. If it is on an external drive, "
+                    "mount the drive (or unset GRIDCAST_DATA_ROOT to use ./data)."
+                )
+        return root
+
+    def data_path(self, path: Path) -> Path:
+        """Resolve a data path (raw/interim/backtests) against the data root."""
+        return path if path.is_absolute() else self.data_root() / path
+
     def region(self, region_id: str) -> RegionConfig:
         try:
             return self.regions[region_id]
@@ -165,7 +189,11 @@ def load_config(path: Path | None = None) -> AppConfig:
     if not cfg_path.is_absolute():
         cfg_path = PROJECT_ROOT / cfg_path
     with cfg_path.open() as fh:
-        return AppConfig.model_validate(yaml.safe_load(fh))
+        cfg = AppConfig.model_validate(yaml.safe_load(fh))
+    override = get_settings().data_root
+    if override is not None:
+        cfg.paths.data_root = override.expanduser()
+    return cfg
 
 
 def load_market_limits(cfg: AppConfig) -> MarketLimits:

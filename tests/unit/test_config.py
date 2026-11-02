@@ -33,3 +33,41 @@ def test_market_limits_rejects_bad_fy_key() -> None:
         MarketLimits.model_validate(
             {"market_floor": -1000, "market_price_cap": {"2024-26": {"value": 1, "source": "x"}}}
         )
+
+
+@pytest.fixture
+def isolated_settings(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+    """Settings built from the process environment only (ignoring the local .env file)."""
+    from gridcast import config
+
+    monkeypatch.delenv("GRIDCAST_DATA_ROOT", raising=False)
+    monkeypatch.setattr(config, "get_settings", lambda: config.Settings(_env_file=None))
+    return monkeypatch
+
+
+def test_data_paths_default_to_project_data_dir(isolated_settings: pytest.MonkeyPatch) -> None:
+    from pathlib import Path
+
+    from gridcast.config import PROJECT_ROOT
+
+    cfg = load_config()
+    assert cfg.data_root() == PROJECT_ROOT / "data"
+    assert cfg.data_path(cfg.paths.raw_dir) == PROJECT_ROOT / "data" / "raw"
+    assert cfg.data_path(Path("/abs/elsewhere")) == Path("/abs/elsewhere")
+
+
+def test_data_root_env_override(isolated_settings: pytest.MonkeyPatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    isolated_settings.setenv("GRIDCAST_DATA_ROOT", str(tmp_path))
+    cfg = load_config()
+    assert cfg.data_root() == tmp_path
+    assert cfg.data_path(cfg.paths.backtest_dir) == tmp_path / "backtests"
+
+
+def test_missing_external_data_root_fails_loudly(
+    isolated_settings: pytest.MonkeyPatch, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
+    isolated_settings.setenv("GRIDCAST_DATA_ROOT", str(tmp_path / "unmounted-drive" / "data"))
+    cfg = load_config()
+    with pytest.raises(FileNotFoundError, match="mount the drive"):
+        cfg.data_root()
+    assert not (tmp_path / "unmounted-drive").exists()

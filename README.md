@@ -193,7 +193,7 @@ All figures below are from the generated [`reports/m1_baseline.md`](reports/m1_b
 
 ## Reproduction
 
-Requirements: Docker, [uv](https://docs.astral.sh/uv/), make. About 500 MB of AEMO downloads are cached in `data/` (gitignored).
+Requirements: Docker, [uv](https://docs.astral.sh/uv/), make. Downloads, interim files and backtest predictions (~1.4 GB) go under `data/` (gitignored). To keep them elsewhere, such as an external drive, set `GRIDCAST_DATA_ROOT` in `.env`. The directory must exist, and the pipeline refuses to run if the drive isn't mounted. PostgreSQL itself stays in a Docker volume, because Postgres needs a filesystem with Unix permissions (exFAT drives don't qualify).
 
 ```bash
 make setup          # uv sync; creates .env from .env.example (set a password)

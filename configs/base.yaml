@@ -3,10 +3,13 @@
 project: gridcast-au
 
 paths:
-  raw_dir: data/raw            # cached source downloads (gitignored)
-  interim_dir: data/interim    # parsed monthly parquet (gitignored)
-  backtest_dir: data/backtests # full backtest predictions (gitignored)
-  reports_dir: reports
+  # Large local data lives under data_root (default ./data, gitignored). Point it elsewhere,
+  # e.g. an external drive, with the GRIDCAST_DATA_ROOT environment variable.
+  data_root: data
+  raw_dir: raw                 # cached source downloads
+  interim_dir: interim         # parsed monthly parquet
+  backtest_dir: backtests      # full backtest predictions
+  reports_dir: reports         # project-relative; generated reports are versioned
 
 nem:
   # AEMO publishes all market timestamps in "NEM time" = AEST, a fixed UTC+10

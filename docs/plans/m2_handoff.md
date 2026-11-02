@@ -13,17 +13,18 @@ Written 2026-11-02 at the end of the M1 session. Read this, then [`m2_plan.md`](
 | Item | State |
 |---|---|
 | Python | uv 0.13 (Homebrew) + Python 3.12 managed by uv. Homebrew's default `python3` is 3.15; don't use it for the project |
-| Database | Docker container `gridcast-db` (PostgreSQL 17) on **localhost:5433**. Credentials are in `.env` (gitignored, randomly generated password). Alembic is at revision `0002` |
+| Database | Docker container `gridcast-db` (PostgreSQL 17) on **localhost:5433**, **stopped** at handoff (`make db-up` to start; the data persists in the `pgdata` Docker volume, ~117 MB). Credentials are in `.env` (gitignored, randomly generated password). Alembic is at revision `0002` |
 | Data loaded | VIC1, Oct 2021 → Sep 2026: 525,888 intervals, `calendar_days` 2021–2027, latest DQ run all pass/warn |
 | Latest backtests | demand batch `5836b22c-39cc-4eec-a46c-ee22dfbb7cc6`, price batch `07acd3a0-8b48-43b1-8d23-908ba23ac0c6` (clean commit `945bd40`) |
-| Disk | `data/raw` ~433 MB (AEMO cache), `data/interim` ~23 MB, `data/backtests` ~1.8 GB. **Superseded** batches `af1701c9…` (demand) and `2671dc29…` (price), from an earlier run with uncommitted changes, can be deleted to free ~0.9 GB; their `model_runs` rows remain |
+| Data files | **On the external BIWIN SSD** (exFAT, USB): `GRIDCAST_DATA_ROOT=/Volumes/BIWIN/gridcast-au/data` in `.env`, holding `raw/` (~433 MB AEMO cache), `interim/` and `backtests/` (~0.9 GB, current batches only; superseded batches deleted). **Mount the SSD before running the pipeline**, or it stops with a clear error. Local `./data` is empty. `model_runs.artifact_path` is stored relative to the data root |
 | Test database | `gridcast_test` on the same server, created automatically by integration tests |
 
 Sanity check before starting:
 
 ```bash
+ls /Volumes/BIWIN/gridcast-au/data         # SSD mounted?
 make db-up && uv run alembic current        # expect 0002 (head)
-make lint typecheck test test-integration   # 81 unit + 16 integration, all green at handoff
+make lint typecheck test test-integration   # 84 unit + 16 integration, all green at handoff
 ```
 
 ## First task next session: M2 step 0 (data-availability check)
@@ -42,6 +43,7 @@ Output: `docs/m2_data_spike.md`. Answer each question, then apply the fallback r
 - pandas 3 stores datetimes in **microseconds**. Never mix `asi8` with `Timedelta.value` (ns); use `(times - epoch) // INTERVAL`.
 - Pandas deprecation warnings fail the test suite on purpose.
 - Every number in the README or reports must come from generated reports (`gridcast report`), never be typed by hand.
+- The data root is on an exFAT drive. Avoid globbing data directories (macOS can create `._*` AppleDouble files on exFAT); the NEMWeb cache already uses `listing.json` instead of globs. New M2 caches (weather, pre-dispatch) should follow the same pattern.
 - Results that matter for M2 (development period, Nov 2021 → Sep 2025, from `reports/m1_baseline.md`):
   - **Demand:** persistence wins up to 1 h 35 min, then daily naive is best (pooled MAE 467.8 MW, MAPE 10.4%).
   - **Price:** the 28-day median profile is best beyond ~2.5 h (pooled MAE $62.9/MWh).

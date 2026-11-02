@@ -176,9 +176,11 @@ def backtest(
     metrics = evaluate(out, ctx, cfg.evaluation, holdout_start)
 
     batch_id = uuid.uuid4()
-    artifacts = (
-        save_parquet(out, cfg.resolve(cfg.paths.backtest_dir), batch_id) if save_predictions else {}
-    )
+    artifacts = {}
+    if save_predictions:
+        written = save_parquet(out, cfg.data_path(cfg.paths.backtest_dir), batch_id)
+        # Stored relative to the data root so the data can move without breaking references.
+        artifacts = {name: path.relative_to(cfg.data_root()) for name, path in written.items()}
     run_config = {
         "setup": {
             "issue_every_steps": setup.issue_every_steps,
