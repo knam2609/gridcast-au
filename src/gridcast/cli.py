@@ -132,5 +132,90 @@ def calendar(regions: RegionsOpt = None) -> None:
             )
 
 
+TARGET_COLUMNS = {"demand": "total_demand_mw", "price": "rrp_aud_mwh"}
+
+
+@app.command()
+def backtest(
+    target: Annotated[str, typer.Option(help="demand or price")] = "demand",
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    save_predictions: Annotated[
+        bool, typer.Option(help="Write full backtest predictions to parquet")
+    ] = True,
+) -> None:
+    """Walk-forward evaluation of the baseline models; results stored in PostgreSQL."""
+    import time
+    import uuid
+
+    from gridcast.database.engine import get_engine
+    from gridcast.database.queries import load_market_frame
+    from gridcast.evaluation.store import save_predictions as save_parquet
+    from gridcast.evaluation.store import store_backtest
+    from gridcast.features.calendar import load_calendar_days
+    from gridcast.forecasting.backtest import evaluate, run_backtest
+    from gridcast.forecasting.origins import ForecastSetup, build_context, nem_midnight_utc
+    from gridcast.models.baselines import default_baselines
+
+    if target not in TARGET_COLUMNS:
+        raise typer.BadParameter(f"target must be one of {sorted(TARGET_COLUMNS)}")
+    cfg = load_config()
+    region_cfg = cfg.region(region)
+    setup = ForecastSetup.from_config(cfg)
+    engine = get_engine()
+    t0 = time.perf_counter()
+
+    market = load_market_frame(engine, region)
+    with engine.connect() as conn:
+        calendar_days = load_calendar_days(conn, region_cfg.holiday_subdiv)
+    ctx = build_context(market, TARGET_COLUMNS[target], region_cfg.local_tz, calendar_days)
+
+    models = default_baselines(target, cfg.baselines.median_profile_lookback_days)
+    start = nem_midnight_utc(str(cfg.backtest.eval_start))
+    holdout_start = nem_midnight_utc(str(cfg.backtest.holdout_start))
+    out = run_backtest(ctx, models, setup, target, start)
+    metrics = evaluate(out, ctx, cfg.evaluation, holdout_start)
+
+    batch_id = uuid.uuid4()
+    artifacts = (
+        save_parquet(out, cfg.resolve(cfg.paths.backtest_dir), batch_id) if save_predictions else {}
+    )
+    run_config = {
+        "setup": {
+            "issue_every_steps": setup.issue_every_steps,
+            "horizon_steps": setup.horizon_steps,
+            "latency_steps": setup.latency_steps,
+        },
+        "eval_start": str(cfg.backtest.eval_start),
+        "holdout_start": str(cfg.backtest.holdout_start),
+        "n_origins": len(out.origins),
+        "n_folds": len(out.folds),
+        "scored_pairs": int(out.common_mask().sum()),
+        "total_pairs": int(out.common_mask().size),
+    }
+    store_backtest(
+        engine, out, metrics, models, region, holdout_start, run_config, artifacts, batch_id
+    )
+
+    pooled = metrics[(metrics["segment"] == "all") & (metrics["metric"] == "mae")]
+    table = []
+    for model in out.model_names:
+        m = pooled[pooled["model"] == model].set_index(["split", "horizon"])["value"]
+        table.append(
+            [model]
+            + [m.get(("dev", h)) for h in (1, 12, 48, 288)]
+            + [m.get(("dev", 0)), m.get(("holdout", 0))]
+        )
+    unit = "MW" if target == "demand" else "$/MWh"
+    typer.echo(f"\n{target} MAE ({unit}) — batch {batch_id} — {time.perf_counter() - t0:.0f}s")
+    typer.echo(
+        tabulate(
+            table,
+            headers=["model", "dev h=1", "dev h=12", "dev h=48", "dev h=288", "dev all", "holdout"],
+            floatfmt=".1f",
+            tablefmt="github",
+        )
+    )
+
+
 if __name__ == "__main__":
     app()
