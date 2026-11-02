@@ -22,16 +22,18 @@ class TableSpec:
     name: str
     key: ReportKey
     numeric: dict[str, str] = field(default_factory=dict)
-    flags: dict[str, str] = field(default_factory=dict)
+    # Integer status codes: source column -> (destination column, max allowed value).
+    codes: dict[str, tuple[str, int]] = field(default_factory=dict)
     text: dict[str, str] = field(default_factory=dict)
 
     @property
     def source_columns(self) -> list[str]:
-        return [*KEY_COLUMNS, *self.numeric, *self.flags, *self.text]
+        return [*KEY_COLUMNS, *self.numeric, *self.codes, *self.text]
 
     @property
     def output_columns(self) -> list[str]:
-        return [*self.numeric.values(), *self.flags.values(), *self.text.values()]
+        codes = [dest for dest, _ in self.codes.values()]
+        return [*self.numeric.values(), *codes, *self.text.values()]
 
 
 DISPATCHREGIONSUM = TableSpec(
@@ -48,7 +50,12 @@ DISPATCHPRICE = TableSpec(
     name="DISPATCHPRICE",
     key=ReportKey("DISPATCH", "PRICE"),
     numeric={"RRP": "rrp_aud_mwh"},
-    flags={"APCFLAG": "apc_flag", "MARKETSUSPENDEDFLAG": "market_suspended_flag"},
+    # APCFLAG is a 5-bit field (1 APC/APF binding, 2 VoLL override, 4 MPC/MPF binding,
+    # 8 manually overwritten, 16 IRLF scaled); MARKETSUSPENDEDFLAG is NUMBER(3,0).
+    codes={
+        "APCFLAG": ("apc_flag_bits", 31),
+        "MARKETSUSPENDEDFLAG": ("market_suspended_flag", 999),
+    },
     text={"PRICE_STATUS": "price_status"},
 )
 
@@ -78,12 +85,15 @@ def _to_float(values: pd.Series, name: str) -> pd.Series:
     return out
 
 
-def _to_flag(values: pd.Series, name: str) -> pd.Series:
+def _to_code(values: pd.Series, name: str, max_value: int) -> pd.Series:
+    """Strict non-negative integer code; blank means 0 (no flag set)."""
     stripped = values.str.strip().fillna("")
-    unknown = ~stripped.isin(["0", "1", ""])
-    if unknown.any():
-        raise MmsFormatError(f"{name}: unexpected flag values {stripped[unknown].unique()[:5]}")
-    return stripped.eq("1")
+    numeric = pd.to_numeric(stripped.mask(stripped.eq(""), "0"), errors="coerce")
+    bad = numeric.isna() | (numeric < 0) | (numeric > max_value) | (numeric % 1 != 0)
+    if bad.any():
+        sample = sorted(set(stripped[bad].tolist()))[:5]
+        raise MmsFormatError(f"{name}: invalid codes {sample} (allowed 0..{max_value})")
+    return numeric.astype("int16")
 
 
 def standardise(raw: pd.DataFrame, spec: TableSpec) -> tuple[pd.DataFrame, int, int]:
@@ -108,8 +118,8 @@ def standardise(raw: pd.DataFrame, spec: TableSpec) -> tuple[pd.DataFrame, int, 
     out["interval_start"] = out["interval_end"] - INTERVAL
     for src, dest in spec.numeric.items():
         out[dest] = _to_float(df[src], f"{spec.name}.{src}")
-    for src, dest in spec.flags.items():
-        out[dest] = _to_flag(df[src], f"{spec.name}.{src}")
+    for src, (dest, max_value) in spec.codes.items():
+        out[dest] = _to_code(df[src], f"{spec.name}.{src}", max_value)
     for src, dest in spec.text.items():
         text = df[src].str.strip()
         out[dest] = text.mask(text.eq("")).astype("string")
@@ -155,6 +165,6 @@ def build_market_intervals(demand: pd.DataFrame, price: pd.DataFrame) -> pd.Data
     data-quality checks can report them instead of silently losing rows.
     """
     merged = demand.merge(price, on=MARKET_KEY, how="outer", validate="one_to_one")
-    for flag in DISPATCHPRICE.flags.values():
-        merged[flag] = merged[flag].astype("boolean").fillna(False).astype(bool)
+    for dest, _ in DISPATCHPRICE.codes.values():
+        merged[dest] = merged[dest].fillna(0).astype("int16")
     return merged.sort_values(["region_id", "interval_end"]).reset_index(drop=True)

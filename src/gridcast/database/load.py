@@ -25,7 +25,7 @@ MARKET_COLUMNS: tuple[str, ...] = (
     "rrp_aud_mwh",
     "net_interchange_mw",
     "available_generation_mw",
-    "apc_flag",
+    "apc_flag_bits",
     "market_suspended_flag",
     "price_status",
 )

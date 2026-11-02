@@ -57,7 +57,7 @@ The table version changes over time, e.g. `DISPATCHPRICE` was version 4 in 2021 
 | `RUNNO` | int | dedup tiebreak | Always `1` in the archive samples inspected |
 | `REGIONID` | text | `region_id` | `NSW1`, `QLD1`, `SA1`, `TAS1`, `VIC1` |
 | `INTERVENTION` | 0/1 | filter | Keep `0`, the pricing run (see limitations) |
-| `TOTALDEMAND` | MW | **target: `total_demand_mw`** | Demand to be met by scheduled and semi-scheduled generation (see limitations) |
+| `TOTALDEMAND` | MW | **target: `total_demand_mw`** | Regional demand met by scheduled/semi-scheduled generation and net imports (see limitations) |
 | `NETINTERCHANGE` | MW | `net_interchange_mw` | Positive = net export from the region |
 | `AVAILABLEGENERATION` | MW | `available_generation_mw` | Bid availability of scheduled/semi-scheduled units |
 | `LASTCHANGED` | datetime | dedup tiebreak | Record write time |
@@ -71,9 +71,21 @@ The table has ~114 columns (mostly FCAS quantities); only the above are kept.
 | `SETTLEMENTDATE` | datetime | `interval_end` | As above |
 | `RUNNO`, `REGIONID`, `INTERVENTION`, `LASTCHANGED` | | as above | |
 | `RRP` | $/MWh | **target: `rrp_aud_mwh`** | Regional reference price. Can be negative (floor −$1,000/MWh) |
-| `APCFLAG` | 0/1 | `apc_flag` | Administered price cap applied |
-| `MARKETSUSPENDEDFLAG` | 0/1 | `market_suspended_flag` | Market suspended (e.g. June 2022) |
+| `APCFLAG` | 5-bit integer | `apc_flag_bits` | **Bit field, not a boolean** (see below) |
+| `MARKETSUSPENDEDFLAG` | NUMBER(3,0) | `market_suspended_flag` | Non-zero = market suspended |
 | `PRICE_STATUS` | text | QA only | `FIRM` once prices are final |
+
+`APCFLAG` records which post-processing steps changed the original NEMDE price (ROP), per AEMO's MMS Data Model Report (table `DISPATCHPRICE`):
+
+| Bit value | Meaning | Decoded column |
+|---|---|---|
+| 1 | Administered Price Cap/Floor binding | `administered_price_binding` |
+| 2 | VoLL override applied | (raw bits only) |
+| 4 | Market Price Cap/Floor binding | `market_cap_floor_binding` |
+| 8 | Price manually overwritten | `price_manually_overwritten` |
+| 16 | Price scaled by the inter-regional loss factor | (raw bits only) |
+
+The first full ingest treated `APCFLAG` as 0/1 and **rejected 15 months** that contained values such as 4, 8, 20 and 24. Migration `0002` fixed this: it stores the raw code and decodes the documented bits into generated columns.
 
 ### Timestamp conventions (critical)
 
@@ -84,13 +96,22 @@ The table has ~114 columns (mostly FCAS quantities); only the above are kept.
 
 ### Missing-data characteristics
 
-Before any processing, the inspected months (Oct 2021 `DISPATCHREGIONSUM` and `DISPATCHPRICE`, Jan 2025 `DISPATCHPRICE`) had **zero** missing intervals, zero duplicate keys, zero blank values in the used columns, and no intervention rows. Data-quality results for the full Oct 2021 → Sep 2026 load are recorded in the `dq_results` table and summarised in [`reports/m1_baseline.md`](../reports/m1_baseline.md); they are not repeated here.
+Measured on the full VIC1 load (Oct 2021 → Sep 2026, 60 monthly archives):
+
+- **525,888 rows**, exactly 1,826 days × 288. There are zero missing intervals, zero duplicate keys in the source files, and zero intervals with demand but no price (or the reverse). Every price is `FIRM`.
+- Table versions changed during the period: `DISPATCHREGIONSUM` v5 → v8 → v9 and `DISPATCHPRICE` v4 → v5. Columns are mapped by name, so this needed no code changes.
+- **Intervention runs** (`INTERVENTION = 1`, dropped in favour of the pricing run) appear in 6 months: Feb 2022 (108 rows), Jun 2022 (5,344), Jul 2022 (196), Nov 2022 (1,242), Feb 2023 (60) and Nov 2024 (24).
+- **Administered pricing** (bit 1) applied to 311 intervals, all between 13 and 15 June 2022 (UTC). **Market suspension** applied to 2,903 intervals: 2,591 in June 2022, 296 in April 2023 and 16 in September 2024.
+- Other `APCFLAG` bits: market price cap/floor binding 184 intervals, inter-regional loss factor scaling 1,175, manual overwrite 18, VoLL override 10.
+- Ranges: demand 1,225–10,784 MW; price −$1,000 (the floor) to $19,069.69/MWh. No price exceeds its financial year's cap. 20.4% of intervals have a negative price and 3.0% exceed $300/MWh.
+
+The data-quality checks that produce these figures are in `sql/checks/`, and their results are written to `dq_results`.
 
 ### Known limitations
 
-- **Demand definition.** `TOTALDEMAND` is demand supplied by *scheduled and semi-scheduled* generation, net of interconnector flows into the region. It **excludes rooftop PV** and most small non-scheduled generation, so midday "demand" falls as rooftop solar grows. Some of what looks like behavioural change is therefore structural. This is not consumer consumption.
+- **Demand definition.** `TOTALDEMAND` is the demand that dispatch must meet from scheduled and semi-scheduled generation plus net interconnector imports. It **excludes rooftop PV** and most small non-scheduled generation, so midday "demand" falls as rooftop solar grows. Some of what looks like behavioural change is therefore structural. This is not consumer consumption.
 - **Interventions.** When AEMO intervenes (directions or RERT), dispatch runs twice. The `INTERVENTION = 0` run sets prices; the physical dispatch follows the intervention run. GridCast uses the `INTERVENTION = 0` row for both demand and price so the two targets stay consistent.
-- **Administered pricing and suspension.** During the June 2022 energy crisis, administered price caps applied and AEMO then suspended the spot market. `RRP` in those intervals reflects administered or suspension pricing, not a competitive clearing price. The exact intervals are taken from the `APCFLAG`/`MARKETSUSPENDEDFLAG` columns rather than hard-coded dates; they are flagged and evaluated as a separate segment.
+- **Administered pricing and suspension.** During the June 2022 energy crisis, administered price caps applied and AEMO then suspended the spot market. `RRP` in those intervals reflects administered or suspension pricing, not a competitive clearing price. The exact intervals are taken from the `APCFLAG` bit 1 and `MARKETSUSPENDEDFLAG` columns rather than hard-coded dates; they are flagged and evaluated as a separate segment.
 - **Price revisions.** Dispatch prices can be revised after publication (e.g. manifestly incorrect inputs). The monthly archive contains final values, so backtests use final prices, which may differ slightly from what a live system would have seen.
 - **Publication lag.** See *Frequency and latency* above.
 

@@ -117,13 +117,25 @@ def test_stale_feed(loaded: Engine) -> None:
 def test_market_flags_grouped_into_episodes(loaded: Engine) -> None:
     _sql(
         loaded,
-        "UPDATE market_intervals SET apc_flag = true WHERE interval_end BETWEEN "
+        "UPDATE market_intervals SET apc_flag_bits = 1 WHERE interval_end BETWEEN "
         "'2021-10-10 00:00+00' AND '2021-10-10 00:25+00'",
     )
-    r = _run(loaded)["market_flags"]
-    assert r.status == "warn"
-    assert r.n_violations == 6
-    assert r.details["n_result_rows"] == 1
+    r = _run(loaded)
+    assert r["market_flags"].status == "warn"
+    assert r["market_flags"].n_violations == 6
+    assert r["market_flags"].details["n_result_rows"] == 1
+    assert r["price_adjustments"].details["examples"][0]["bit_value"] == 1
+
+
+def test_price_adjustment_bits_decoded(loaded: Engine) -> None:
+    # 20 = 16 (IRLF scaled) + 4 (market price cap/floor binding): not administered pricing.
+    _sql(
+        loaded,
+        "UPDATE market_intervals SET apc_flag_bits = 20 WHERE interval_end = '2021-10-02 00:00+00'",
+    )
+    r = _run(loaded)
+    assert r["market_flags"].status == "pass"
+    assert sorted(e["bit_value"] for e in r["price_adjustments"].details["examples"]) == [4, 16]
 
 
 def test_not_firm_prices_warn(loaded: Engine) -> None:

@@ -53,6 +53,7 @@ CHECKS: tuple[DQCheck, ...] = (
         "source_duplicates", "warn", "Duplicates removed from source", "duplicates_dropped", False
     ),
     DQCheck("market_flags", "warn", "Administered pricing / suspension episodes", "n_intervals"),
+    DQCheck("price_adjustments", "warn", "Intervals with APCFLAG price post-processing bits"),
     DQCheck("price_not_firm", "warn", "Prices not marked FIRM", "n"),
 )
 

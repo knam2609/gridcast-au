@@ -47,8 +47,8 @@ def market_intervals_schema(regions: Collection[str]) -> pa.DataFrameSchema:
             ),
             "net_interchange_mw": pa.Column(float, nullable=True),
             "available_generation_mw": pa.Column(float, nullable=True),
-            "apc_flag": pa.Column(bool),
-            "market_suspended_flag": pa.Column(bool),
+            "apc_flag_bits": pa.Column("int16", pa.Check.in_range(0, 31)),
+            "market_suspended_flag": pa.Column("int16", pa.Check.ge(0)),
             "price_status": pa.Column(str, nullable=True, coerce=True),
         },
         checks=[

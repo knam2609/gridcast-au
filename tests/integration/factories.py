@@ -22,8 +22,8 @@ def clean_month(year: int = 2021, month: int = 10, region: str = "VIC1") -> pd.D
             "rrp_aud_mwh": rng.normal(60, 20, n),
             "net_interchange_mw": rng.normal(0, 300, n),
             "available_generation_mw": np.full(n, 9000.0),
-            "apc_flag": np.zeros(n, dtype=bool),
-            "market_suspended_flag": np.zeros(n, dtype=bool),
+            "apc_flag_bits": np.zeros(n, dtype=np.int16),
+            "market_suspended_flag": np.zeros(n, dtype=np.int16),
             "price_status": pd.Series(["FIRM"] * n, dtype="string"),
         }
     )

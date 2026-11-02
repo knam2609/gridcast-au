@@ -110,5 +110,23 @@ def test_build_market_intervals_outer_join_keeps_unmatched(tmp_path: Path) -> No
     merged = build_market_intervals(demand.frame, price.frame)
     assert len(merged) == 3
     assert merged["rrp_aud_mwh"].isna().sum() == 1
-    assert merged["apc_flag"].dtype == bool
-    assert not merged["market_suspended_flag"].any()
+    assert merged["apc_flag_bits"].dtype == "int16"
+    assert (merged["market_suspended_flag"] == 0).all()
+
+
+def test_apcflag_bitfield_codes_parsed(tmp_path: Path) -> None:
+    rows = price_rows(START, 3, regions=("VIC1",))
+    rows[0]["APCFLAG"] = "20"  # 16 (IRLF scaled) + 4 (MPC/MPF binding)
+    rows[1]["APCFLAG"] = ""
+    rows[2]["MARKETSUSPENDEDFLAG"] = "1"
+    ext = extract_table([_price(tmp_path, rows)], DISPATCHPRICE, ["VIC1"])
+    assert ext.frame["apc_flag_bits"].tolist() == [20, 0, 0]
+    assert ext.frame["market_suspended_flag"].tolist() == [0, 0, 1]
+
+
+@pytest.mark.parametrize("bad", ["32", "-1", "1.5", "x"])
+def test_invalid_apcflag_codes_raise(tmp_path: Path, bad: str) -> None:
+    rows = price_rows(START, 1, regions=("VIC1",))
+    rows[0]["APCFLAG"] = bad
+    with pytest.raises(MmsFormatError, match="invalid codes"):
+        extract_table([_price(tmp_path, rows)], DISPATCHPRICE, ["VIC1"])
