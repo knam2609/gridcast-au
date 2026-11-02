@@ -217,5 +217,15 @@ def backtest(
     )
 
 
+@app.command()
+def report(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+    """Write reports/m1_baseline.md and figures from the latest stored backtests."""
+    from gridcast.database.engine import get_engine
+    from gridcast.evaluation.report import write_report
+
+    path = write_report(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
 if __name__ == "__main__":
     app()
