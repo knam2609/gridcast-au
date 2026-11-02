@@ -1,7 +1,8 @@
 """Bulk loading into PostgreSQL: COPY into a temporary staging table, then upsert.
 
-Re-running a load is idempotent: rows are keyed by ``(region_id, interval_end)`` and
-only rows whose values actually changed are rewritten.
+Re-running a load is idempotent: rows are keyed (market intervals by
+``(region_id, interval_end)``, weather by model, site, offset and valid hour) and only rows
+whose values actually changed are rewritten.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import Connection, text
 
-from gridcast.config import AppConfig
+from gridcast.config import WEATHER_VARIABLES, AppConfig
 
 MARKET_COLUMNS: tuple[str, ...] = (
     "region_id",
@@ -124,39 +125,44 @@ def _rows(df: pd.DataFrame, columns: Sequence[str]) -> Iterator[tuple[Any, ...]]
         yield tuple(_py(v) for v in record)
 
 
-def upsert_market_intervals(conn: Connection, df: pd.DataFrame, ingestion_run_id: int) -> int:
-    """COPY ``df`` into a staging table and upsert into ``market_intervals``.
+def _copy_upsert(
+    conn: Connection,
+    table: str,
+    df: pd.DataFrame,
+    columns: Sequence[str],
+    key: Sequence[str],
+    ingestion_run_id: int,
+) -> int:
+    """COPY ``df[columns]`` into a temporary staging table, then upsert into ``table``.
 
-    Returns the number of rows inserted or changed (unchanged rows are skipped).
+    Rows are matched on ``key``; only rows whose values changed are rewritten. ``table`` and
+    the column names are module constants, never user input. Returns rows inserted/changed.
     """
     if df.empty:
         return 0
+    stage = f"stage_{table}"
     conn.execute(
-        text(
-            """
-            CREATE TEMP TABLE stage_market_intervals
-                (LIKE market_intervals INCLUDING DEFAULTS) ON COMMIT DROP
-            """
-        )
+        text(f"CREATE TEMP TABLE {stage} (LIKE {table} INCLUDING DEFAULTS) ON COMMIT DROP")
     )
-    cols = ", ".join(MARKET_COLUMNS)
+    cols = ", ".join(columns)
     driver_conn = conn.connection.driver_connection
     assert driver_conn is not None
     with (
         driver_conn.cursor() as cur,
-        cur.copy(f"COPY stage_market_intervals ({cols}) FROM STDIN") as copy,
+        cur.copy(f"COPY {stage} ({cols}) FROM STDIN") as copy,
     ):
-        for row in _rows(df, MARKET_COLUMNS):
+        for row in _rows(df, columns):
             copy.write_row(row)
 
-    set_clause = ",\n".join(f"{c} = EXCLUDED.{c}" for c in _VALUE_COLUMNS)
-    changed = " OR ".join(f"t.{c} IS DISTINCT FROM EXCLUDED.{c}" for c in _VALUE_COLUMNS)
+    values = [c for c in columns if c not in key]
+    set_clause = ",\n".join(f"{c} = EXCLUDED.{c}" for c in values)
+    changed = " OR ".join(f"t.{c} IS DISTINCT FROM EXCLUDED.{c}" for c in values)
     result = conn.execute(
         text(
             f"""
-            INSERT INTO market_intervals AS t ({cols}, ingestion_run_id)
-            SELECT {cols}, :run_id FROM stage_market_intervals
-            ON CONFLICT (region_id, interval_end) DO UPDATE
+            INSERT INTO {table} AS t ({cols}, ingestion_run_id)
+            SELECT {cols}, :run_id FROM {stage}
+            ON CONFLICT ({", ".join(key)}) DO UPDATE
                SET {set_clause},
                    ingestion_run_id = EXCLUDED.ingestion_run_id,
                    loaded_at = now()
@@ -165,5 +171,99 @@ def upsert_market_intervals(conn: Connection, df: pd.DataFrame, ingestion_run_id
         ),
         {"run_id": ingestion_run_id},
     )
-    conn.execute(text("DROP TABLE IF EXISTS stage_market_intervals"))
+    conn.execute(text(f"DROP TABLE IF EXISTS {stage}"))
     return int(result.rowcount)
+
+
+def upsert_market_intervals(conn: Connection, df: pd.DataFrame, ingestion_run_id: int) -> int:
+    """COPY ``df`` into a staging table and upsert into ``market_intervals``.
+
+    Returns the number of rows inserted or changed (unchanged rows are skipped).
+    """
+    return _copy_upsert(
+        conn,
+        "market_intervals",
+        df,
+        MARKET_COLUMNS,
+        ("region_id", "interval_end"),
+        ingestion_run_id,
+    )
+
+
+WEATHER_OBSERVATION_COLUMNS: tuple[str, ...] = (
+    "model",
+    "site_id",
+    "valid_time",
+    *WEATHER_VARIABLES,
+)
+WEATHER_FORECAST_COLUMNS: tuple[str, ...] = (
+    "model",
+    "site_id",
+    "offset_days",
+    "valid_time",
+    "run_init",
+    "available_at",
+    *WEATHER_VARIABLES,
+)
+
+
+def ensure_weather_sites(conn: Connection, cfg: AppConfig) -> None:
+    """Upsert configured weather sites with their population weights within each region.
+
+    Sites removed from the config are kept (data references them), so the region's weights
+    would no longer sum to 1; the ``weather_site_weights`` data-quality check reports that.
+    """
+    weather = cfg.weather
+    for region_id in sorted({s.region_id for s in weather.sites.values()}):
+        weights = weather.site_weights(region_id)
+        for site_id, site in weather.sites_for(region_id).items():
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO weather_sites (site_id, region_id, name, latitude, longitude,
+                                               population, weight, population_source)
+                    VALUES (:site_id, :region_id, :name, :lat, :lon, :pop, :weight, :source)
+                    ON CONFLICT (site_id) DO UPDATE
+                       SET region_id = EXCLUDED.region_id,
+                           name = EXCLUDED.name,
+                           latitude = EXCLUDED.latitude,
+                           longitude = EXCLUDED.longitude,
+                           population = EXCLUDED.population,
+                           weight = EXCLUDED.weight,
+                           population_source = EXCLUDED.population_source,
+                           updated_at = now()
+                    """
+                ),
+                {
+                    "site_id": site_id,
+                    "region_id": region_id,
+                    "name": site.name,
+                    "lat": site.latitude,
+                    "lon": site.longitude,
+                    "pop": site.population,
+                    "weight": weights[site_id],
+                    "source": weather.population.source,
+                },
+            )
+
+
+def upsert_weather_observations(conn: Connection, df: pd.DataFrame, ingestion_run_id: int) -> int:
+    return _copy_upsert(
+        conn,
+        "weather_observations",
+        df,
+        WEATHER_OBSERVATION_COLUMNS,
+        ("model", "site_id", "valid_time"),
+        ingestion_run_id,
+    )
+
+
+def upsert_weather_forecasts(conn: Connection, df: pd.DataFrame, ingestion_run_id: int) -> int:
+    return _copy_upsert(
+        conn,
+        "weather_forecasts",
+        df,
+        WEATHER_FORECAST_COLUMNS,
+        ("model", "site_id", "offset_days", "valid_time"),
+        ingestion_run_id,
+    )

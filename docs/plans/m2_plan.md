@@ -2,7 +2,7 @@
 
 **Goal:** find out whether machine learning with honestly available weather forecasts beats M1's best baseline at each lead time for 24-hour-ahead Victorian demand, and how it compares with AEMO's own forecasts.
 
-**Status:** step 0 done ([`docs/m2_data_spike.md`](../m2_data_spike.md), 2026-11-02); step 1 next. Success criteria were agreed before any ML results existed (see §3). The step-0 decisions below refine *how* C, D and the benchmark are built; they do not change S1–S5.
+**Status:** step 0 done ([`docs/m2_data_spike.md`](../m2_data_spike.md), 2026-11-02); step 1 done (2026-11-03, weather loaded and checked, see [`docs/data_sources.md`](../data_sources.md) §4–5); step 2 next. Success criteria were agreed before any ML results existed (see §3). The step-0 decisions below refine *how* C, D and the benchmark are built; they do not change S1–S5.
 
 ## 1. Decisions (agreed 2026-11-02)
 
@@ -115,10 +115,11 @@ Branch `m2-weather-demand-ml` from `m1-pipeline-baseline` (or from `main`, once 
   - If only temperature is archived before 2024 → headline C uses forecast temperature (and derived features) over the full window. A secondary model, C⁺, uses all forecast variables but trains from 2024-01 and is evaluated only where it has enough history. S1–S5 are judged on headline C.
   - If even temperature has gaps of more than 2% → stop and revisit with the user.
 
-**Step 1. Weather ingestion.**
+**Step 1. Weather ingestion.** ✅ Done 2026-11-03.
 - Open-Meteo client: rate-limited, cached, retried, with a project User-Agent.
 - Migration `0003_weather`, site weights, 5-minute alignment, and weather data-quality checks.
 - Update `docs/data_sources.md`.
+- Outcome: `gridcast ingest-weather` loaded all 60 months for both datasets. `weather_gaps` is 0 at every site; the only missing values are the step-0 known ranges. Decisions made during the step: weights are fixed ABS ERP at 30 June 2024 (Latrobe Valley = Traralgon–Morwell + Moe–Newborough); the Melbourne point is the spike point; 5-minute alignment is computed on the fly (`gridcast/weather/align.py`), never stored. A new finding: the GFS archive holds 153 cloud cover values of exactly −1 % or 101 %, a rounding artefact. Values within 1 point of a bounded range are clipped on load and counted (`weather_clipped_values`, warn).
 
 **Step 2. Feature builder and audit.** Catalogue, A/C/D feature matrices, leakage property tests, generated `docs/feature_catalogue.md`.
 

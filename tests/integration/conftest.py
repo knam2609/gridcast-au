@@ -14,6 +14,7 @@ from gridcast.config import PROJECT_ROOT, get_settings
 
 TABLES = (
     "dq_results, forecasts, forecast_metrics, model_runs, calendar_days, "
+    "weather_forecasts, weather_observations, weather_sites, "
     "market_intervals, ingestion_runs, regions"
 )
 

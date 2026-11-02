@@ -77,9 +77,51 @@ def ingest(start: StartOpt = None, end: EndOpt = None, regions: RegionsOpt = Non
         raise typer.Exit(code=1)
 
 
+@app.command("ingest-weather")
+def ingest_weather(
+    start: StartOpt = None,
+    end: EndOpt = None,
+    dataset: Annotated[
+        str, typer.Option(help="forecasts (variant C), observations (variant D) or all")
+    ] = "all",
+    refresh: Annotated[
+        bool, typer.Option(help="Re-download even when a cached response exists")
+    ] = False,
+) -> None:
+    """Download, validate and load hourly Open-Meteo weather month by month."""
+    from gridcast.database.engine import get_engine
+    from gridcast.ingestion.pipeline import parse_month_arg
+    from gridcast.ingestion.weather import Kind, ingest_weather_range
+
+    choices: dict[str, tuple[Kind, ...]] = {
+        "all": ("forecasts", "observations"),
+        "forecasts": ("forecasts",),
+        "observations": ("observations",),
+    }
+    if dataset not in choices:
+        raise typer.BadParameter(f"dataset must be one of {sorted(choices)}")
+    cfg = load_config()
+    first = parse_month_arg(start or cfg.ingestion.start_month)
+    last = parse_month_arg(end or cfg.ingestion.end_month)
+    results = ingest_weather_range(
+        get_engine(), cfg, first, last, choices[dataset], refresh=refresh
+    )
+    table = [
+        [f"{r.period:%Y-%m}", r.dataset, r.status, r.rows_parsed, r.rows_loaded] for r in results
+    ]
+    typer.echo(
+        tabulate(table, headers=["month", "dataset", "status", "rows", "loaded"], tablefmt="github")
+    )
+    failed = [r for r in results if r.status != "success"]
+    for r in failed:
+        typer.echo(f"FAILED {r.period:%Y-%m} {r.dataset}: {r.error}", err=True)
+    if failed:
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def dq(start: StartOpt = None, end: EndOpt = None, regions: RegionsOpt = None) -> None:
-    """Run data-quality checks over the configured window and store results."""
+    """Run market and weather data-quality checks over the window and store results."""
     from gridcast.database.engine import get_engine
     from gridcast.ingestion.pipeline import parse_month_arg
     from gridcast.validation.checks import run_checks

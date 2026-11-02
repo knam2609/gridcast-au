@@ -2,6 +2,8 @@
 
 Written 2026-11-02 at the end of the M1 session. Read this, then [`m2_plan.md`](m2_plan.md).
 
+> **Update, 2026-11-03 (third session):** step 1 (weather ingestion) is done: migration `0003_weather`, `gridcast ingest-weather` / `make weather`, six new weather data-quality checks plus `weather_clipped_values`, and alignment helpers in `src/gridcast/weather/`. All 60 months of GFS forecasts and ERA5 for five sites are loaded, and `gridcast dq` passes, with warnings only for known gaps and clipped artefacts. Details: `docs/data_sources.md` §4–5. **Next task: step 2 (feature builder and audit).** It should use `load_weather_forecasts` / `load_weather_observations` → `site_weighted` → `to_five_minute`, then pick the freshest offset with `available_at <= o`.
+>
 > **Update, 2026-11-02 (second session):** step 0 is done. Findings and decisions are in [`docs/m2_data_spike.md`](../m2_data_spike.md) and folded into `m2_plan.md` §1–§6. **Next task: step 1 (weather ingestion).** The step-0 section below is kept for the record.
 
 ## Where things stand
@@ -15,18 +17,18 @@ Written 2026-11-02 at the end of the M1 session. Read this, then [`m2_plan.md`](
 | Item | State |
 |---|---|
 | Python | uv 0.13 (Homebrew) + Python 3.12 managed by uv. Homebrew's default `python3` is 3.15; don't use it for the project |
-| Database | Docker container `gridcast-db` (PostgreSQL 17) on **localhost:5433**, **stopped** at handoff (`make db-up` to start; the data persists in the `pgdata` Docker volume, ~117 MB). Credentials are in `.env` (gitignored, randomly generated password). Alembic is at revision `0002` |
+| Database | Docker container `gridcast-db` (PostgreSQL 17) on **localhost:5433**, **stopped** at handoff (`make db-up` to start; the data persists in the `pgdata` Docker volume, ~117 MB). Credentials are in `.env` (gitignored, randomly generated password). Alembic is at revision `0003` (database ~250 MB after the weather load) |
 | Data loaded | VIC1, Oct 2021 → Sep 2026: 525,888 intervals, `calendar_days` 2021–2027, latest DQ run all pass/warn |
 | Latest backtests | demand batch `5836b22c-39cc-4eec-a46c-ee22dfbb7cc6`, price batch `07acd3a0-8b48-43b1-8d23-908ba23ac0c6` (clean commit `945bd40`) |
-| Data files | **On the external BIWIN SSD** (exFAT, USB): `GRIDCAST_DATA_ROOT=/Volumes/BIWIN/gridcast-au/data` in `.env`, holding `raw/` (~433 MB AEMO cache), `interim/` and `backtests/` (~0.9 GB, current batches only; superseded batches deleted). **Mount the SSD before running the pipeline**, or it stops with a clear error. Local `./data` is empty. `model_runs.artifact_path` is stored relative to the data root |
+| Data files | **On the external BIWIN SSD** (exFAT, USB): `GRIDCAST_DATA_ROOT=/Volumes/BIWIN/gridcast-au/data` in `.env`, holding `raw/` (~433 MB AEMO cache, plus `raw/open_meteo/`: 600 cached weather responses, ~0.3 GB on disk), `interim/` and `backtests/` (~0.9 GB, current batches only; superseded batches deleted). **Mount the SSD before running the pipeline**, or it stops with a clear error. Local `./data` is empty. `model_runs.artifact_path` is stored relative to the data root |
 | Test database | `gridcast_test` on the same server, created automatically by integration tests |
 
 Sanity check before starting:
 
 ```bash
 ls /Volumes/BIWIN/gridcast-au/data         # SSD mounted?
-make db-up && uv run alembic current        # expect 0002 (head)
-make lint typecheck test test-integration   # 84 unit + 16 integration, all green at handoff
+make db-up && uv run alembic current        # expect 0003 (head)
+make lint typecheck test test-integration   # 122 unit + 26 integration, all green at the step-1 commit
 ```
 
 ## M2 step 0 (data-availability check) — done, see `docs/m2_data_spike.md`

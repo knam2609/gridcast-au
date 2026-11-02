@@ -35,11 +35,13 @@ Milestone 1 answers the question that has to come first: **what does a forecast 
 | AEMO MMSDM monthly archive (NEMWeb): `DISPATCHREGIONSUM`, `DISPATCHPRICE` | 5-minute demand and price | AEMO Copyright Permissions: use with attribution |
 | `holidays` Python package (VIC) | Public-holiday calendar | MIT |
 | AEMC schedule of reliability settings | Price cap/floor, used only for data-quality bounds | Public |
-| Open-Meteo historical weather *(planned, milestone 2)* | Temperature, humidity | CC BY 4.0 |
+| Open-Meteo Previous Runs (GFS) and Historical Weather (ERA5) APIs *(milestone 2)* | Hourly archived weather forecasts and reanalysis for 5 Victorian sites | CC BY 4.0, non-commercial free tier |
+| ABS Regional population 2024-25 *(milestone 2)* | Population weights for the weather sites | CC BY 4.0 |
 
 Files are downloaded from AEMO's public file server with a project User-Agent, rate limiting, retries and a SHA-256-verified cache; no web pages are scraped. [`docs/data_sources.md`](docs/data_sources.md) gives URLs, schemas, timestamp conventions, measured missing-data characteristics and limitations for each source.
 
 > Data source: Australian Energy Market Operator (AEMO), MMS Data Model monthly archive, NEMWeb. © AEMO.
+> Weather data by [Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0), from NOAA GFS and ECMWF ERA5. Population: Australian Bureau of Statistics, Regional population 2024-25 (CC BY 4.0).
 
 ## System architecture
 

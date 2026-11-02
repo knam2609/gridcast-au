@@ -61,3 +61,111 @@ evaluation:
   horizons_reported: [1, 6, 12, 48, 144, 288]
   peak_hours_local: [17, 21]         # [start, end) local hour of the evening peak
   price_spike_threshold: 300.0       # $/MWh
+
+weather:
+  # Hourly weather for population-weighted regional features (M2). Values come from
+  # Open-Meteo (CC BY 4.0, free tier is non-commercial); see docs/data_sources.md §4.
+  population:
+    # Fixed weights: ERP at 30 June 2024 by ABS Significant Urban Area (SUA).
+    source: >-
+      ABS, Regional population 2024-25 (released 31 March 2026), data cube 32180DS0004,
+      Table 2 "Estimated resident population, Significant Urban Areas", ERP at 30 June 2024
+      (revised estimate). CC BY 4.0, © Commonwealth of Australia.
+    year: 2024
+  sites:
+    # Coordinates are town centres (Melbourne: the step-0 spike point near the CBD).
+    # Weights = SUA populations / regional total, computed in code.
+    melbourne:
+      name: Melbourne
+      region_id: VIC1
+      latitude: -37.83
+      longitude: 144.98
+      sua_population: {"Melbourne": 5225364}
+    geelong:
+      name: Geelong
+      region_id: VIC1
+      latitude: -38.15
+      longitude: 144.36
+      sua_population: {"Geelong": 308021}
+    ballarat:
+      name: Ballarat
+      region_id: VIC1
+      latitude: -37.56
+      longitude: 143.85
+      sua_population: {"Ballarat": 118841}
+    bendigo:
+      name: Bendigo
+      region_id: VIC1
+      latitude: -36.76
+      longitude: 144.28
+      sua_population: {"Bendigo": 105610}
+    latrobe_valley:
+      name: Latrobe Valley
+      region_id: VIC1
+      latitude: -38.23     # Morwell, between Traralgon and Moe
+      longitude: 146.40
+      sua_population: {"Traralgon - Morwell": 43841, "Moe - Newborough": 22359}
+  variables:
+    # kind: "instant" = value at the labelled hour (interpolated linearly to 5 minutes);
+    #       "preceding_hour_mean" = mean over the hour ending at the label.
+    # plausible: data-quality bounds for Victorian sites (flagged, never clipped).
+    # clip_to: physical range of a bounded variable (see clip_tolerance below).
+    temperature_2m:       {unit: "°C",   kind: instant,             plausible: [-15.0, 50.0]}
+    apparent_temperature: {unit: "°C",   kind: instant,             plausible: [-25.0, 60.0]}
+    relative_humidity_2m: {unit: "%",    kind: instant,             plausible: [0.0, 100.0], clip_to: [0.0, 100.0]}
+    cloud_cover:          {unit: "%",    kind: instant,             plausible: [0.0, 100.0], clip_to: [0.0, 100.0]}
+    shortwave_radiation:  {unit: "W/m²", kind: preceding_hour_mean, plausible: [0.0, 1400.0]}
+    wind_speed_10m:       {unit: "m/s",  kind: instant,             plausible: [0.0, 50.0]}
+  # The GFS archive holds cloud cover values of exactly -1 % and 101 % (2024-2025, at
+  # 00/06/12/18 UTC): rounding artefacts. Values of a clip_to variable at most this far
+  # outside its range are clipped to it on load and counted (weather_clipped_values check);
+  # anything further out is rejected.
+  clip_tolerance: 1.0
+  forecasts:
+    # Variant C: archived GFS forecasts from Open-Meteo's Previous Runs API.
+    model: gfs_seamless
+    offsets_days: [1, 2]
+    # previous_dayK at valid hour t comes from the run initialised at floor_6h(t - 24K h)
+    # (verified exactly in step 0); it is usable from run_init + publication delay.
+    run_every_hours: 6
+    publication_delay_hours: 6
+    # Values known to be missing from the archive (step 0, docs/m2_data_spike.md §1), by
+    # valid time in UTC, inclusive. first: null = from the start of the data. Reported as
+    # warnings; any other missing value fails the weather_gaps check.
+    expected_missing:
+      - reason: gfs_archive_seam
+        variables: [temperature_2m]
+        offset_days: 1
+        first: "2023-12-30T00:00:00Z"
+        last: "2024-01-19T11:00:00Z"
+      - reason: gfs_archive_seam
+        variables: [temperature_2m]
+        offset_days: 2
+        first: "2023-12-30T00:00:00Z"
+        last: "2024-01-20T11:00:00Z"
+      - reason: before_multivariable_archive
+        variables: [apparent_temperature, relative_humidity_2m, cloud_cover, shortwave_radiation, wind_speed_10m]
+        offset_days: 1
+        first: null
+        last: "2024-01-19T11:00:00Z"
+      - reason: before_multivariable_archive
+        variables: [apparent_temperature, relative_humidity_2m, cloud_cover, shortwave_radiation, wind_speed_10m]
+        offset_days: 2
+        first: null
+        last: "2024-01-20T11:00:00Z"
+  observations:
+    # Variant D: ERA5 reanalysis from Open-Meteo's Historical Weather API (perfect-foresight
+    # oracle; published ~5 days late, so never usable at forecast time).
+    model: era5
+  open_meteo:
+    previous_runs_url: https://previous-runs-api.open-meteo.com/v1/forecast
+    archive_url: https://archive-api.open-meteo.com/v1/archive
+    user_agent: "gridcast-au/0.1 (+https://github.com/knam2609/gridcast-au)"
+    # Free tier: 600 calls/min, 5,000/hour, 10,000/day; a request over 2 weeks or 10
+    # variables counts as several calls (one site-month of 12 columns ≈ 2.7 calls).
+    request_delay_seconds: 1.0
+    timeout_seconds: 120
+    max_retries: 6
+    retry_backoff_seconds: 5.0   # 5, 10, 20, 40, 60 s between attempts on 429/5xx
+    # Responses whose last date is this recent are not cached (archives may still fill in).
+    settle_days: 10

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -106,6 +106,126 @@ class EvaluationConfig(BaseModel):
     price_spike_threshold: float
 
 
+# Hourly weather variables, in storage order. They are columns of weather_forecasts and
+# weather_observations (migration 0003), so the config must list exactly these.
+WEATHER_VARIABLES: tuple[str, ...] = (
+    "temperature_2m",
+    "apparent_temperature",
+    "relative_humidity_2m",
+    "cloud_cover",
+    "shortwave_radiation",
+    "wind_speed_10m",
+)
+
+
+class WeatherVariableConfig(BaseModel):
+    unit: str  # unit string Open-Meteo must report (checked on every response)
+    kind: Literal["instant", "preceding_hour_mean"]
+    plausible: tuple[float, float]
+    # Physical range of a bounded variable (e.g. 0-100 %). Values outside it by no more than
+    # weather.clip_tolerance are archive rounding artefacts: clipped on load and counted.
+    clip_to: tuple[float, float] | None = None
+
+
+class WeatherSiteConfig(BaseModel):
+    name: str
+    region_id: str
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    sua_population: dict[str, int] = Field(min_length=1)  # ABS SUA name -> ERP
+
+    @property
+    def population(self) -> int:
+        return sum(self.sua_population.values())
+
+
+class PopulationSourceConfig(BaseModel):
+    source: str
+    year: int
+
+
+class ExpectedMissingConfig(BaseModel):
+    """A range of valid hours (UTC, inclusive) where an archived value is known to be missing."""
+
+    reason: str
+    variables: list[str] = Field(min_length=1)
+    offset_days: int
+    first: dt.datetime | None  # None = from the start of the data
+    last: dt.datetime
+
+    @field_validator("first", "last")
+    @classmethod
+    def _tz_aware(cls, v: dt.datetime | None) -> dt.datetime | None:
+        if v is not None and v.tzinfo is None:
+            raise ValueError("expected_missing times must include a UTC offset")
+        return v
+
+
+class WeatherForecastConfig(BaseModel):
+    model: str
+    offsets_days: list[int] = Field(min_length=1)
+    run_every_hours: int = Field(gt=0)
+    publication_delay_hours: float = Field(gt=0)
+    expected_missing: list[ExpectedMissingConfig] = []
+
+    @property
+    def run_every(self) -> dt.timedelta:
+        return dt.timedelta(hours=self.run_every_hours)
+
+    @property
+    def publication_delay(self) -> dt.timedelta:
+        return dt.timedelta(hours=self.publication_delay_hours)
+
+
+class WeatherObservationConfig(BaseModel):
+    model: str
+
+
+class OpenMeteoConfig(BaseModel):
+    previous_runs_url: str
+    archive_url: str
+    user_agent: str
+    request_delay_seconds: float = 1.0
+    timeout_seconds: float = 120.0
+    max_retries: int = 6
+    retry_backoff_seconds: float = 5.0  # exponential backoff base for 429/5xx/transport errors
+    settle_days: int = 10
+
+
+class WeatherConfig(BaseModel):
+    population: PopulationSourceConfig
+    sites: dict[str, WeatherSiteConfig] = Field(min_length=1)
+    variables: dict[str, WeatherVariableConfig]
+    clip_tolerance: float = Field(default=0.0, ge=0)
+    forecasts: WeatherForecastConfig
+    observations: WeatherObservationConfig
+    open_meteo: OpenMeteoConfig
+
+    @model_validator(mode="after")
+    def _consistent(self) -> WeatherConfig:
+        if tuple(self.variables) != WEATHER_VARIABLES:
+            raise ValueError(f"weather.variables must be exactly {list(WEATHER_VARIABLES)}")
+        offsets = set(self.forecasts.offsets_days)
+        if min(offsets) < 1:
+            raise ValueError("forecast offsets must be >= 1 day (day 0 is never available)")
+        for gap in self.forecasts.expected_missing:
+            unknown = set(gap.variables) - set(WEATHER_VARIABLES)
+            if unknown or gap.offset_days not in offsets:
+                raise ValueError(f"expected_missing entry {gap.reason!r} has unknown keys")
+        return self
+
+    def sites_for(self, region_id: str) -> dict[str, WeatherSiteConfig]:
+        return {k: s for k, s in self.sites.items() if s.region_id == region_id}
+
+    def site_weights(self, region_id: str) -> dict[str, float]:
+        """Population share of each of the region's sites (sums to 1)."""
+        sites = self.sites_for(region_id)
+        if not sites:
+            raise KeyError(f"no weather sites configured for region {region_id!r}")
+        total = sum(s.population for s in sites.values())
+        return {k: s.population / total for k, s in sites.items()}
+
+
 class AppConfig(BaseModel):
     """Typed view of ``configs/base.yaml``."""
 
@@ -119,6 +239,14 @@ class AppConfig(BaseModel):
     backtest: BacktestConfig
     baselines: BaselinesConfig
     evaluation: EvaluationConfig
+    weather: WeatherConfig
+
+    @model_validator(mode="after")
+    def _weather_regions_known(self) -> AppConfig:
+        unknown = {s.region_id for s in self.weather.sites.values()} - set(self.regions)
+        if unknown:
+            raise ValueError(f"weather sites reference unknown regions {sorted(unknown)}")
+        return self
 
     def resolve(self, path: Path) -> Path:
         """Resolve a config-relative path against the project root."""

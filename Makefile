@@ -4,7 +4,7 @@ START ?= 2021-10
 END ?= 2026-09
 REGIONS ?= VIC1
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest calendar dq backtest report pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest weather calendar dq backtest report pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -42,6 +42,9 @@ migrate: ## Apply database migrations
 ingest: ## Download, validate and load AEMO MMSDM data (START/END/REGIONS overridable)
 	$(UV) run gridcast ingest --start $(START) --end $(END) --regions $(REGIONS)
 
+weather: ## Download, validate and load Open-Meteo weather (GFS forecasts + ERA5; START/END overridable)
+	$(UV) run gridcast ingest-weather --start $(START) --end $(END)
+
 calendar: ## Build calendar_days (VIC holidays, weekends, DST-change days)
 	$(UV) run gridcast calendar --regions $(REGIONS)
 
@@ -55,4 +58,4 @@ backtest: ## Walk-forward evaluation of all baselines (demand + price)
 report: ## Generate reports/m1_baseline.md from stored metrics
 	$(UV) run gridcast report --region $(firstword $(REGIONS))
 
-pipeline: db-up migrate ingest calendar dq backtest report ## Full milestone-1 pipeline end to end
+pipeline: db-up migrate ingest weather calendar dq backtest report ## Full pipeline end to end
