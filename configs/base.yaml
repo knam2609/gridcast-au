@@ -1,0 +1,60 @@
+# GridCast-AU base configuration. Secrets and connection strings come from
+# environment variables (see .env.example), never from this file.
+project: gridcast-au
+
+paths:
+  raw_dir: data/raw            # cached source downloads (gitignored)
+  interim_dir: data/interim    # parsed monthly parquet (gitignored)
+  backtest_dir: data/backtests # full backtest predictions (gitignored)
+  reports_dir: reports
+
+nem:
+  # AEMO publishes all market timestamps in "NEM time" = AEST, a fixed UTC+10
+  # offset with no daylight saving.
+  market_utc_offset_hours: 10
+  dispatch_interval_minutes: 5
+  market_limits_file: configs/market_limits.yaml
+
+regions:
+  VIC1:
+    name: Victoria
+    state: VIC
+    local_tz: Australia/Melbourne
+    holiday_subdiv: VIC
+    # Plausibility bounds for operational checks (flagged, not dropped).
+    demand_plausible_mw: [0.0, 12000.0]
+
+sources:
+  mmsdm:
+    base_url: https://nemweb.com.au/Data_Archive/Wholesale_Electricity/MMSDM
+    user_agent: "gridcast-au/0.1 (+https://github.com/knam2609/gridcast-au)"
+    request_delay_seconds: 1.0
+    timeout_seconds: 180
+    max_retries: 4
+    tables: [DISPATCHREGIONSUM, DISPATCHPRICE]
+    # MMSDM monthly archives are published ~2-6 weeks after month end.
+    stale_after_days: 75
+
+ingestion:
+  start_month: "2021-10"   # 5-minute settlement (5MS) began 1 Oct 2021
+  end_month: "2026-09"
+
+forecast:
+  issue_every_minutes: 30
+  horizon_steps: 288                 # 24 h of 5-minute intervals
+  availability_latency_steps: 0      # intervals ending <= origin are known at the origin
+
+backtest:
+  eval_start: "2021-11-01"           # after weekly-lag and 28-day-profile warm-up
+  holdout_start: "2025-10-01"        # final 12 months: reported separately, never used for selection
+  reference_model:
+    demand: weekly_naive
+    price: weekly_naive
+
+baselines:
+  median_profile_lookback_days: 28
+
+evaluation:
+  horizons_reported: [1, 6, 12, 48, 144, 288]
+  peak_hours_local: [17, 21]         # [start, end) local hour of the evening peak
+  price_spike_threshold: 300.0       # $/MWh
