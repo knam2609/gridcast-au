@@ -101,5 +101,36 @@ def dq(start: StartOpt = None, end: EndOpt = None, regions: RegionsOpt = None) -
         raise typer.Exit(code=1)
 
 
+@app.command()
+def calendar(regions: RegionsOpt = None) -> None:
+    """Build/refresh calendar_days (holidays, weekends, DST days) for the configured window.
+
+    Whole calendar years are built (through the year after the window ends) so forecast
+    horizons that extend past the last observed interval are covered.
+    """
+    import datetime as dt
+
+    from gridcast.database.engine import get_engine
+    from gridcast.database.load import ensure_regions
+    from gridcast.features.calendar import build_calendar_days, upsert_calendar_days
+    from gridcast.ingestion.pipeline import parse_month_arg
+
+    cfg = load_config()
+    first = parse_month_arg(cfg.ingestion.start_month)
+    last = parse_month_arg(cfg.ingestion.end_month)
+    start, end = dt.date(first.year, 1, 1), dt.date(last.year + 1, 12, 31)
+    with get_engine().begin() as conn:
+        ensure_regions(conn, cfg)
+        for region_id in _regions(regions):
+            region = cfg.region(region_id)
+            days = build_calendar_days(region.holiday_subdiv, region.local_tz, start, end)
+            n = upsert_calendar_days(conn, days)
+            typer.echo(
+                f"{region.holiday_subdiv}: {n} days {start} → {end} "
+                f"({int(days['is_public_holiday'].sum())} holidays, "
+                f"{int(days['is_dst_change_day'].sum())} DST-change days)"
+            )
+
+
 if __name__ == "__main__":
     app()

@@ -79,4 +79,4 @@ addopts = "-ra --strict-markers -m 'not integration'"
 markers = [
     "integration: requires the docker-compose PostgreSQL service (run with `make test-integration`)",
 ]
-filterwarnings = ["error::FutureWarning"]
+filterwarnings = ["error::FutureWarning", "error::pandas.errors.Pandas4Warning"]
