@@ -302,8 +302,22 @@ def half_hour_position_table(res: TargetResults, split: str = "dev") -> str:
 
 
 def best_per_horizon(res: TargetResults, split: str = "dev") -> pd.Series:
-    """Model with the lowest MAE at each horizon (ties go to the first model listed)."""
-    return res.by_horizon(split, "mae").idxmin(axis=1)
+    """Winning model per horizon, or ``"tie"`` when several models share the lowest MAE."""
+    table = res.by_horizon(split, "mae")
+    is_min = table.eq(table.min(axis=1), axis=0)
+    winners = table.idxmin(axis=1).astype(object)
+    winners[is_min.sum(axis=1) > 1] = "tie"
+    return winners
+
+
+def tied_models(res: TargetResults, split: str = "dev") -> dict[int, list[str]]:
+    table = res.by_horizon(split, "mae")
+    is_min = table.eq(table.min(axis=1), axis=0)
+    return {
+        int(h): [str(m) for m in table.columns[row]]
+        for h, row in zip(table.index, is_min.to_numpy(), strict=True)
+        if row.sum() > 1
+    }
 
 
 def crossover_horizon(res: TargetResults, a: str, b: str, split: str = "dev") -> int | None:
@@ -323,11 +337,14 @@ def summary_lines(res: TargetResults) -> list[str]:
                 f"- **{MODEL_LABELS.get(model, model)}** has the lowest MAE at {len(hs)} of "
                 f"{len(best)} lead times: {horizon_ranges(hs)}."
             )
+    for h, models in tied_models(res).items():
+        names = " = ".join(MODEL_LABELS.get(m, m) for m in models)
+        lines.append(f"- Exact tie at {horizon_label(h)}: {names} (identical forecasts).")
     if {"persistence", "daily_naive"} <= set(res.models):
-        h = crossover_horizon(res, "persistence", "daily_naive")
-        if h:
+        cross = crossover_horizon(res, "persistence", "daily_naive")
+        if cross:
             lines.append(
-                f"- Daily naive first beats persistence at a lead time of {horizon_label(h)}."
+                f"- Daily naive first beats persistence at a lead time of {horizon_label(cross)}."
             )
     return lines
 
