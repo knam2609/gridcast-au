@@ -2,11 +2,13 @@
 
 Written 2026-11-02 at the end of the M1 session. Read this, then [`m2_plan.md`](m2_plan.md).
 
+> **Update, 2026-11-02 (second session):** step 0 is done. Findings and decisions are in [`docs/m2_data_spike.md`](../m2_data_spike.md) and folded into `m2_plan.md` §1–§6. **Next task: step 1 (weather ingestion).** The step-0 section below is kept for the record.
+
 ## Where things stand
 
 - **M1 is complete and pushed:** branch `m1-pipeline-baseline` (11 commits) is on GitHub. **No PR has been opened, and it isn't merged into `main`.** Open the PR via https://github.com/knam2609/gridcast-au/pull/new/m1-pipeline-baseline when ready.
 - **M2 is planned, nothing implemented:** `m2_plan.md` holds the agreed decisions, the design, the success criteria S1–S5 (set before any results), and steps 0–6.
-- **This branch:** `m2-weather-demand-ml`, created from `m1-pipeline-baseline`. It contains only the plan and this note.
+- **This branch:** `m2-weather-demand-ml`, created from `m1-pipeline-baseline`. It contains the plan, this note, the data-root setting, and the step-0 spike (doc + `scripts/spikes/m2/`).
 
 ## Local environment (this machine)
 
@@ -27,7 +29,7 @@ make db-up && uv run alembic current        # expect 0002 (head)
 make lint typecheck test test-integration   # 84 unit + 16 integration, all green at handoff
 ```
 
-## First task next session: M2 step 0 (data-availability check)
+## M2 step 0 (data-availability check) — done, see `docs/m2_data_spike.md`
 
 Output: `docs/m2_data_spike.md`. Answer each question, then apply the fallback rules agreed in `m2_plan.md` §4:
 
