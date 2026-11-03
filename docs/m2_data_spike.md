@@ -169,7 +169,7 @@ The agreed fallback rule for "only temperature archived before 2024" applies. Th
 - Compare pre-dispatch on 30-minute means. Compare P5MIN intervals 1–11 at the 5-minute level.
 - Download the archive with the same `listing.json` cache as M1 (no globbing on the exFAT drive).
 
-**Open suggestion (not decided).** The 6 h delay has about 0.5 h of margin over the one observed run. A cheap robustness check would be to rebuild C with an 8 h delay at step 4 and report the change in pooled MAE, without changing the headline.
+**Suggestion (adopted in step 2, 2026-11-04).** The 6 h delay has about 0.5 h of margin over the one observed run. A cheap robustness check would be to rebuild C with an 8 h delay at step 4 and report the change in pooled MAE, without changing the headline. The builder supports the override (`features.delay_sensitivity_hours`), and `reports/m2_feature_audit.md` already shows how the offsets used change with 8 h.
 
 ## 9. Re-running
 

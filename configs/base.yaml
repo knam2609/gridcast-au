@@ -57,6 +57,19 @@ backtest:
 baselines:
   median_profile_lookback_days: 28
 
+features:
+  # M2 feature builder; every feature is listed in docs/feature_catalogue.md (generated).
+  degree_base_c: 18.0        # cooling degrees = max(T - base, 0), heating = max(base - T, 0)
+  single_site: melbourne     # its temperature is a feature on its own, besides the weighted mean
+  # Robustness check: rebuild C with this GFS publication delay (headline uses
+  # weather.forecasts.publication_delay_hours); reported, never used for the headline.
+  delay_sensitivity_hours: 8.0
+
+ml:
+  # Walk-forward ML evaluation (M2). Dates are NEM-time issue days.
+  first_issue: "2022-11-01"        # every model has >= 12 months of training data
+  plus_first_issue: "2025-02-01"   # C⁺/D⁺: GFS multi-variable archive starts 2024-01-19
+
 evaluation:
   horizons_reported: [1, 6, 12, 48, 144, 288]
   peak_hours_local: [17, 21]         # [start, end) local hour of the evening peak

@@ -100,6 +100,25 @@ class BaselinesConfig(BaseModel):
     median_profile_lookback_days: int = 28
 
 
+class FeaturesConfig(BaseModel):
+    """M2 feature builder (src/gridcast/features/, docs/feature_catalogue.md)."""
+
+    degree_base_c: float = 18.0  # base of the cooling / heating degree features
+    # Site whose temperature is also a feature on its own (besides the weighted mean).
+    single_site: str = "melbourne"
+    # Longer GFS publication delay for the robustness check (headline: the configured delay).
+    delay_sensitivity_hours: float = 8.0
+
+
+class MlConfig(BaseModel):
+    """Walk-forward ML evaluation windows (M2). Issue times are NEM-time dates."""
+
+    first_issue: dt.date  # first ML issue time: every model has >= 12 months of training data
+    # First C⁺/D⁺ issue time: the first quarterly retrain with >= 12 months of the GFS
+    # multi-variable archive (which starts 2024-01-19).
+    plus_first_issue: dt.date
+
+
 class EvaluationConfig(BaseModel):
     horizons_reported: list[int]
     peak_hours_local: tuple[int, int]
@@ -240,12 +259,18 @@ class AppConfig(BaseModel):
     baselines: BaselinesConfig
     evaluation: EvaluationConfig
     weather: WeatherConfig
+    features: FeaturesConfig
+    ml: MlConfig
 
     @model_validator(mode="after")
     def _weather_regions_known(self) -> AppConfig:
         unknown = {s.region_id for s in self.weather.sites.values()} - set(self.regions)
         if unknown:
             raise ValueError(f"weather sites reference unknown regions {sorted(unknown)}")
+        if self.features.single_site not in self.weather.sites:
+            raise ValueError(f"features.single_site {self.features.single_site!r} is not a site")
+        if not self.ml.first_issue <= self.ml.plus_first_issue < self.backtest.holdout_start:
+            raise ValueError("expected ml.first_issue <= ml.plus_first_issue < holdout_start")
         return self
 
     def resolve(self, path: Path) -> Path:

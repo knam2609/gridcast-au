@@ -2,6 +2,10 @@
 
 Written 2026-11-02 at the end of the M1 session. Read this, then [`m2_plan.md`](m2_plan.md).
 
+> **Update, 2026-11-04 (fourth session):** step 2 (feature builder and audit) is done. `FeatureBuilder` in `src/gridcast/features/builder.py` builds variants `A`, `C`, `D`, `Cplus`, `Dplus` for any (origins, horizons); `load_feature_builder(engine, cfg, region, delay_hours=None)` in `features/inputs.py` loads everything from the database. Generated documents: `docs/feature_catalogue.md` (`make catalogue`, from code; a unit test fails if stale) and `reports/m2_feature_audit.md` (`make feature-audit`, from the database). Decisions are in `m2_plan.md` §4 step 2, including the adopted 8 h delay sensitivity check. **Next task: step 3 (models in the walk-forward harness).** Settle the training-sample inconsistency noted under step 3 in `m2_plan.md` first. Test counts at the step-2 commit: 147 unit + 30 integration.
+>
+> **Open data observation (not a step-2 problem, cause unverified):** on 2024-12-09 VIC1 demand rises from 2,679 MW (15:00 local) to 5,518 MW (15:40) and falls to 2,418 MW at 15:45; price moves with it (−$21 → +$95 → −$146/MWh). Feature `dem_std_1h` peaks there. Worth a look in the step-4 failure cases and in M4 (anomaly detection). The other large 1-hour swings include the 2024-02-13 storm.
+>
 > **Update, 2026-11-03 (third session):** step 1 (weather ingestion) is done: migration `0003_weather`, `gridcast ingest-weather` / `make weather`, six new weather data-quality checks plus `weather_clipped_values`, and alignment helpers in `src/gridcast/weather/`. All 60 months of GFS forecasts and ERA5 for five sites are loaded, and `gridcast dq` passes, with warnings only for known gaps and clipped artefacts. Details: `docs/data_sources.md` §4–5. **Next task: step 2 (feature builder and audit).** It should use `load_weather_forecasts` / `load_weather_observations` → `site_weighted` → `to_five_minute`, then pick the freshest offset with `available_at <= o`.
 >
 > **Update, 2026-11-02 (second session):** step 0 is done. Findings and decisions are in [`docs/m2_data_spike.md`](../m2_data_spike.md) and folded into `m2_plan.md` §1–§6. **Next task: step 1 (weather ingestion).** The step-0 section below is kept for the record.
@@ -28,7 +32,7 @@ Sanity check before starting:
 ```bash
 ls /Volumes/BIWIN/gridcast-au/data         # SSD mounted?
 make db-up && uv run alembic current        # expect 0003 (head)
-make lint typecheck test test-integration   # 122 unit + 26 integration, all green at the step-1 commit
+make lint typecheck test test-integration   # 147 unit + 30 integration, all green at the step-2 commit
 ```
 
 ## M2 step 0 (data-availability check) — done, see `docs/m2_data_spike.md`

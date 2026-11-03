@@ -4,7 +4,7 @@ START ?= 2021-10
 END ?= 2026-09
 REGIONS ?= VIC1
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest weather calendar dq backtest report pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest weather calendar dq backtest report catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -57,5 +57,11 @@ backtest: ## Walk-forward evaluation of all baselines (demand + price)
 
 report: ## Generate reports/m1_baseline.md from stored metrics
 	$(UV) run gridcast report --region $(firstword $(REGIONS))
+
+catalogue: ## Regenerate docs/feature_catalogue.md from the feature catalogue in code
+	$(UV) run gridcast feature-catalogue
+
+feature-audit: ## Generate reports/m2_feature_audit.md (feature coverage on the stored data)
+	$(UV) run gridcast feature-audit --region $(firstword $(REGIONS))
 
 pipeline: db-up migrate ingest weather calendar dq backtest report ## Full pipeline end to end

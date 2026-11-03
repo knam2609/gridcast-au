@@ -8,25 +8,19 @@ import pytest
 from sqlalchemy import Engine, text
 
 from gridcast.config import AppConfig, ExpectedMissingConfig, load_config, load_market_limits
-from gridcast.database.load import ensure_regions, start_ingestion_run, upsert_market_intervals
 from gridcast.database.queries import load_weather_forecasts, load_weather_observations
-from gridcast.ingestion.open_meteo import OpenMeteoClient
 from gridcast.ingestion.weather import ingest_weather_range, month_hours
 from gridcast.timeutils import month_bounds_utc
 from gridcast.validation.checks import WEATHER_CHECKS, DQResult, run_checks
 from gridcast.weather.align import site_weighted, to_five_minute
+from tests.integration.conftest import OCT, _client
 from tests.integration.factories import clean_month
-from tests.open_meteo_fixtures import TODAY, FakeOpenMeteo, om_config
+from tests.open_meteo_fixtures import FakeOpenMeteo
 
 pytestmark = pytest.mark.integration
 
-OCT = dt.date(2021, 10, 1)
 N_SITES = 5
 N_HOURS = 31 * 24 + 1  # NEM month of October plus the closing hour
-
-
-def _client(fake: FakeOpenMeteo, tmp_path: Path) -> OpenMeteoClient:
-    return OpenMeteoClient(om_config(), tmp_path, transport=fake.transport(), today=lambda: TODAY)
 
 
 def _count(engine: Engine, sql: str) -> int:
@@ -37,20 +31,6 @@ def _count(engine: Engine, sql: str) -> int:
 def _sql(engine: Engine, sql: str) -> None:
     with engine.begin() as conn:
         conn.execute(text(sql))
-
-
-@pytest.fixture
-def loaded(db: Engine, tmp_path: Path) -> Engine:
-    """October 2021: clean market data plus fake weather for both datasets."""
-    cfg = load_config()
-    with db.begin() as conn:
-        ensure_regions(conn, cfg)
-        run = start_ingestion_run(conn, "mmsdm", "market_intervals", OCT)
-        upsert_market_intervals(conn, clean_month(), run)
-        conn.execute(text("UPDATE ingestion_runs SET status='success' WHERE run_id=:r"), {"r": run})
-    results = ingest_weather_range(db, cfg, OCT, OCT, client=_client(FakeOpenMeteo(), tmp_path))
-    assert [r.status for r in results] == ["success", "success"]
-    return db
 
 
 def _checks(engine: Engine, cfg: AppConfig | None = None) -> dict[str, DQResult]:

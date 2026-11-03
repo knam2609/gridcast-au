@@ -2,7 +2,7 @@
 
 **Goal:** find out whether machine learning with honestly available weather forecasts beats M1's best baseline at each lead time for 24-hour-ahead Victorian demand, and how it compares with AEMO's own forecasts.
 
-**Status:** step 0 done ([`docs/m2_data_spike.md`](../m2_data_spike.md), 2026-11-02); step 1 done (2026-11-03, weather loaded and checked, see [`docs/data_sources.md`](../data_sources.md) §4–5); step 2 next. Success criteria were agreed before any ML results existed (see §3). The step-0 decisions below refine *how* C, D and the benchmark are built; they do not change S1–S5.
+**Status:** step 0 done ([`docs/m2_data_spike.md`](../m2_data_spike.md), 2026-11-02); step 1 done (2026-11-03, weather loaded and checked, see [`docs/data_sources.md`](../data_sources.md) §4–5); step 2 done (2026-11-04, feature builder, leakage tests, [`docs/feature_catalogue.md`](../feature_catalogue.md) and [`reports/m2_feature_audit.md`](../../reports/m2_feature_audit.md)); step 3 next. Success criteria were agreed before any ML results existed (see §3). The step-0 decisions below refine *how* C, D and the benchmark are built; they do not change S1–S5.
 
 ## 1. Decisions (agreed 2026-11-02)
 
@@ -121,9 +121,16 @@ Branch `m2-weather-demand-ml` from `m1-pipeline-baseline` (or from `main`, once 
 - Update `docs/data_sources.md`.
 - Outcome: `gridcast ingest-weather` loaded all 60 months for both datasets. `weather_gaps` is 0 at every site; the only missing values are the step-0 known ranges. Decisions made during the step: weights are fixed ABS ERP at 30 June 2024 (Latrobe Valley = Traralgon–Morwell + Moe–Newborough); the Melbourne point is the spike point; 5-minute alignment is computed on the fly (`gridcast/weather/align.py`), never stored. A new finding: the GFS archive holds 153 cloud cover values of exactly −1 % or 101 %, a rounding artefact. Values within 1 point of a bounded range are clipped on load and counted (`weather_clipped_values`, warn).
 
-**Step 2. Feature builder and audit.** Catalogue, A/C/D feature matrices, leakage property tests, generated `docs/feature_catalogue.md`.
+**Step 2. Feature builder and audit.** ✅ Done 2026-11-04.
+- Catalogue, A/C/D feature matrices, leakage property tests, generated `docs/feature_catalogue.md`.
+- Outcome: `src/gridcast/features/` gained `catalogue.py` (single source of feature names, definitions and leakage reasoning), `weather.py` (5-minute alignment and the freshest-published-offset rule), `builder.py` (`FeatureBuilder.build(variant, origins, horizons)`, variants `A`, `C`, `D`, `Cplus`, `Dplus`), `inputs.py` (database loading) and `audit.py`. New commands: `gridcast feature-catalogue` (`make catalogue`) and `gridcast feature-audit` (`make feature-audit`). Features are computed on the fly, never stored; a full development-period audit (14.7 M pairs × 6 builds) takes about 5 seconds.
+- Decisions made with the user: (1) two generated documents, kept separate: `docs/feature_catalogue.md` from code (a unit test fails if it is stale) and `reports/m2_feature_audit.md` from the database; (2) the **8 h publication-delay sensitivity check is adopted**: `features.delay_sensitivity_hours`, reported in step 4, never the headline (a delay shorter than the configured 6 h is refused as a leak); (3) the step-1 cloud-cover clipping rule is kept.
+- Decisions made while building: all weather features of a pair come from **one** forecast offset (the freshest whose every required value is published by *o*); the Melbourne temperature feature is `wx_temp_single_site` (`features.single_site`); demand-window statistics use ddof = 0 and are missing if any interval in the window is missing (none are).
+- Leakage tests: future demand perturbed → all five variants unchanged; forecast rows with `available_at > o` perturbed or deleted → C and C⁺ unchanged; controls show both tests fail when the rule is broken. Two deliberate mutations (forecasts read 1 h before publication; demand cutoff one interval late) were each caught.
+- Audit findings (from the generated report): 1.94% of development pairs have no C weather (the GFS seam, targets 2023-12-29 23:05 → 2024-01-20 11:55 UTC) and are excluded for every model; day 1 is used for 82.7% of pairs and 84.4% of those with weather, matching step 0's 84.4%; C-vs-ERA5 temperature differs by about 1.1 °C at every lead time, because C's forecast is 24–54 h old at every lead; the timing check is smallest at zero shift.
 
 **Step 3. Models in the walk-forward harness.**
+- *Open point to settle first:* §2.4's training sample is inconsistent. Issue times every 2 h × targets every 15 min is about 0.42 M rows a year, not 1.7 M; 1.7 M a year matches issue times every **30 min** × targets every 15 min.
 - LightGBM and ridge for A, C and D, retrained quarterly, with inner-validation tuning; C⁺ and D⁺ from 2025-02-01.
 - Baselines rescored on identical pairs. Model files and provenance saved.
 - New segments added.
@@ -149,7 +156,7 @@ Branch `m2-weather-demand-ml` from `m1-pipeline-baseline` (or from `main`, once 
 |---|---|
 | Archived forecast coverage before 2024 | Resolved in step 0: headline C is temperature-only; C⁺ shows what the other variables add from 2024 |
 | Weather-model upgrades change forecast error over time | Report errors by year; note it as a limitation |
-| Publication timing leaks future information | Run time verified exactly in step 0; 6 h delay vs 5.4–5.5 h observed for one run (≈0.5 h margin); `available_at` filtering, property tests. Optional: an 8 h delay sensitivity check at step 4 |
+| Publication timing leaks future information | Run time verified exactly in step 0; 6 h delay vs 5.4–5.5 h observed for one run (≈0.5 h margin); `available_at` filtering, property tests. 8 h delay sensitivity check (adopted in step 2, reported at step 4) |
 | Cloud-driven midday swings (rooftop PV is not in `TOTALDEMAND`) | Headline C has no cloud or radiation forecasts (none archived before 2024); C⁺/D⁺ and the "very cloudy day" segment show the cost. Rooftop-PV-adjusted "underlying demand" stays a future idea |
 | Pre-dispatch is 30-minute and covers only part of the next day | 30-minute aggregation; per-lead-time coverage reporting |
 | Overfitting through tuning | Small grid, inner validation inside the development period, holdout scored once |

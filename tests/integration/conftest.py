@@ -2,15 +2,24 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import os
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import Engine, create_engine, make_url, text
 
-from gridcast.config import PROJECT_ROOT, get_settings
+from gridcast.config import PROJECT_ROOT, get_settings, load_config
+from gridcast.database.load import ensure_regions, start_ingestion_run, upsert_market_intervals
+from gridcast.ingestion.open_meteo import OpenMeteoClient
+from gridcast.ingestion.weather import ingest_weather_range
+from tests.integration.factories import clean_month
+from tests.open_meteo_fixtures import TODAY, FakeOpenMeteo, om_config
+
+OCT = dt.date(2021, 10, 1)
 
 TABLES = (
     "dq_results, forecasts, forecast_metrics, model_runs, calendar_days, "
@@ -69,3 +78,21 @@ def db(engine: Engine) -> Engine:
     with engine.begin() as conn:
         conn.execute(text(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE"))
     return engine
+
+
+def _client(fake: FakeOpenMeteo, tmp_path: Path) -> OpenMeteoClient:
+    return OpenMeteoClient(om_config(), tmp_path, transport=fake.transport(), today=lambda: TODAY)
+
+
+@pytest.fixture
+def loaded(db: Engine, tmp_path: Path) -> Engine:
+    """October 2021: clean market data plus fake weather for both datasets."""
+    cfg = load_config()
+    with db.begin() as conn:
+        ensure_regions(conn, cfg)
+        run = start_ingestion_run(conn, "mmsdm", "market_intervals", OCT)
+        upsert_market_intervals(conn, clean_month(), run)
+        conn.execute(text("UPDATE ingestion_runs SET status='success' WHERE run_id=:r"), {"r": run})
+    results = ingest_weather_range(db, cfg, OCT, OCT, client=_client(FakeOpenMeteo(), tmp_path))
+    assert [r.status for r in results] == ["success", "success"]
+    return db

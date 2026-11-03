@@ -271,5 +271,26 @@ def report(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> N
     typer.echo(f"wrote {path}")
 
 
+@app.command("feature-catalogue")
+def feature_catalogue() -> None:
+    """Write docs/feature_catalogue.md from the feature catalogue in code (no database)."""
+    from gridcast.config import PROJECT_ROOT
+    from gridcast.features.catalogue import render_catalogue
+
+    path = PROJECT_ROOT / "docs" / "feature_catalogue.md"
+    path.write_text(render_catalogue(load_config()), encoding="utf-8")
+    typer.echo(f"wrote {path}")
+
+
+@app.command("feature-audit")
+def feature_audit(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+    """Write reports/m2_feature_audit.md: feature coverage measured on the stored data."""
+    from gridcast.database.engine import get_engine
+    from gridcast.features.audit import write_audit
+
+    path = write_audit(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
 if __name__ == "__main__":
     app()
