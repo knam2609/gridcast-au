@@ -39,6 +39,33 @@ def load_evaluation_set(engine: Engine, region_id: str, key: str) -> TargetResul
             raise LookupError(
                 f"no complete '{key}' ML batch for {region_id}; run `gridcast backtest-ml`"
             )
+    return _load_batch(engine, str(batch))
+
+
+def development_runs(engine: Engine, region_id: str) -> list[TargetResults]:
+    """Every complete ``main`` batch (one per development run), oldest first."""
+    with engine.connect() as conn:
+        batches = (
+            conn.execute(
+                text(
+                    """
+                    SELECT batch_id FROM model_runs
+                    WHERE region_id = :r AND target = 'demand' AND status = 'success'
+                      AND config->>'evaluation_set' = 'main'
+                      AND (config->>'complete_window')::boolean
+                    GROUP BY batch_id ORDER BY min(created_at)
+                    """
+                ),
+                {"r": region_id},
+            )
+            .scalars()
+            .all()
+        )
+    return [_load_batch(engine, str(b)) for b in batches]
+
+
+def _load_batch(engine: Engine, batch: str) -> TargetResults:
+    with engine.connect() as conn:
         runs = pd.read_sql(
             text("SELECT * FROM model_runs WHERE batch_id = :b ORDER BY run_id"),
             conn,
@@ -56,7 +83,7 @@ def load_evaluation_set(engine: Engine, region_id: str, key: str) -> TargetResul
             conn,
             params={"b": batch},
         )
-    return TargetResults("demand", str(batch), runs, metrics)
+    return TargetResults("demand", batch, runs, metrics)
 
 
 def run_config(res: TargetResults, model: str) -> dict[str, Any]:

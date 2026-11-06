@@ -77,8 +77,9 @@ ml:
   sample_every_steps: 3
   # Each ML model is one fit per lead band (inclusive horizon steps; must cover 1..H). A
   # single global model let long-lead corrections swamp the short leads (step 3 spike).
-  # The S1 range (2-24 h) is served entirely by the second band.
-  lead_bands: [[1, 24], [25, 288]]
+  # Second development run (m2_plan.md §4 step 4): four bands, 5-30 min, 35 min-2 h,
+  # 2 h 5 min-6 h, 6 h 5 min-24 h (run 1: [[1, 24], [25, 288]]; spikes/m2/band_layout.py).
+  lead_bands: [[1, 6], [7, 24], [25, 72], [73, 288]]
   seed: 2609
   lightgbm:
     # Fixed settings; objective, num_leaves and the target form are selected (see grid).
@@ -94,8 +95,9 @@ ml:
   grid:
     # Searched at EVERY retrain and lead band: each setting early-stops on that retrain's
     # last early_stopping_weeks, the lowest MAE there wins and is refit on the whole window.
-    # residual: y(t) - y(t-24h); direct: y(t); anchored: y(t) - [y(o) + y(t-24h) - y(o-24h)]
-    target_forms: [residual, direct, anchored]
+    # residual: y(t) - y(t-24h); direct: y(t); anchored: y(t) - [y(o) + y(t-24h) - y(o-24h)];
+    # latest: y(t) - y(o) (added for the second development run)
+    target_forms: [residual, direct, anchored, latest]
     lightgbm_objective: [l2, l1]
     lightgbm_num_leaves: [31, 127]     # 255 dropped: slowest and least accurate on pre-scoring data
     ridge_alpha: [0.1, 1.0, 10.0, 100.0, 1000.0]

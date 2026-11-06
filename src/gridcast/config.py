@@ -126,7 +126,7 @@ class RidgeConfig(BaseModel):
     spline_knots: int = 6
 
 
-TargetForm = Literal["residual", "direct", "anchored"]
+TargetForm = Literal["residual", "direct", "anchored", "latest"]
 
 
 class GridConfig(BaseModel):

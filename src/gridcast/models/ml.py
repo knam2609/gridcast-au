@@ -1,6 +1,6 @@
 """Machine-learning regressors for the M2 walk-forward: LightGBM and ridge.
 
-Both models learn one of two *target forms* of demand (m2_plan.md §2.4):
+Both models learn one of four *target forms* of demand (m2_plan.md §2.4):
 
 * ``residual``: r = y(t) − y(t − 24 h), the correction to "same time yesterday"; the
   forecast is ``dem_same_time_yesterday + r̂``;
@@ -8,8 +8,10 @@ Both models learn one of two *target forms* of demand (m2_plan.md §2.4):
 * ``anchored``: the correction to y(o) + [y(t − 24 h) − y(o − 24 h)], i.e. persistence plus
   yesterday's change over the same lead (``dem_same_time_yesterday + dem_now_vs_yesterday``).
   Added in step 3 for short leads, where the other forms cannot reproduce y(o) precisely.
+* ``latest``: y(t) − y(o), the correction to the latest demand (persistence itself). Added
+  for the second development run: at 5 minutes persistence beat every other form.
 
-The forecast error is the same in both forms (ŷ − y = r̂ − r), so MAE compares them
+The forecast error is the same in every form (ŷ − y = r̂ − r), so MAE compares them
 directly, and the target form is selected like any other setting.
 
 Each model has two steps, used by the walk-forward's per-retrain selection:
@@ -37,7 +39,8 @@ from gridcast.config import LightGBMConfig, MlConfig, RidgeConfig
 
 BASE_FEATURE = "dem_same_time_yesterday"
 TODAY_VS_YESTERDAY = "dem_now_vs_yesterday"
-TARGET_FORMS = ("residual", "direct", "anchored")
+LATEST = "dem_now"
+TARGET_FORMS = ("residual", "direct", "anchored", "latest")
 FAMILIES = ("lightgbm", "ridge")
 FAMILY_PREFIX = {"lightgbm": "lgbm", "ridge": "ridge"}
 PREDICT_CHUNK = 250_000  # rows per ridge prediction block (bounds the dense design matrix)
@@ -67,13 +70,15 @@ class MlModel(ABC):
     def __init__(self, columns: Sequence[str], target_form: str, seed: int) -> None:
         if target_form not in TARGET_FORMS:
             raise ValueError(f"unknown target form {target_form!r}")
-        if BASE_FEATURE not in columns or TODAY_VS_YESTERDAY not in columns:
-            raise ValueError(f"features must include {BASE_FEATURE} and {TODAY_VS_YESTERDAY}")
+        required = (BASE_FEATURE, TODAY_VS_YESTERDAY, LATEST)
+        if not set(required) <= set(columns):
+            raise ValueError(f"features must include {', '.join(required)}")
         self.columns = list(columns)
         self.target_form = target_form
         self.seed = seed
         self._base = self.columns.index(BASE_FEATURE)
         self._shift = self.columns.index(TODAY_VS_YESTERDAY)
+        self._latest = self.columns.index(LATEST)
 
     # --------------------------------------------------------------- target form
 
@@ -81,6 +86,8 @@ class MlModel(ABC):
         """The value the target form is a correction to (zero for ``direct``)."""
         if self.target_form == "direct":
             return np.zeros(len(X))
+        if self.target_form == "latest":
+            return X[:, self._latest].astype(np.float64)
         base = X[:, self._base].astype(np.float64)
         if self.target_form == "anchored":
             base = base + X[:, self._shift].astype(np.float64)

@@ -7,15 +7,18 @@ import pandas as pd
 import pytest
 
 from gridcast.evaluation.m2_report import (
+    DevRun,
     LeakageOutcome,
     Pairs,
     ablation_observations,
-    band_jump,
+    band_jumps,
     chosen_counts,
     daily_errors,
     first_better,
     group_means,
     parse_pytest_summary,
+    same_pairs,
+    second_run_adopted,
     selection_table,
     success_criteria,
     yearly_errors,
@@ -111,9 +114,12 @@ def test_lead_time_facts() -> None:
     assert groups.loc["2 h 5 min–24 h", "lgbm_C"] == pytest.approx(250.0)
     assert first_better(table, "lgbm_C", "persistence") == 3  # 61 vs 60 at 10 min
     assert first_better(table, "daily_naive", "lgbm_C") is None
-    jump, typical = band_jump(table, "lgbm_C", 24)
+    (jump,), typical = band_jumps(table, "lgbm_C", [24])
     assert jump == pytest.approx(250.0 - (55 + 3 * 24))
     assert typical == pytest.approx(0.0)  # flat beyond the boundary dominates the median
+    jumps, typical = band_jumps(table, "persistence", [12, 24])
+    assert jumps == [10.0, 10.0] and typical == 10.0
+    assert band_jumps(table, "lgbm_C", [])[0] == []
 
 
 def _pairs() -> Pairs:
@@ -205,3 +211,37 @@ def test_ablation_observations_only_state_what_the_data_shows() -> None:
     # No seasonal contrast, and a feature that matters on its own: neither claim is made.
     flat = ablation_observations(_flags((0.1, 0.1), (0.1, 0.1), 0.08), 8)
     assert len(flat) == 1
+
+
+def _run(pooled_c: float, passed: int = 4, persistence: float = 300.0, **kw: object) -> DevRun:
+    fields: dict[str, object] = {
+        "batch_id": "b" * 36,
+        "git_sha": "c" * 40,
+        "bands": [(1, 24), (25, 288)],
+        "forms": ["residual", "direct", "anchored"],
+        "passed": passed,
+        "n_criteria": 4,
+        "pooled_c": pooled_c,
+        "at_first": 58.0,
+        "persistence_first": 47.0,
+        "jumps": [(24, 77.0)],
+        "scored_pairs": 1000,
+        "baseline_pooled": {"persistence": persistence, "daily_naive": 470.0},
+        "other_settings": {},
+    }
+    return DevRun(**{**fields, **kw})  # type: ignore[arg-type]
+
+
+def test_second_run_adoption_rule() -> None:
+    first = _run(267.5)
+    assert second_run_adopted([first, _run(267.5)])  # a tie is adopted ("no higher")
+    assert second_run_adopted([first, _run(260.0)])
+    assert not second_run_adopted([first, _run(267.6)])
+    assert not second_run_adopted([first, _run(260.0, passed=3)])
+    with pytest.raises(ValueError, match="identical pairs"):
+        second_run_adopted([first, _run(260.0, persistence=300.1)])
+    with pytest.raises(ValueError, match="identical pairs"):
+        second_run_adopted([first, _run(260.0, scored_pairs=999)])
+    with pytest.raises(ValueError, match="exactly two"):
+        second_run_adopted([first, first, first])
+    assert same_pairs([first, _run(1.0, persistence=300.0 + 1e-12)])

@@ -28,6 +28,7 @@ pytestmark = pytest.mark.integration
 
 def test_ablation_reproduces_the_stored_run(ready: Engine, tmp_path: Path) -> None:  # noqa: F811
     cfg = _cfg(tmp_path)
+    cfg.ml = cfg.ml.model_copy(update={"lead_bands": [(1, 24), (25, 288)]})  # as in run 1
     cfg.evaluation = cfg.evaluation.model_copy(
         update={"weather_ablation_retrains": [dt.date(2021, 10, 20)]}
     )
@@ -73,6 +74,7 @@ def test_ablation_reproduces_the_stored_run(ready: Engine, tmp_path: Path) -> No
     ):
         assert heading in text
     assert "## C⁺ and D⁺" not in text  # no plus batch stored
+    assert "## Development runs" not in text  # a single development run
     for key in ("S1", "S2", "S3", "S4"):
         assert f"| {key} |" in text
     assert "matches the current config" in text
@@ -90,3 +92,26 @@ def test_ablation_reproduces_the_stored_run(ready: Engine, tmp_path: Path) -> No
     )
     with pytest.raises(ValueError, match="not retrains"):
         run_weather_ablation(ready, cfg, "VIC1")
+
+    # A second development run (more lead bands, the latest target form) on the same pairs:
+    # the report compares the two and applies the pre-registered adoption rule.
+    second = _cfg(tmp_path)
+    second.paths.reports_dir = tmp_path / "reports"
+    second.ml = second.ml.model_copy(
+        update={
+            "lead_bands": [(1, 24), (25, 72), (73, 288)],
+            "grid": second.ml.grid.model_copy(
+                update={"target_forms": [*second.ml.grid.target_forms, "latest"]}
+            ),
+        }
+    )
+    sets = run_ml_backtest(
+        ready, second, "VIC1", plus=False, delay=True, model_root=second.data_path(Path("models2"))
+    )
+    store_sets(ready, second, "VIC1", sets)
+    text = build_report(ready, second, "VIC1", leakage=LeakageOutcome(5, 0, 0))
+    assert "## Development runs" in text
+    assert "lead bands 2 → 3; target form latest added" in text
+    assert "Every other ML and setup setting is identical" in text
+    assert "**Outcome:**" in text and "for the holdout.**" in text
+    assert "| 6 h 5 min |" in text  # the new boundary's first step is in the tables

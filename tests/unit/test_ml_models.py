@@ -68,7 +68,7 @@ def _split(n: int) -> tuple[np.ndarray, np.ndarray]:
     return ~es_valid, es_valid
 
 
-@pytest.mark.parametrize("form", ["residual", "direct", "anchored"])
+@pytest.mark.parametrize("form", ["residual", "direct", "anchored", "latest"])
 def test_target_forms_round_trip(form: str) -> None:
     cols, X = _features("A", 50)
     model = RidgeModel(cols, form, 1.0, RidgeConfig(), seed=0)
@@ -80,6 +80,7 @@ def test_target_forms_round_trip(form: str) -> None:
         "residual": actual - base,
         "direct": actual,
         "anchored": actual - base - X[:, cols.index("dem_now_vs_yesterday")],
+        "latest": actual - X[:, cols.index("dem_now")],
     }[form]
     np.testing.assert_allclose(y, expected, rtol=1e-6)
 

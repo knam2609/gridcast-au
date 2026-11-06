@@ -28,6 +28,7 @@ from gridcast.config import PROJECT_ROOT, AppConfig
 from gridcast.evaluation.m2_results import (
     actual_path,
     artifact_path,
+    development_runs,
     load_evaluation_set,
     retrain_records,
     run_config,
@@ -214,11 +215,15 @@ def first_better(table: pd.DataFrame, model: str, reference: str) -> int | None:
     return int(better.min()) if len(better) else None
 
 
-def band_jump(table: pd.DataFrame, model: str, last_short: int) -> tuple[float, float]:
-    """MAE step across the band boundary, and the median absolute step elsewhere."""
+def band_jumps(
+    table: pd.DataFrame, model: str, boundaries: Sequence[int]
+) -> tuple[list[float], float]:
+    """MAE step across each band boundary (last step of a band → first of the next), and
+    the median absolute step between neighbouring lead times elsewhere."""
     series = table[model]
-    steps = series.diff().abs().drop(index=[series.index[0], last_short + 1])
-    return float(series.loc[last_short + 1] - series.loc[last_short]), float(steps.median())
+    steps = series.diff().abs().drop(index=[series.index[0], *[b + 1 for b in boundaries]])
+    jumps = [float(series.loc[b + 1] - series.loc[b]) for b in boundaries]
+    return jumps, float(steps.median())
 
 
 # --------------------------------------------------------------------------- figures
@@ -230,7 +235,7 @@ def _line_chart(
     path: Path,
     title: str,
     xmax_hours: float,
-    boundary_hours: float | None,
+    boundary_hours: Sequence[float],
     ymax: float | None = None,
 ) -> None:
     """MAE vs lead time, one 2px line per model, legend above and direct labels at the end."""
@@ -252,11 +257,12 @@ def _line_chart(
     top = ymax if ymax is not None else float(sel.to_numpy().max()) * 1.08
     ax.set_ylim(0, top)
     ax.set_xlim(0, xmax_hours)
-    if boundary_hours is not None:
-        ax.axvline(boundary_hours, color=AXIS, linewidth=1)
-        ax.annotate(f"lead bands meet ({boundary_hours:g} h)", xy=(boundary_hours, top * 0.97),
-                    xytext=(4, 0), textcoords="offset points", color=MUTED, fontsize=8,
-                    va="top")  # fmt: skip
+    shown = [b for b in boundary_hours if b < xmax_hours]
+    for i, b in enumerate(shown):
+        ax.axvline(b, color=AXIS, linewidth=1)
+        text = f"lead bands meet ({b:g} h)" if i == 0 else f"{b:g} h"
+        ax.annotate(text, xy=(b, top * 0.97), xytext=(4, 0), textcoords="offset points",
+                    color=MUTED, fontsize=8, va="top")  # fmt: skip
 
     ends = sorted((min(float(sel[m].iloc[-1]), top * 0.98), m) for m in models)
     gap = top * 0.05
@@ -507,6 +513,151 @@ class DelayCheck:
             res.by_horizon("dev", "mae"),
             pooled(res),
         )
+
+
+@dataclass(slots=True)
+class DevRun:
+    """One complete development run (its ``main`` batch), summarised for comparison."""
+
+    batch_id: str
+    git_sha: str
+    bands: list[tuple[int, int]]
+    forms: list[str]
+    passed: int
+    n_criteria: int
+    pooled_c: float
+    at_first: float  # LightGBM C MAE at 5 min
+    persistence_first: float
+    jumps: list[tuple[int, float]]  # (last step of a band, MAE step to the next band)
+    scored_pairs: int
+    baseline_pooled: dict[str, float]
+    other_settings: dict[str, Any]  # ML config and setup apart from bands and target forms
+
+    @classmethod
+    def of(cls, res: TargetResults, leakage: LeakageOutcome) -> DevRun:
+        table = res.by_horizon("dev", "mae")
+        pooled_mae = pooled(res)
+        baselines = baselines_of(res)
+        criteria = success_criteria(table, pooled_mae, baselines, leakage)
+        rc = run_config(res, HEADLINE)
+        bands = [(int(lo), int(hi)) for lo, hi in rc["lead_bands"]]
+        boundaries = [hi for _, hi in bands[:-1]]
+        jumps, _ = band_jumps(table, HEADLINE, boundaries)
+        sha = res.runs.loc[res.runs["model_name"] == HEADLINE, "git_sha"].iloc[0]
+        ml = {k: v for k, v in rc["ml"].items() if k != "lead_bands"}
+        ml["grid"] = {k: v for k, v in ml["grid"].items() if k != "target_forms"}
+        return cls(
+            batch_id=res.batch_id,
+            git_sha=str(sha),
+            bands=bands,
+            forms=[str(f) for f in rc["ml"]["grid"]["target_forms"]],
+            passed=sum(c.passed for c in criteria),
+            n_criteria=len(criteria),
+            pooled_c=pooled_mae[HEADLINE],
+            at_first=float(table[HEADLINE].iloc[0]),
+            persistence_first=float(table["persistence"].iloc[0]),
+            jumps=list(zip(boundaries, jumps, strict=True)),
+            scored_pairs=int(rc["scored_pairs"]),
+            baseline_pooled={b: pooled_mae[b] for b in baselines},
+            other_settings={"ml": ml, "setup": rc["setup"]},
+        )
+
+
+def same_pairs(runs: Sequence[DevRun], tol: float = 1e-9) -> bool:
+    """Runs scored identical pairs: same count and baselines' pooled MAE equal to the bit.
+
+    Baselines are deterministic, so any difference in the scored pairs shows up there.
+    """
+    first = runs[0]
+    return all(
+        r.scored_pairs == first.scored_pairs
+        and r.baseline_pooled.keys() == first.baseline_pooled.keys()
+        and all(abs(v - first.baseline_pooled[b]) <= tol for b, v in r.baseline_pooled.items())
+        for r in runs[1:]
+    )
+
+
+def second_run_adopted(runs: Sequence[DevRun]) -> bool:
+    """The pre-registered rule (m2_plan.md §4, step 4): the second run's config is frozen
+    for the holdout if every criterion passes for it and its pooled LightGBM C MAE is no
+    higher than the first run's, on identical pairs."""
+    if len(runs) != 2:
+        raise ValueError("the adoption rule compares exactly two development runs")
+    if not same_pairs(runs):
+        raise ValueError("the development runs did not score identical pairs")
+    first, second = runs
+    return second.passed == second.n_criteria and second.pooled_c <= first.pooled_c
+
+
+def _development_runs_section(runs: Sequence[DevRun]) -> str:
+    adopted = second_run_adopted(runs)
+    rows = []
+    for i, r in enumerate(runs, start=1):
+        rows.append(
+            [
+                str(i),
+                f"`{r.batch_id[:8]}`",
+                f"`{r.git_sha[:7]}`",
+                ", ".join(lead_group_label(lo, hi) for lo, hi in r.bands),
+                ", ".join(r.forms),
+                f"{r.passed} of {r.n_criteria}",
+                f"{r.pooled_c:,.1f}",
+                f"{r.at_first:,.1f} vs {r.persistence_first:,.1f}",
+                "; ".join(f"{horizon_label(b)}: {j:+,.1f}" for b, j in r.jumps),
+            ]
+        )
+    first, second = runs
+    change = second.pooled_c - first.pooled_c
+    added = [f for f in second.forms if f not in first.forms]
+    changes = [f"lead bands {len(first.bands)} → {len(second.bands)}"] + (
+        [f"target form{'s' if len(added) > 1 else ''} {', '.join(added)} added"] if added else []
+    )
+    rest = (
+        "Every other ML and setup setting is identical"
+        if second.other_settings == first.other_settings
+        else "**Other ML or setup settings also differ** (see the stored configs)"
+    )
+    return "\n".join(
+        [
+            "The development period was scored by two complete runs of the walk-forward. "
+            "The first showed two weaknesses (5-minute MAE above persistence; a jump at its "
+            "band boundary). The second was agreed with the user to address them: "
+            f"{'; '.join(changes)}. {rest}, and both runs scored the same pairs (same count; "
+            "the baselines' pooled MAE is identical to the bit).\n",
+            _md_table(
+                [
+                    "Run",
+                    "Batch",
+                    "Commit",
+                    "Lead bands",
+                    "Target forms",
+                    "S1–S4 passed",
+                    "Pooled MAE, LightGBM C (MW)",
+                    "5 min: LightGBM C vs persistence (MW)",
+                    "MAE step at band boundaries (MW)",
+                ],
+                rows,
+                "lllllrrrl",
+            ),
+            "",
+            "**Adoption rule (pre-registered in `docs/plans/m2_plan.md` before the second "
+            "run's results):** the second run's config is frozen for the holdout if S1–S4 all "
+            "pass for it and its pooled LightGBM C MAE is no higher than the first run's on "
+            "identical pairs; otherwise the first run's config is frozen.\n",
+            f"**Outcome:** the second run's pooled MAE is {change:+,.1f} MW against the first "
+            f"run's, and {second.passed} of {second.n_criteria} criteria pass. "
+            + (
+                "**The second run's config is adopted for the holdout.**"
+                if adopted
+                else "**The first run's config is kept for the holdout.**"
+            )
+            + " The rest of this report describes the second run"
+            + ("." if adopted else "; the first run's own report is in the repository history.")
+            + "\n",
+            "Two looks at the same period make the adopted run's development numbers "
+            "slightly optimistic; the holdout, scored once, is the unbiased estimate.\n",
+        ]
+    )
 
 
 @dataclass(slots=True)
@@ -893,6 +1044,15 @@ def build_report(
     )
     leakage = leakage or run_leakage_tests()
     main = sets.main
+    main_hash = str(run_config(main, HEADLINE)["config_hash"])
+    for key, other in (("plus", sets.plus), ("delay", sets.delay)):
+        if other is not None and {str(c["config_hash"]) for c in other.runs["config"]} != {
+            main_hash
+        }:
+            raise ValueError(f"the latest {key} batch is not from the same run as the main one")
+    dev_runs = [DevRun.of(r, leakage) for r in development_runs(engine, region_id)]
+    if dev_runs and dev_runs[-1].batch_id != main.batch_id:
+        raise ValueError("the latest main batch is not the latest development run")
     table = main.by_horizon("dev", "mae")
     main_pooled = pooled(main)
     baselines = baselines_of(main)
@@ -905,9 +1065,8 @@ def build_report(
         else None
     )
     ablation = read_ablation(cfg, main.batch_id)
-    if len(rc["lead_bands"]) != 2:
-        raise ValueError("report-m2 describes exactly two lead bands; extend it for more")
-    last_short = int(rc["lead_bands"][0][1])
+    bands = [(int(lo), int(hi)) for lo, hi in rc["lead_bands"]]
+    boundaries = [hi for _, hi in bands[:-1]]  # last step of every band but the last
     issue_minutes = 5 * int(rc["setup"]["issue_every_steps"])
     es_weeks = int(rc["ml"]["early_stopping_weeks"])
     retrain_months = int(rc["ml"]["retrain_every_months"])
@@ -915,21 +1074,24 @@ def build_report(
     s1_label = horizon_label(S1_FIRST_STEP)
 
     figures = reports_dir / "figures"
-    boundary = last_short / 12  # hours
+    boundary_hours = [b / 12 for b in boundaries]
     title = "Victoria demand: MAE by lead time (development period)"
-    _line_chart(table, MAIN_PLOT, figures / FIGURE_LEAD, title, 24, boundary)
+    _line_chart(table, MAIN_PLOT, figures / FIGURE_LEAD, title, 24, boundary_hours)
     title = "Short lead times: ML against persistence (development period)"
-    _line_chart(table, SHORT_PLOT, figures / FIGURE_SHORT, title, 3.0, boundary)
+    short_hours = max(3.0, boundary_hours[0] + 1) if boundary_hours else 3.0
+    _line_chart(table, SHORT_PLOT, figures / FIGURE_SHORT, title, short_hours, boundary_hours)
 
     builder = load_feature_builder(engine, cfg, region_id)
     pairs = load_pairs(main, data_root, builder.ctx.times)
     if int(pairs.mask.sum()) != int(run_config(main, HEADLINE)["scored_pairs"]):
         raise ValueError("stored predictions do not reproduce the stored scored-pair count")
 
-    horizons = sorted({*cfg.evaluation.horizons_reported, last_short, last_short + 1})
+    horizons = sorted(
+        {*cfg.evaluation.horizons_reported, *boundaries, *[b + 1 for b in boundaries]}
+    )
     cross = first_better(table, HEADLINE, "persistence")
-    jump, typical = band_jump(table, HEADLINE, last_short)
-    jump_a, _ = band_jump(table, WEATHER_FREE, last_short)
+    jumps, typical = band_jumps(table, HEADLINE, boundaries)
+    jumps_a, _ = band_jumps(table, WEATHER_FREE, boundaries)
     passed = sum(c.passed for c in criteria)
     at_1 = {m: float(v) for m, v in table.iloc[0].items()}  # lead time 5 min
 
@@ -970,8 +1132,9 @@ def build_report(
         "issue time, **D** uses ERA5 reanalysis for the target time (perfect foresight, an "
         "upper bound for C's inputs). C and D have identical features, so C − D is the cost "
         "of weather-forecast error.\n"
-        f"- Every ML model is two fits: one for leads up to {horizon_label(last_short)}, one "
-        "beyond. Its settings (target form, objective, size or penalty) are re-selected at "
+        f"- Every ML model is {len(bands)} fits, one per lead band ("
+        + ", ".join(lead_group_label(lo, hi) for lo, hi in bands)
+        + "). Its settings (target form, objective, size or penalty) are re-selected at "
         f"every retrain (every {retrain_months} months) on the last {es_weeks} weeks before "
         "it.\n"
         "- **Bold** marks the lowest error in each column. Error = forecast − actual.\n",
@@ -996,13 +1159,29 @@ def build_report(
             else f"LightGBM C first beats it at {horizon_label(cross)}."
         )
         + f" Lead times under {s1_label} are reported, not pass/fail.",
-        f"- Between {horizon_label(last_short)} (the short-lead fit's last step) and "
-        f"{horizon_label(last_short + 1)} (the long-lead fit's first), LightGBM C's MAE "
-        f"changes by {jump:+,.1f} MW (A: {jump_a:+,.1f} MW), against a median step of "
-        f"{typical:,.1f} MW between neighbouring lead times elsewhere. The long-lead fit is "
-        "weakest at its shortest leads.",
-        "- Both are known weaknesses of this run. They are reported as they are; a fix would "
-        "be a separate, disclosed development run (decision of 2026-11-06).\n",
+        *[
+            f"- Between {horizon_label(b)} (one band's last step) and {horizon_label(b + 1)} "
+            f"(the next band's first), LightGBM C's MAE changes by {j:+,.1f} MW "
+            f"(A: {ja:+,.1f} MW), against a median step of {typical:,.1f} MW between "
+            "neighbouring lead times elsewhere."
+            + (
+                " The later band's fit is weakest at its shortest leads."
+                if j > 10 * max(typical, 0.1)
+                else ""
+            )
+            for b, j, ja in zip(boundaries, jumps, jumps_a, strict=True)
+        ],
+        "- The first development run's two weaknesses were the 5-minute result and the jump "
+        "at its only band boundary (2 h). They are reported as they are; see *Development "
+        "runs* for how this run compares.\n"
+        if len(dev_runs) > 1
+        else "- These are known weaknesses of this run. They are reported as they are; a fix "
+        "would be a separate, disclosed development run (decision of 2026-11-06).\n",
+        *(
+            ["## Development runs\n", _development_runs_section(dev_runs)]
+            if len(dev_runs) > 1
+            else []
+        ),
         "## Weather value by lead time\n",
         "Mean of the per-lead MAE within each lead-time range (MW). The delay column comes "
         "from the delay batch, on its own common pairs.\n",
@@ -1066,7 +1245,8 @@ def build_report(
         "LightGBM C, per retrain and lead band: the winning setting and the best "
         "early-stopping MAE each target form reached (residual: correction to the same time "
         "yesterday; direct: demand itself; anchored: correction to the latest demand plus "
-        "yesterday's change). This is the planned residual-vs-direct ablation.\n",
+        "yesterday's change; latest: correction to the latest demand, i.e. persistence). "
+        "This is the planned residual-vs-direct ablation.\n",
         selection_table(c_records),
         "\nWinning target form across every grid-selected fit (A, C, D, C⁺, D⁺):\n",
         _md_table(

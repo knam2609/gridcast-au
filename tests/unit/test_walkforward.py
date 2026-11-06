@@ -234,9 +234,10 @@ def test_walk_forward_shapes_folds_and_missing_weather() -> None:
     assert np.isnan(c).any() and np.isfinite(c).mean() > 0.5
     # One fit per retrain and lead band, each selected on its own rows.
     assert all(len(r) == 2 * len(small_ml_config().lead_bands) for r in res.retrains.values())
-    first = res.retrains["lgbm_A"][:2]
-    assert [r.band for r in first] == ["h001-024", "h025-288"]
-    assert first[0].rows < first[1].rows
+    bands = small_ml_config().lead_bands
+    first = res.retrains["lgbm_A"][: len(bands)]
+    assert [r.band for r in first] == [f"h{lo:03d}-{hi:03d}" for lo, hi in bands]
+    assert [r.rows for r in first] == sorted(r.rows for r in first)  # wider bands, more rows
     assert res.retrains["ridge_A"][0].chosen["target_form"] in ("residual", "direct")
 
 

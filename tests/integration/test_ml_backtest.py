@@ -117,7 +117,7 @@ def test_walk_forward_is_stored_with_provenance(ready: Engine, tmp_path: Path) -
     retrain = lgbm_c["model_params"]["retrains"][0]
     assert retrain["retrain"] == "2021-10-20"
     bands = [r["band"] for r in lgbm_c["model_params"]["retrains"]]
-    assert bands == ["h001-024", "h025-288"]
+    assert bands == [f"h{lo:03d}-{hi:03d}" for lo, hi in cfg.ml.lead_bands]  # one fit per band
     assert len(retrain["candidates"]) == 2  # residual and direct
     assert (tmp_path / retrain["path"]).is_file()
     # The delay check reuses headline C's chosen settings.
