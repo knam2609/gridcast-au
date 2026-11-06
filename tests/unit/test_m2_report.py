@@ -9,6 +9,7 @@ import pytest
 from gridcast.evaluation.m2_report import (
     LeakageOutcome,
     Pairs,
+    ablation_observations,
     band_jump,
     chosen_counts,
     daily_errors,
@@ -179,3 +180,28 @@ def test_selection_table_and_counts() -> None:
     assert counts.loc[("LightGBM", "2 h 5 min–24 h"), "anchored"] == 1
     assert counts.loc[("Ridge", "5 min–2 h"), "residual"] == 1
     assert counts.to_numpy().sum() == 3
+    # Bands in lead-time order, not alphabetical ("2 h 5 min…" sorts before "5 min…").
+    assert [band for _, band in counts.index] == ["5 min–2 h", "2 h 5 min–24 h", "5 min–2 h"]
+
+
+def _flags(cool: tuple[float, float], heat: tuple[float, float], keep: float) -> pd.DataFrame:
+    rows = []
+    for i, retrain in enumerate(("2025-02-01", "2025-08-01")):
+        for feature, gain in (("wx_temp", 0.2), ("wx_cooling_degrees", cool[i]),
+                              ("wx_heating_degrees", heat[i])):  # fmt: skip
+            rows.append({"retrain": retrain, "feature": feature, "add_gain": gain,
+                         "keep_gain": keep})  # fmt: skip
+    return pd.DataFrame(rows)
+
+
+def test_ablation_observations_only_state_what_the_data_shows() -> None:
+    seasonal = ablation_observations(_flags((0.27, -0.01), (0.01, 0.15), 0.012), 8)
+    assert seasonal[0] == (
+        "Monitored issue times per retrain: 2025-02-01: 2024-12-07 → 2025-01-31; "
+        "2025-08-01: 2025-06-06 → 2025-07-31."
+    )
+    assert "largest keep gain is 1.2%" in seasonal[1]
+    assert "help alone at 2025-02-01 (27.0%) but not at 2025-08-01 (-1.0%)" in seasonal[2]
+    # No seasonal contrast, and a feature that matters on its own: neither claim is made.
+    flat = ablation_observations(_flags((0.1, 0.1), (0.1, 0.1), 0.08), 8)
+    assert len(flat) == 1

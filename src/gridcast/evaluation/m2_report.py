@@ -269,6 +269,8 @@ def _line_chart(
                     va="center", annotation_clip=False,
                     arrowprops={"arrowstyle": "-", "color": AXIS, "lw": 0.6})  # fmt: skip
 
+    if xmax_hours == 24:
+        ax.set_xticks(range(0, 25, 3))  # as in the M1 figure
     ax.set_xlabel("Forecast lead time (hours after issue time)", color=INK_2, fontsize=9)
     ax.set_ylabel("MAE (MW)", color=INK_2, fontsize=9)
     ax.set_title(title, color=INK, fontsize=11, loc="left", pad=30)
@@ -316,7 +318,7 @@ def selection_table(records: Sequence[Mapping[str, Any]]) -> str:
                 *[f"**{_fmt(best[f])}**" if best[f] == winner else _fmt(best[f]) for f in forms],
             ]
         )
-    return _md_table(headers, rows, "llll" + "r" * len(forms))
+    return _md_table(headers, rows, "lllr" + "r" * len(forms))
 
 
 def band_label(key: str) -> str:
@@ -333,7 +335,20 @@ def chosen_counts(records_by_model: Mapping[str, Sequence[Mapping[str, Any]]]) -
             rows.append({"family": family, "band": band_label(r["band"]),
                          "form": r["chosen"]["target_form"]})  # fmt: skip
     df = pd.DataFrame(rows)
-    return df.pivot_table(index=["family", "band"], columns="form", aggfunc="size", fill_value=0)
+    bands = list(dict.fromkeys(df.sort_values("band", key=lambda b: b.map(_band_start))["band"]))
+    df["band"] = pd.Categorical(df["band"], categories=bands, ordered=True)
+    return df.pivot_table(
+        index=["family", "band"], columns="form", aggfunc="size", fill_value=0, observed=True
+    )
+
+
+def _band_start(label: str) -> int:
+    """Minutes at the start of a lead-group label such as ``2 h 5 min–24 h``."""
+    first = label.split("–")[0].split()
+    minutes = 0
+    for value, unit in zip(first[::2], first[1::2], strict=True):
+        minutes += int(value) * (60 if unit == "h" else 1)
+    return minutes
 
 
 def importance(records: Sequence[Mapping[str, Any]], data_root: Path) -> dict[str, pd.DataFrame]:
@@ -592,6 +607,44 @@ def _weather_value_table(main_table: pd.DataFrame, delay: DelayCheck | None) -> 
     return _md_table(headers, rows)
 
 
+DEGREE_FEATURES = ("wx_cooling_degrees", "wx_heating_degrees")
+HELPS, NO_HELP = 0.05, 0.02  # add gains that count as "helps alone" / "adds almost nothing"
+
+
+def ablation_observations(flags: pd.DataFrame, es_weeks: int) -> list[str]:
+    """Factual observations on the drop/add table, each stated only when the data shows it."""
+    lines = []
+    slices = []
+    for retrain in dict.fromkeys(flags["retrain"]):
+        end = dt.date.fromisoformat(str(retrain))
+        start = end - dt.timedelta(weeks=es_weeks)
+        slices.append(f"{retrain}: {start} → {end - dt.timedelta(days=1)}")
+    lines.append("Monitored issue times per retrain: " + "; ".join(slices) + ".")
+    worst_keep = float(flags["keep_gain"].max())
+    if worst_keep < HELPS:
+        lines.append(
+            f"No weather feature matters much given the others: the largest keep gain is "
+            f"{100 * worst_keep:.1f}%. The features are near-substitutes, so a flag measures "
+            "what temperature as a whole adds, not one suspicious column."
+        )
+    gains = flags.pivot_table(index="retrain", columns="feature", values="add_gain")
+    if set(DEGREE_FEATURES) <= set(gains.columns):
+        cool, heat = gains[DEGREE_FEATURES[0]], gains[DEGREE_FEATURES[1]]
+        summer = [str(r) for r in gains.index if cool[r] > HELPS and heat[r] < NO_HELP]
+        winter = [str(r) for r in gains.index if heat[r] > HELPS and cool[r] < NO_HELP]
+        if summer and winter:
+            lines.append(
+                f"The degree features behave as their definitions imply: cooling degrees "
+                f"(heat above the base temperature) help alone at {', '.join(summer)} "
+                f"({', '.join(f'{100 * cool[r]:.1f}%' for r in summer)}) but not at "
+                f"{', '.join(winter)} ({', '.join(f'{100 * cool[r]:.1f}%' for r in winter)}); "
+                f"heating degrees the reverse ({', '.join(f'{100 * heat[r]:.1f}%' for r in winter)}"
+                f" vs {', '.join(f'{100 * heat[r]:.1f}%' for r in summer)}). Information leaked "
+                "from future demand would not depend on the season like this."
+            )
+    return lines
+
+
 def _ablation_section(
     ablation: dict[str, Any] | None,
     main_pooled: Mapping[str, float],
@@ -676,6 +729,7 @@ def _ablation_section(
             )
             + "\n"
         )
+        out += [f"- {line}" for line in ablation_observations(flags, es_weeks)] + [""]
     g = main_groups.to_dict(orient="index")
     labels = list(g)
     first, last = labels[0], labels[-1]
@@ -778,14 +832,18 @@ def _failure_section(
         f"({len(full):,} of {len(daily):,} days). "
         "Bias is forecast − actual. *C temp forecast error* is the mean absolute difference "
         "between C's forecast temperature and ERA5 on that day's pairs.\n",
-        _md_table(headers, [row(d) for d in worst.index]),
+        _md_table(headers, [row(d) for d in worst.index], "rll" + "r" * (len(headers) - 3)),
         "",
     ]
     known = [d for d in events if d in daily.index]
     if known:
         out += [
             "**Known events** (rank among all complete days; listed whatever their rank):\n",
-            _md_table(["Event", *headers], [[events[d], *row(d)] for d in known]),
+            _md_table(
+                ["Event", *headers],
+                [[events[d], *row(d)] for d in known],
+                "lrll" + "r" * (len(headers) - 3),
+            ),
             "",
         ]
     return out
@@ -846,6 +904,8 @@ def build_report(
         else None
     )
     ablation = read_ablation(cfg, main.batch_id)
+    if len(rc["lead_bands"]) != 2:
+        raise ValueError("report-m2 describes exactly two lead bands; extend it for more")
     last_short = int(rc["lead_bands"][0][1])
     issue_minutes = 5 * int(rc["setup"]["issue_every_steps"])
     es_weeks = int(rc["ml"]["early_stopping_weeks"])
@@ -928,9 +988,11 @@ def build_report(
         f"- At {horizon_label(1)}, LightGBM C's MAE is {at_1[HEADLINE]:,.1f} MW "
         f"against {at_1['persistence']:,.1f} MW for persistence; "
         + (
-            f"LightGBM C is better from {horizon_label(cross)} on."
-            if cross is not None
-            else "LightGBM C never beats persistence."
+            "LightGBM C never beats persistence."
+            if cross is None
+            else f"LightGBM C is better from {horizon_label(cross)} on."
+            if bool((table.loc[cross:, HEADLINE] < table.loc[cross:, "persistence"]).all())
+            else f"LightGBM C first beats it at {horizon_label(cross)}."
         )
         + f" Lead times under {s1_label} are reported, not pass/fail.",
         f"- Between {horizon_label(last_short)} (the short-lead fit's last step) and "
@@ -1008,7 +1070,8 @@ def build_report(
         "\nWinning target form across every grid-selected fit (A, C, D, C⁺, D⁺):\n",
         _md_table(
             ["Family", "Lead band", *[str(c) for c in counts.columns]],
-            [
+            align="ll" + "r" * len(counts.columns),
+            rows=[
                 [str(fam), str(band), *[str(int(v)) for v in r]]
                 for (fam, band), r in zip(counts.index, counts.to_numpy(), strict=True)
             ],
