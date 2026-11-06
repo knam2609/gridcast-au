@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import Engine
 
+from gridcast.evaluation.m2_report import LeakageOutcome, build_report
 from gridcast.evaluation.m2_results import load_evaluation_set
 from gridcast.evaluation.report import load_latest
 from gridcast.features import catalogue
@@ -30,8 +31,9 @@ def test_ablation_reproduces_the_stored_run(ready: Engine, tmp_path: Path) -> No
     cfg.evaluation = cfg.evaluation.model_copy(
         update={"weather_ablation_retrains": [dt.date(2021, 10, 20)]}
     )
+    cfg.paths.reports_dir = tmp_path / "reports"  # never the repository's reports/
     sets = run_ml_backtest(
-        ready, cfg, "VIC1", plus=False, delay=False, model_root=cfg.data_path(cfg.ml.model_dir)
+        ready, cfg, "VIC1", plus=False, delay=True, model_root=cfg.data_path(cfg.ml.model_dir)
     )
     batches = store_sets(ready, cfg, "VIC1", sets)
 
@@ -39,8 +41,8 @@ def test_ablation_reproduces_the_stored_run(ready: Engine, tmp_path: Path) -> No
     with pytest.raises(LookupError):
         load_latest(ready, "VIC1", "demand")
     assert load_evaluation_set(ready, "VIC1", "main").batch_id == str(batches["main"])
-    with pytest.raises(LookupError, match="delay"):
-        load_evaluation_set(ready, "VIC1", "delay")
+    with pytest.raises(LookupError, match="plus"):
+        load_evaluation_set(ready, "VIC1", "plus")
 
     result = run_weather_ablation(ready, cfg, "VIC1")
     weather = [c for c in catalogue.feature_names("C") if c not in catalogue.feature_names("A")]
@@ -56,6 +58,31 @@ def test_ablation_reproduces_the_stored_run(ready: Engine, tmp_path: Path) -> No
     assert again is not None and again["fits"] == result["fits"]
     flags = flag_table(fits_frame(again), again["flag_share"])
     assert list(flags["feature"]) == weather
+
+    # The report: S1–S4 computed from the stored metrics, every section present.
+    text = build_report(ready, cfg, "VIC1", leakage=LeakageOutcome(5, 0, 0))
+    for heading in (
+        "## Provenance",
+        "## Success criteria (pre-registered)",
+        "## Short lead times and the band boundary",
+        "## Weather value: the “investigate before believing” check",
+        "## Publication-delay sensitivity",
+        "## Model selection at each retrain",
+        "## Feature importance (LightGBM C)",
+        "## Failure cases",
+    ):
+        assert heading in text
+    assert "## C⁺ and D⁺" not in text  # no plus batch stored
+    for key in ("S1", "S2", "S3", "S4"):
+        assert f"| {key} |" in text
+    assert "matches the current config" in text
+    assert "reproduced the stored run's early-stopping MAE exactly" in text
+    assert "5 passed, 0 failed" in text
+    figures = tmp_path / "reports" / "figures"
+    assert (figures / "m2_demand_mae_by_lead.png").stat().st_size > 0
+    assert (figures / "m2_demand_short_leads.png").stat().st_size > 0
+    failing = build_report(ready, cfg, "VIC1", leakage=LeakageOutcome(4, 1, 1))
+    assert "| S4 |" in failing and "4 passed, 1 failed" in failing
 
     # The test refuses a retrain the stored run does not have.
     cfg.evaluation = cfg.evaluation.model_copy(

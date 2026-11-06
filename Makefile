@@ -4,7 +4,7 @@ START ?= 2021-10
 END ?= 2026-09
 REGIONS ?= VIC1
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest weather calendar dq backtest backtest-ml weather-ablation report catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest weather calendar dq backtest backtest-ml weather-ablation report report-m2 catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -63,6 +63,9 @@ weather-ablation: ## M2 weather-feature drop/add test on the stored ML run (~30-
 
 report: ## Generate reports/m1_baseline.md from stored metrics
 	$(UV) run gridcast report --region $(firstword $(REGIONS))
+
+report-m2: ## Generate reports/m2_demand.md from the stored ML run (S1-S4, runs the leakage tests)
+	$(UV) run gridcast report-m2 --region $(firstword $(REGIONS))
 
 catalogue: ## Regenerate docs/feature_catalogue.md from the feature catalogue in code
 	$(UV) run gridcast feature-catalogue

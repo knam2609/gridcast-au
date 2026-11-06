@@ -351,6 +351,16 @@ def report(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> N
     typer.echo(f"wrote {path}")
 
 
+@app.command("report-m2")
+def report_m2(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+    """Write reports/m2_demand.md and figures from the stored ML run (runs the leakage tests)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.evaluation.m2_report import write_report as write_m2
+
+    path = write_m2(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
 @app.command("feature-catalogue")
 def feature_catalogue() -> None:
     """Write docs/feature_catalogue.md from the feature catalogue in code (no database)."""

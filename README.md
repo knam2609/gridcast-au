@@ -208,6 +208,8 @@ make backtest       # demand + price walk-forward backtests
 make report         # regenerates reports/m1_baseline.md and figures
 make weather        # M2: Open-Meteo GFS forecasts + ERA5 for the weather sites
 make backtest-ml    # M2: LightGBM + ridge walk-forward (several hours on a laptop)
+make weather-ablation  # M2: weather-feature drop/add test on the stored run (~30-40 min)
+make report-m2      # M2: regenerates reports/m2_demand.md (S1–S4) and figures
 ```
 
 Quality gates:

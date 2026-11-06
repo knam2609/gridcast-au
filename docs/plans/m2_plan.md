@@ -141,6 +141,11 @@ Branch `m2-weather-demand-ml` from `m1-pipeline-baseline` (or from `main`, once 
 
 **Step 4. Development-period evaluation and success criteria.**
 - `gridcast report-m2` generates `reports/m2_demand.md`: S1–S4 pass/fail, MAE by lead time against the best-baseline curve, the C–D gap, importance, and segment and failure-case tables (hot days, cloudy days, holidays, DST days).
+- *Decisions made with the user (2026-11-06):*
+  1. **The step-3 run is reported as it is.** Its two weaknesses (5-minute MAE above persistence; the jump at the 2 h band boundary) are shown in the report. Any fix becomes a separate, disclosed development run, compared like for like with this one before the holdout freeze.
+  2. **"Investigate before believing" (§2.5):** weather (C vs A) cuts pooled MAE by about 20%, above the 15% threshold. The report gives the existing evidence: the leakage tests (run by `report-m2` itself), the 8 h delay check, the gain by lead time and D ≤ C. It also runs a drop/add test, `gridcast weather-ablation` (`make weather-ablation`). At two retrains (2025-02-01 and 2025-08-01, summer and winter early-stopping slices), LightGBM C's chosen setting is refitted on the early-stopping rows with each weather feature dropped or added alone. Any feature that cuts the pooled early-stopping MAE by more than 15% is flagged. The all-features fit must reproduce the stored early-stopping MAE exactly.
+  3. **Failure cases:** the 10 local days with the highest LightGBM C MAE at leads 2–24 h, with day type, ERA5 maximum temperature and C's temperature-forecast error, plus the known events of 2024-02-13 (storms) and 2024-12-09 (unexplained demand spike).
+- *Defaults taken:* S1–S4 are computed in code exactly as written in §3, and the report runs the leakage property tests itself, so S4's second half is measured rather than asserted. Importance is LightGBM's built-in gain and split share, averaged over the 12 retrains per lead band. Errors are also reported by year (risk table, §6). M1's `gridcast report` now ignores ML batches; it had been picking the latest demand batch, which was an ML batch.
 
 **Step 5. AEMO benchmark (development part).** Migration `0004_aemo_forecasts`, ingestion of pre-dispatch and 5-minute pre-dispatch for Oct 2024 → Sep 2026 (holdout months downloaded but not scored), alignment and comparison.
 
