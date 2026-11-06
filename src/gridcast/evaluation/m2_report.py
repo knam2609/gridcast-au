@@ -715,6 +715,7 @@ def _ablation_section(
                     ]
                     for r in flags.to_dict(orient="records")
                 ],
+                "llrrrrrl",
             ),
             "",
         ]
