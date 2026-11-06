@@ -314,6 +314,33 @@ def backtest_ml(
     typer.echo(f"{time.perf_counter() - t0:.0f}s")
 
 
+@app.command("weather-ablation")
+def weather_ablation(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+    """Weather-feature drop/add test (m2_plan.md §2.5) on the stored ML run; ~30-40 min."""
+    import time
+
+    import pandas as pd
+
+    from gridcast.database.engine import get_engine
+    from gridcast.forecasting.ablation import (
+        fits_frame,
+        flag_table,
+        reproduction_ok,
+        run_weather_ablation,
+        write_ablation,
+    )
+
+    cfg = load_config()
+    t0 = time.perf_counter()
+    result = run_weather_ablation(get_engine(), cfg, region)
+    path = write_ablation(cfg, result)
+    flags = flag_table(fits_frame(result), result["flag_share"])
+    with pd.option_context("display.width", 160):
+        typer.echo(flags.round(4).to_string(index=False))
+    typer.echo(f"stored early-stopping MAE reproduced: {reproduction_ok(result)}")
+    typer.echo(f"wrote {path} ({time.perf_counter() - t0:.0f}s)")
+
+
 @app.command()
 def report(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
     """Write reports/m1_baseline.md and figures from the latest stored backtests."""

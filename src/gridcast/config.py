@@ -165,6 +165,13 @@ class MlConfig(BaseModel):
         return self
 
 
+class KnownEvent(BaseModel):
+    """A local day worth showing in the failure cases whatever its rank."""
+
+    day: dt.date
+    label: str
+
+
 class EvaluationConfig(BaseModel):
     horizons_reported: list[int]
     peak_hours_local: tuple[int, int]
@@ -173,6 +180,14 @@ class EvaluationConfig(BaseModel):
     hot_day_max_temp_c: float = 35.0
     cloudy_day_mean_cloud_pct: float = 80.0
     daytime_hours_local: tuple[int, int] = (9, 17)
+    # M2 step 4 (m2_plan.md §2.5): weather-feature drop/add test at these retrains, on
+    # their early-stopping slices, flagging any feature that improves MAE by more than
+    # ``ablation_flag_share`` on its own.
+    weather_ablation_retrains: list[dt.date] = Field(default_factory=list)
+    ablation_flag_share: float = Field(0.15, gt=0, lt=1)
+    # Failure cases: the worst local days at leads 2-24 h, plus known events.
+    failure_days: int = Field(10, gt=0)
+    known_events: list[KnownEvent] = Field(default_factory=list)
 
 
 # Hourly weather variables, in storage order. They are columns of weather_forecasts and

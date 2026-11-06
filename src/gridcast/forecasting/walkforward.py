@@ -293,7 +293,8 @@ def predict_origins(
     return out
 
 
-def _position(builder: FeatureBuilder, ts: pd.Timestamp) -> int:
+def grid_position(builder: FeatureBuilder, ts: pd.Timestamp) -> int:
+    """Position of ``ts`` on the 5-minute data grid (it must lie on it)."""
     pos = int(builder.ctx.times.searchsorted(ts))
     if pos >= len(builder.ctx.times) or builder.ctx.times[pos] != ts:
         raise LookupError(f"{ts} is not on the data grid")
@@ -380,7 +381,7 @@ def run_walk_forward(
     if eval_times.size == 0 or eval_times[0] < retrains[0]:
         raise ValueError("every evaluation issue time must follow the first retrain")
     variants = list(dict.fromkeys(s.variant for s in specs))
-    cutoffs = [_position(builder, r) - setup.latency_steps for r in retrains]
+    cutoffs = [grid_position(builder, r) - setup.latency_steps for r in retrains]
     es_steps = cfg.early_stopping_weeks * 7 * DAY_STEPS
 
     origins = train_origins(builder, cutoffs[-1], train_start)

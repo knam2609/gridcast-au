@@ -109,6 +109,17 @@ evaluation:
   hot_day_max_temp_c: 35.0           # daily maximum temperature at least this
   cloudy_day_mean_cloud_pct: 80.0    # daytime mean cloud cover at least this
   daytime_hours_local: [9, 17]       # [start, end) local hour of "daytime"
+  # M2 step 4: weather-feature drop/add test (m2_plan.md §2.5) at two retrains whose
+  # early-stopping slices cover a summer (7 Dec 2024 → 31 Jan 2025) and a winter
+  # (6 Jun → 31 Jul 2025). A feature improving MAE by more than this share is flagged.
+  weather_ablation_retrains: [2025-02-01, 2025-08-01]
+  ablation_flag_share: 0.15
+  failure_days: 10                   # worst local days (leads 2-24 h) in the M2 report
+  known_events:                      # always shown in the M2 failure cases
+    - day: 2024-02-13
+      label: "Severe storms: transmission towers down, widespread outages"
+    - day: 2024-12-09
+      label: "Short afternoon demand spike, cause unverified (m2_handoff.md)"
 
 weather:
   # Hourly weather for population-weighted regional features (M2). Values come from

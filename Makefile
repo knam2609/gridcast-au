@@ -4,7 +4,7 @@ START ?= 2021-10
 END ?= 2026-09
 REGIONS ?= VIC1
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest weather calendar dq backtest backtest-ml report catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest weather calendar dq backtest backtest-ml weather-ablation report catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -57,6 +57,9 @@ backtest: ## Walk-forward evaluation of all baselines (demand + price)
 
 backtest-ml: ## M2 walk-forward: LightGBM + ridge (A/C/D/C⁺/D⁺), per-retrain selection; several hours
 	$(UV) run gridcast backtest-ml --region $(firstword $(REGIONS))
+
+weather-ablation: ## M2 weather-feature drop/add test on the stored ML run (~30-40 min)
+	$(UV) run gridcast weather-ablation --region $(firstword $(REGIONS))
 
 report: ## Generate reports/m1_baseline.md from stored metrics
 	$(UV) run gridcast report --region $(firstword $(REGIONS))

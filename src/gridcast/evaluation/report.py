@@ -25,6 +25,11 @@ MODEL_COLORS = {
     "daily_naive": "#eb6834",
     "weekly_naive": "#1baf7a",
     "median_profile": "#eda100",
+    # M2 models (validated with the baselines in plot order daily naive, persistence,
+    # LightGBM A, ridge C, LightGBM C).
+    "lgbm_A": "#e87ba4",
+    "ridge_C": "#6250d6",
+    "lgbm_C": "#008300",
 }
 MODEL_LABELS = {
     "persistence": "Persistence",
@@ -32,6 +37,24 @@ MODEL_LABELS = {
     "weekly_naive": "Weekly naive",
     "median_profile": "28-day median profile",
 }
+
+
+def model_label(name: str) -> str:
+    """Display name: baselines by name, ML models as e.g. ``LightGBM C⁺ (8 h delay)``."""
+    if name in MODEL_LABELS:
+        return MODEL_LABELS[name]
+    family, _, rest = name.partition("_")
+    variant, _, suffix = rest.partition("_")
+    families = {"lgbm": "LightGBM", "ridge": "Ridge"}
+    if family not in families or not variant:
+        return name
+    variant = variant.replace("plus", "⁺")
+    label = f"{families[family]} {variant}"
+    if suffix.startswith("delay"):
+        label += f" ({suffix.removeprefix('delay').removesuffix('h')} h delay)"
+    return label
+
+
 INK, INK_2, MUTED, GRID, AXIS, SURFACE = (
     "#0b0b0b",
     "#52514e",
@@ -90,6 +113,7 @@ def load_latest(engine: Engine, region_id: str, target: str) -> TargetResults:
                 """
                 SELECT batch_id FROM model_runs
                 WHERE region_id = :r AND target = :t AND status = 'success'
+                  AND config->>'evaluation_set' IS NULL  -- M1 baselines, not M2 ML batches
                 ORDER BY created_at DESC LIMIT 1
                 """
             ),
@@ -256,19 +280,26 @@ def plot_mae_by_horizon(res: TargetResults, path: Path, split: str = "dev") -> N
 # ----------------------------------------------------------------------------- tables
 
 
-def horizon_table(res: TargetResults, split: str, horizons: list[int], metric: str) -> str:
+def horizon_table(
+    res: TargetResults,
+    split: str,
+    horizons: list[int],
+    metric: str,
+    models: list[str] | None = None,
+) -> str:
     """Models x selected horizons (+ pooled); the lowest error per column is bold."""
+    models = models or res.models
     cols = [*horizons, 0]
     headers = ["Model"] + [horizon_label(h) for h in horizons] + ["All horizons"]
-    grid = {m: [res.value(m, split, "all", h, metric) for h in cols] for m in res.models}
+    grid = {m: [res.value(m, split, "all", h, metric) for h in cols] for m in models}
     rows = []
     for model, values in grid.items():
         cells = []
         for j, v in enumerate(values):
-            column = [grid[m][j] for m in res.models if pd.notna(grid[m][j])]
+            column = [grid[m][j] for m in models if pd.notna(grid[m][j])]
             is_best = metric != "bias" and bool(column) and v == min(column)
             cells.append(f"**{_fmt(v)}**" if is_best else _fmt(v))
-        rows.append([MODEL_LABELS.get(model, model), *cells])
+        rows.append([model_label(model), *cells])
     return _md_table(headers, rows)
 
 
