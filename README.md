@@ -195,7 +195,7 @@ All figures below are from the generated [`reports/m1_baseline.md`](reports/m1_b
 
 ## Reproduction
 
-Requirements: Docker, [uv](https://docs.astral.sh/uv/), make. Downloads, interim files and backtest predictions (~1.4 GB) go under `data/` (gitignored). To keep them elsewhere, such as an external drive, set `GRIDCAST_DATA_ROOT` in `.env`. The directory must exist, and the pipeline refuses to run if the drive isn't mounted. PostgreSQL itself stays in a Docker volume, because Postgres needs a filesystem with Unix permissions (exFAT drives don't qualify).
+Requirements: Docker, [uv](https://docs.astral.sh/uv/), make. On macOS, LightGBM also needs the OpenMP runtime (`brew install libomp`). Downloads, interim files and backtest predictions (~1.4 GB) go under `data/` (gitignored). To keep them elsewhere, such as an external drive, set `GRIDCAST_DATA_ROOT` in `.env`. The directory must exist, and the pipeline refuses to run if the drive isn't mounted. PostgreSQL itself stays in a Docker volume, because Postgres needs a filesystem with Unix permissions (exFAT drives don't qualify).
 
 ```bash
 make setup          # uv sync; creates .env from .env.example (set a password)
@@ -206,6 +206,8 @@ make calendar       # holidays + DST days → calendar_days
 make dq             # 13 data-quality checks → dq_results
 make backtest       # demand + price walk-forward backtests
 make report         # regenerates reports/m1_baseline.md and figures
+make weather        # M2: Open-Meteo GFS forecasts + ERA5 for the weather sites
+make backtest-ml    # M2: LightGBM + ridge walk-forward (several hours on a laptop)
 ```
 
 Quality gates:

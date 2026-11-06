@@ -4,16 +4,28 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 import pandas as pd
 from sqlalchemy import Engine, text
 
 from gridcast.forecasting.backtest import BacktestOutput
-from gridcast.models.baselines import Forecaster
 from gridcast.provenance import git_sha
+
+
+class StoredModel(Protocol):
+    """What a ``model_runs`` row needs: baselines and walk-forward ML records both fit."""
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def kind(self) -> str: ...
+
+    def params(self) -> dict[str, object]: ...
 
 
 def save_predictions(out: BacktestOutput, directory: Path, batch_id: uuid.UUID) -> dict[str, Path]:
@@ -48,7 +60,7 @@ def store_backtest(
     engine: Engine,
     out: BacktestOutput,
     metrics: pd.DataFrame,
-    models: list[Forecaster],
+    models: Sequence[StoredModel],
     region_id: str,
     holdout_start: pd.Timestamp,
     run_config: dict[str, Any],

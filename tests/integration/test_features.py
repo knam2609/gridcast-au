@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from sqlalchemy import Engine
 
-from gridcast.config import AppConfig, MlConfig, load_config
+from gridcast.config import AppConfig, load_config
 from gridcast.database.queries import load_weather_observations
 from gridcast.features import catalogue
 from gridcast.features.audit import render_audit, run_audit
@@ -30,7 +30,13 @@ def ready(loaded: Engine) -> Engine:
 
 def _october_cfg() -> AppConfig:
     cfg = load_config()
-    cfg.ml = MlConfig(first_issue=dt.date(2021, 10, 9), plus_first_issue=dt.date(2021, 10, 20))
+    cfg.ml = cfg.ml.model_copy(
+        update={
+            "first_issue": dt.date(2021, 10, 9),
+            "plus_first_issue": dt.date(2021, 10, 20),
+            "plus_train_start": dt.date(2021, 10, 9),
+        }
+    )
     cfg.backtest.holdout_start = dt.date(2021, 10, 25)
     return cfg
 

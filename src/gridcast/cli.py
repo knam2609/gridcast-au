@@ -261,6 +261,59 @@ def backtest(
     )
 
 
+@app.command("backtest-ml")
+def backtest_ml(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    until: Annotated[
+        str | None,
+        typer.Option(help="Smoke run: stop before this NEM date (YYYY-MM-DD); nothing is stored"),
+    ] = None,
+    plus: Annotated[bool, typer.Option(help="Also run C⁺/D⁺")] = True,
+    delay: Annotated[bool, typer.Option(help="Also run the publication-delay check")] = True,
+) -> None:
+    """M2 walk-forward: LightGBM + ridge (A, C, D, C⁺, D⁺); baselines rescored on the same pairs."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.forecasting.ml_backtest import EvaluationSet, run_ml_backtest, store_sets
+    from gridcast.forecasting.origins import nem_midnight_utc
+
+    cfg = load_config()
+    engine = get_engine()
+    t0 = time.perf_counter()
+    smoke = until is not None
+
+    def show(es: EvaluationSet) -> None:
+        m = es.metrics[(es.metrics["segment"] == "all") & (es.metrics["metric"] == "mae")]
+        rows = []
+        for model in es.out.model_names:
+            v = m[m["model"] == model].set_index("horizon")["value"]
+            rows.append([model, *(v.get(h) for h in (1, 12, 48, 144, 288, 0))])
+        pairs = es.run_config["scored_pairs"]
+        n_issue = len(es.out.origins)
+        typer.echo(f"\n[{es.key}] dev MAE (MW) on {pairs:,} common pairs, {n_issue:,} issue times")
+        headers = ["model", "h=1", "h=12", "h=48", "h=144", "h=288", "all"]
+        typer.echo(tabulate(rows, headers=headers, floatfmt=".1f", tablefmt="github"))
+
+    sets = run_ml_backtest(
+        engine,
+        cfg,
+        region,
+        until=nem_midnight_utc(until) if until is not None else None,
+        plus=plus,
+        delay=delay,
+        model_root=None if smoke else cfg.data_path(cfg.ml.model_dir),
+        on_set=show,
+    )
+    if smoke:
+        typer.echo(f"\nsmoke run (--until {until}): nothing stored")
+    else:
+        batches = store_sets(engine, cfg, region, sets)
+        for key, batch in batches.items():
+            typer.echo(f"stored {key}: batch {batch}")
+    typer.echo(f"{time.perf_counter() - t0:.0f}s")
+
+
 @app.command()
 def report(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
     """Write reports/m1_baseline.md and figures from the latest stored backtests."""

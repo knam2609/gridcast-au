@@ -110,19 +110,69 @@ class FeaturesConfig(BaseModel):
     delay_sensitivity_hours: float = 8.0
 
 
+class LightGBMConfig(BaseModel):
+    """Fixed LightGBM settings; the tuned ones come from ``ml.tuned_file``."""
+
+    learning_rate: float = 0.05
+    min_data_in_leaf: int = 200
+    feature_fraction: float = 0.9
+    max_rounds: int = 5000
+    early_stopping_rounds: int = 100
+    num_threads: int = 0  # 0 = OpenMP default
+
+
+class RidgeConfig(BaseModel):
+    max_rows: int = 500_000  # seeded subsample of the training rows
+    spline_knots: int = 6
+
+
+TargetForm = Literal["residual", "direct", "anchored"]
+
+
+class GridConfig(BaseModel):
+    """Settings searched at every retrain on its early-stopping slice (m2_plan.md §2.4)."""
+
+    target_forms: list[TargetForm]
+    lightgbm_objective: list[Literal["l2", "l1"]]
+    lightgbm_num_leaves: list[int]
+    ridge_alpha: list[float]
+
+
 class MlConfig(BaseModel):
-    """Walk-forward ML evaluation windows (M2). Issue times are NEM-time dates."""
+    """Walk-forward ML evaluation (M2). Dates are NEM-time days."""
 
     first_issue: dt.date  # first ML issue time: every model has >= 12 months of training data
     # First C⁺/D⁺ issue time: the first quarterly retrain with >= 12 months of the GFS
     # multi-variable archive (which starts 2024-01-19).
     plus_first_issue: dt.date
+    plus_train_start: dt.date  # first C⁺/D⁺ training issue day (the archive start)
+    retrain_every_months: int = 3
+    early_stopping_weeks: int = 8
+    sample_every_steps: int = 3  # training targets every N steps, staggered across issue times
+    lead_bands: list[tuple[int, int]] = [(1, 288)]  # one fit per band (inclusive horizon steps)
+    seed: int = 2609
+    lightgbm: LightGBMConfig = LightGBMConfig()
+    ridge: RidgeConfig = RidgeConfig()
+    grid: GridConfig
+    model_dir: Path = Path("models")  # under the data root
+
+    @model_validator(mode="after")
+    def _ordered(self) -> MlConfig:
+        if not self.plus_train_start < self.plus_first_issue:
+            raise ValueError("ml.plus_train_start must precede ml.plus_first_issue")
+        if self.retrain_every_months < 1 or self.sample_every_steps < 1:
+            raise ValueError("retrain_every_months and sample_every_steps must be positive")
+        return self
 
 
 class EvaluationConfig(BaseModel):
     horizons_reported: list[int]
     peak_hours_local: tuple[int, int]
     price_spike_threshold: float
+    # Weather segments (M2), from ERA5 population-weighted values on the local day.
+    hot_day_max_temp_c: float = 35.0
+    cloudy_day_mean_cloud_pct: float = 80.0
+    daytime_hours_local: tuple[int, int] = (9, 17)
 
 
 # Hourly weather variables, in storage order. They are columns of weather_forecasts and
@@ -271,6 +321,13 @@ class AppConfig(BaseModel):
             raise ValueError(f"features.single_site {self.features.single_site!r} is not a site")
         if not self.ml.first_issue <= self.ml.plus_first_issue < self.backtest.holdout_start:
             raise ValueError("expected ml.first_issue <= ml.plus_first_issue < holdout_start")
+        expected = 1
+        for lo, hi in self.ml.lead_bands:
+            if lo != expected or hi < lo:
+                raise ValueError("ml.lead_bands must be contiguous, ordered and start at 1")
+            expected = hi + 1
+        if expected != self.forecast.horizon_steps + 1:
+            raise ValueError("ml.lead_bands must end at forecast.horizon_steps")
         return self
 
     def resolve(self, path: Path) -> Path:

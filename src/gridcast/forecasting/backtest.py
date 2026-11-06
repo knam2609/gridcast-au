@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -115,18 +115,30 @@ def evaluate(
     ctx: SeriesContext,
     eval_cfg: EvaluationConfig,
     holdout_start: pd.Timestamp,
+    extra_segments: Mapping[str, np.ndarray] | None = None,
+    splits: Sequence[str] = SPLITS,
 ) -> pd.DataFrame:
-    """Long table of metrics: model, split, segment, horizon (0 = pooled), metric, value, n."""
+    """Long table of metrics: model, split, segment, horizon (0 = pooled), metric, value, n.
+
+    ``extra_segments`` adds masks aligned with the context grid (e.g. the M2 weather
+    segments); ``splits`` limits the splits computed (a development-only run has no holdout).
+    """
     metrics = METRICS_BY_TARGET[out.target]
     common = out.common_mask()
     is_holdout = np.asarray(out.origin_times >= holdout_start)
     split_rows = {"dev": ~is_holdout, "holdout": is_holdout, "all": np.ones_like(is_holdout)}
+    if unknown := set(splits) - set(split_rows):
+        raise ValueError(f"unknown splits {sorted(unknown)}")
     segments = target_segments(ctx.frame, eval_cfg)
+    if extra_segments:
+        if clash := set(extra_segments) & set(segments):
+            raise ValueError(f"segments defined twice: {sorted(clash)}")
+        segments |= dict(extra_segments)
     reported = np.array([h for h in eval_cfg.horizons_reported if h <= out.setup.horizon_steps])
 
     records: list[tuple[str, str, str, int, str, float, int]] = []
     for name, pred in out.predictions.items():
-        for split in SPLITS:
+        for split in splits:
             base = common & split_rows[split][:, None]
             for segment, seg_mask in segments.items():
                 mask = base & seg_mask[out.targets]

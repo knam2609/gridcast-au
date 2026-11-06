@@ -66,14 +66,49 @@ features:
   delay_sensitivity_hours: 8.0
 
 ml:
-  # Walk-forward ML evaluation (M2). Dates are NEM-time issue days.
+  # Walk-forward ML evaluation (M2, docs/plans/m2_plan.md §2.4). Dates are NEM-time days.
   first_issue: "2022-11-01"        # every model has >= 12 months of training data
   plus_first_issue: "2025-02-01"   # C⁺/D⁺: GFS multi-variable archive starts 2024-01-19
+  plus_train_start: "2024-01-19"   # C⁺/D⁺ training issue times start here (same archive start)
+  retrain_every_months: 3          # quarterly retrains, anchored at first_issue
+  early_stopping_weeks: 8          # last weeks of each training window; then refit on all of it
+  # Training sample: every issue time, targets every N steps (3 = 15 min), staggered so that
+  # every lead time and 5-minute slot is trained on.
+  sample_every_steps: 3
+  # Each ML model is one fit per lead band (inclusive horizon steps; must cover 1..H). A
+  # single global model let long-lead corrections swamp the short leads (step 3 spike).
+  # The S1 range (2-24 h) is served entirely by the second band.
+  lead_bands: [[1, 24], [25, 288]]
+  seed: 2609
+  lightgbm:
+    # Fixed settings; objective, num_leaves and the target form are selected (see grid).
+    learning_rate: 0.05
+    min_data_in_leaf: 200
+    feature_fraction: 0.9
+    max_rounds: 5000
+    early_stopping_rounds: 100
+    num_threads: 0                 # 0 = OpenMP default (all cores)
+  ridge:
+    max_rows: 500000               # seeded subsample of the training rows (~220 coefficients)
+    spline_knots: 6                # temperature spline (variants with weather)
+  grid:
+    # Searched at EVERY retrain and lead band: each setting early-stops on that retrain's
+    # last early_stopping_weeks, the lowest MAE there wins and is refit on the whole window.
+    # residual: y(t) - y(t-24h); direct: y(t); anchored: y(t) - [y(o) + y(t-24h) - y(o-24h)]
+    target_forms: [residual, direct, anchored]
+    lightgbm_objective: [l2, l1]
+    lightgbm_num_leaves: [31, 127]     # 255 dropped: slowest and least accurate on pre-scoring data
+    ridge_alpha: [0.1, 1.0, 10.0, 100.0, 1000.0]
+  model_dir: models                   # under the data root
 
 evaluation:
   horizons_reported: [1, 6, 12, 48, 144, 288]
   peak_hours_local: [17, 21]         # [start, end) local hour of the evening peak
   price_spike_threshold: 300.0       # $/MWh
+  # Weather segments (M2), from ERA5 population-weighted values on the target's local day.
+  hot_day_max_temp_c: 35.0           # daily maximum temperature at least this
+  cloudy_day_mean_cloud_pct: 80.0    # daytime mean cloud cover at least this
+  daytime_hours_local: [9, 17]       # [start, end) local hour of "daytime"
 
 weather:
   # Hourly weather for population-weighted regional features (M2). Values come from
