@@ -674,7 +674,9 @@ def _optional(engine: Engine, region_id: str, key: str) -> TargetResults | None:
         return None
 
 
-def _provenance(cfg: AppConfig, sets: Loaded, leakage: LeakageOutcome, region_id: str) -> str:
+def _provenance(
+    cfg: AppConfig, sets: Loaded, leakage: LeakageOutcome, region_id: str, report_sha: str | None
+) -> str:
     main = sets.main
     rc = run_config(main, HEADLINE)
     all_runs = pd.concat([s.runs for s in (sets.main, sets.plus, sets.delay) if s is not None])
@@ -729,7 +731,7 @@ def _provenance(cfg: AppConfig, sets: Loaded, leakage: LeakageOutcome, region_id
             "Leakage property tests (run by this command)",
             f"{leakage.passed} passed, {leakage.failed} failed",
         ],
-        ["Report generated from commit", f"`{git_sha()}`"],
+        ["Report generated from commit", f"`{report_sha}`"],
     ]
     return _md_table(["Item", "Value"], rows, "ll")
 
@@ -832,7 +834,7 @@ def _ablation_section(
             f"on that retrain's early-stopping rows (the last {es_weeks} weeks before it are "
             "monitored) "
             "with each weather feature added alone to the weather-free set, or dropped from "
-            "the full set. MAE is pooled over both lead bands. *Keep gain* is what the "
+            "the full set. MAE is pooled over every lead band. *Keep gain* is what the "
             "feature adds on top of the other weather features. A feature is flagged above "
             f"{share:g}%. The all-features fit "
             + (
@@ -1035,6 +1037,7 @@ def build_report(
     region_id: str,
     leakage: LeakageOutcome | None = None,
 ) -> str:
+    report_sha = git_sha()  # before any figure is written, which would make the tree dirty
     reports_dir = cfg.resolve(cfg.paths.reports_dir)
     data_root = cfg.data_root()
     sets = Loaded(
@@ -1114,7 +1117,7 @@ def build_report(
         "Do not edit by hand: re-run the pipeline instead. The holdout period is not scored "
         "here.\n",
         "## Provenance\n",
-        _provenance(cfg, sets, leakage, region_id),
+        _provenance(cfg, sets, leakage, region_id, report_sha),
         "",
         "## Success criteria (pre-registered)\n",
         "Set in `docs/plans/m2_plan.md` §3 before any ML result existed. They apply to "
@@ -1147,7 +1150,7 @@ def build_report(
         "\n### Bias (MW, forecast − actual), development period\n",
         horizon_table(main, "dev", horizons, "bias", [m for m in MAIN_TABLE if m in main.models]),
         "",
-        "## Short lead times and the band boundary\n",
+        "## Short lead times and the band boundaries\n",
         f"![Short lead times](figures/{FIGURE_SHORT})\n",
         f"- At {horizon_label(1)}, LightGBM C's MAE is {at_1[HEADLINE]:,.1f} MW "
         f"against {at_1['persistence']:,.1f} MW for persistence; "

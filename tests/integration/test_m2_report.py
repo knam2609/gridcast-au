@@ -65,7 +65,7 @@ def test_ablation_reproduces_the_stored_run(ready: Engine, tmp_path: Path) -> No
     for heading in (
         "## Provenance",
         "## Success criteria (pre-registered)",
-        "## Short lead times and the band boundary",
+        "## Short lead times and the band boundaries",
         "## Weather value: the “investigate before believing” check",
         "## Publication-delay sensitivity",
         "## Model selection at each retrain",
