@@ -258,11 +258,12 @@ def _line_chart(
     ax.set_ylim(0, top)
     ax.set_xlim(0, xmax_hours)
     shown = [b for b in boundary_hours if b < xmax_hours]
-    for i, b in enumerate(shown):
+    for b in shown:
         ax.axvline(b, color=AXIS, linewidth=1)
-        text = f"lead bands meet ({b:g} h)" if i == 0 else f"{b:g} h"
-        ax.annotate(text, xy=(b, top * 0.97), xytext=(4, 0), textcoords="offset points",
-                    color=MUTED, fontsize=8, va="top")  # fmt: skip
+    if shown:  # one label, by the last line, so close boundaries never collide
+        when = ", ".join(f"{b * 60:g} min" if b < 1 else f"{b:g} h" for b in shown)
+        ax.annotate(f"lead bands meet: {when}", xy=(shown[-1], top * 0.97), xytext=(4, 0),
+                    textcoords="offset points", color=MUTED, fontsize=8, va="top")  # fmt: skip
 
     ends = sorted((min(float(sel[m].iloc[-1]), top * 0.98), m) for m in models)
     gap = top * 0.05
