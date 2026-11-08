@@ -399,6 +399,16 @@ def report_m2(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -
     typer.echo(f"wrote {path}")
 
 
+@app.command("report-aemo")
+def report_aemo(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+    """Generate reports/m2_aemo.md: the frozen model vs AEMO's forecasts (development part)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.evaluation.aemo_benchmark import write_report
+
+    path = write_report(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
 @app.command("feature-catalogue")
 def feature_catalogue() -> None:
     """Write docs/feature_catalogue.md from the feature catalogue in code (no database)."""

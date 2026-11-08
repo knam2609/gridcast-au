@@ -4,7 +4,7 @@ START ?= 2021-10
 END ?= 2026-09
 REGIONS ?= VIC1
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-aemo weather calendar dq backtest backtest-ml weather-ablation report report-m2 catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-aemo weather calendar dq backtest backtest-ml weather-ablation report report-m2 report-aemo catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -69,6 +69,9 @@ report: ## Generate reports/m1_baseline.md from stored metrics
 
 report-m2: ## Generate reports/m2_demand.md from the stored ML run (S1-S4, runs the leakage tests)
 	$(UV) run gridcast report-m2 --region $(firstword $(REGIONS))
+
+report-aemo: ## Generate reports/m2_aemo.md: frozen model vs AEMO pre-dispatch (development part)
+	$(UV) run gridcast report-aemo --region $(firstword $(REGIONS))
 
 catalogue: ## Regenerate docs/feature_catalogue.md from the feature catalogue in code
 	$(UV) run gridcast feature-catalogue
