@@ -84,3 +84,17 @@ def test_mae_difference_point_estimate_and_interval() -> None:
 def test_lead_runs_groups_contiguous_leads() -> None:
     assert lead_runs([True, True, False, True], [1, 2, 3, 4]) == [(1, 2), (4, 4)]
     assert lead_runs([False, False], [1, 2]) == []
+
+
+def test_window_development_and_holdout() -> None:
+    from gridcast.config import load_config
+    from gridcast.evaluation.aemo_benchmark import window
+
+    cfg = load_config()
+    dev_first, dev_end = window(cfg)
+    hold_first, hold_end = window(cfg, "holdout")
+    assert dev_first == pd.Timestamp("2024-09-30 14:00", tz="UTC")  # 1 Oct 2024 NEM time
+    assert dev_end == hold_first == pd.Timestamp("2025-09-30 14:00", tz="UTC")
+    assert hold_end == pd.Timestamp("2026-09-30 14:00", tz="UTC")  # exclusive
+    with pytest.raises(ValueError, match="period"):
+        window(cfg, "both")

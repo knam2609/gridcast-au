@@ -178,13 +178,29 @@ class Benchmark:
         return mask
 
 
-def window(cfg: AppConfig) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """[first, end) issue times in UTC: aemo.first_issue up to the holdout start."""
-    first = nem_midnight_utc(str(cfg.aemo.first_issue))
-    end = nem_midnight_utc(str(cfg.backtest.holdout_start))
-    if not first < end:
-        raise ValueError("aemo.first_issue must be before backtest.holdout_start")
-    return first, end
+PERIODS = ("development", "holdout")
+
+
+def window(cfg: AppConfig, period: str = "development") -> tuple[pd.Timestamp, pd.Timestamp]:
+    """[first, end) issue times in UTC.
+
+    Development: ``aemo.first_issue`` up to the holdout start. Holdout (step 6):
+    ``backtest.holdout_start`` up to ``backtest.holdout_end``.
+    """
+    if period == "development":
+        first = nem_midnight_utc(str(cfg.aemo.first_issue))
+        end = nem_midnight_utc(str(cfg.backtest.holdout_start))
+        if not first < end:
+            raise ValueError("aemo.first_issue must be before backtest.holdout_start")
+        return first, end
+    if period == "holdout":
+        if cfg.backtest.holdout_end is None:
+            raise ValueError("backtest.holdout_end is not set")
+        return (
+            nem_midnight_utc(str(cfg.backtest.holdout_start)),
+            nem_midnight_utc(str(cfg.backtest.holdout_end)),
+        )
+    raise ValueError(f"period must be one of {PERIODS}")
 
 
 def frozen_main_batch(engine: Engine, cfg: AppConfig, region_id: str) -> TargetResults:
@@ -234,16 +250,30 @@ def _one_per_run(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.groupby("run_time")["available_at"].max().reset_index()
 
 
-def load_benchmark(engine: Engine, cfg: AppConfig, region_id: str) -> Benchmark:
-    first, end = window(cfg)
-    batch = frozen_main_batch(engine, cfg, region_id)
+def load_benchmark(
+    engine: Engine,
+    cfg: AppConfig,
+    region_id: str,
+    period: str = "development",
+    batch: TargetResults | None = None,
+) -> Benchmark:
+    """Our stored forecasts and AEMO's, lined up, for one period.
+
+    The development period reads the frozen config's ``main`` batch; the holdout report
+    passes its ``holdout_main`` batch.
+    """
+    first, end = window(cfg, period)
+    if batch is None:
+        if period != "development":
+            raise ValueError("the holdout comparison needs its holdout batch")
+        batch = frozen_main_batch(engine, cfg, region_id)
     data_root = cfg.data_root()
     actual = _read_wide(actual_path(batch, data_root), first, end)
     issue_times = pd.DatetimeIndex(actual["origin_time"])
     if len(issue_times) == 0:
-        raise LookupError("no stored development issue times in the AEMO window")
+        raise LookupError(f"no stored {period} issue times in the AEMO window")
     if issue_times.max() >= end:
-        raise AssertionError("holdout issue times must never be read")
+        raise AssertionError("issue times after the window must never be read")
     cols = [c for c in actual.columns if c != "origin_time"]
     y = actual[cols].to_numpy(dtype=np.float64)
     ours: dict[str, np.ndarray] = {}
@@ -392,7 +422,10 @@ def _ranges_text(ranges: Sequence[tuple[int, int]], fmt: Any) -> str:
 # --------------------------------------------------------------------------- figure
 
 
-def _figure(table: pd.DataFrame, path: Path) -> None:
+FIGURE_TITLE = "VIC1 demand, Oct 2024 → Sep 2025 (development): 30-minute periods, same pairs"
+
+
+def _figure(table: pd.DataFrame, path: Path, title: str = FIGURE_TITLE) -> None:
     """MAE by lead (30-minute periods): AEMO solid (matched) and dashed (strict)."""
     from matplotlib.figure import Figure
 
@@ -441,7 +474,7 @@ def _figure(table: pd.DataFrame, path: Path) -> None:
     )
     ax.set_ylabel("MAE of 30-minute mean demand (MW)", color=INK_2, fontsize=9)
     ax.set_title(
-        "VIC1 demand, Oct 2024 → Sep 2025 (development): 30-minute periods, same pairs",
+        title,
         color=INK,
         fontsize=11,
         loc="left",
@@ -590,29 +623,52 @@ def _provenance(b: Benchmark, cfg: AppConfig, region_id: str, report_sha: str | 
     return _md_table(["Item", "Value"], rows, "ll")
 
 
-def build_report(engine: Engine, cfg: AppConfig, region_id: str) -> str:
-    report_sha = git_sha()  # before figures are written, so the tree is still clean
-    b = load_benchmark(engine, cfg, region_id)
-    seed = cfg.ml.seed
-    days = np.asarray(b.issue_times.tz_convert(NEM_TZ).strftime("%Y-%m-%d"))
+@dataclass(slots=True)
+class Comparison:
+    """Every number the AEMO comparison reports, for one period."""
 
+    mask30: np.ndarray
+    mae30: pd.DataFrame
+    bias30: pd.DataFrame
+    pooled30: dict[str, float]
+    diffs30: list[Difference]  # headline vs matched, headline vs strict
+    mask5: np.ndarray
+    mae5: pd.DataFrame
+    pooled5: dict[str, float]
+    diff5: Difference
+
+
+def compare(b: Benchmark, seed: int) -> Comparison:
+    days = np.asarray(b.issue_times.tz_convert(NEM_TZ).strftime("%Y-%m-%d"))
     mask30 = b.common30
     f30 = {**b.ours30, **b.aemo30}
-    mae30 = by_lead(f30, b.actual30, mask30, "mae")
-    bias30 = by_lead(f30, b.actual30, mask30, "bias")
-    pooled30 = pooled_mae(f30, b.actual30, mask30)
     diffs30 = [
         mae_difference(
             HEADLINE, aemo, b.ours30[HEADLINE], b.aemo30[aemo], b.actual30, mask30, days, seed
         )
         for aemo in (MATCHED, STRICT)
     ]
-
     mask5 = b.common5
     f5 = {**b.ours5, P5: b.p5}
-    mae5 = by_lead(f5, b.actual5, mask5, "mae")
-    pooled5 = pooled_mae(f5, b.actual5, mask5)
-    diff5 = mae_difference(HEADLINE, P5, b.ours5[HEADLINE], b.p5, b.actual5, mask5, days, seed)
+    return Comparison(
+        mask30=mask30,
+        mae30=by_lead(f30, b.actual30, mask30, "mae"),
+        bias30=by_lead(f30, b.actual30, mask30, "bias"),
+        pooled30=pooled_mae(f30, b.actual30, mask30),
+        diffs30=diffs30,
+        mask5=mask5,
+        mae5=by_lead(f5, b.actual5, mask5, "mae"),
+        pooled5=pooled_mae(f5, b.actual5, mask5),
+        diff5=mae_difference(HEADLINE, P5, b.ours5[HEADLINE], b.p5, b.actual5, mask5, days, seed),
+    )
+
+
+def build_report(engine: Engine, cfg: AppConfig, region_id: str) -> str:
+    report_sha = git_sha()  # before figures are written, so the tree is still clean
+    b = load_benchmark(engine, cfg, region_id)
+    c = compare(b, cfg.ml.seed)
+    mask30, mae30, bias30, pooled30, diffs30 = c.mask30, c.mae30, c.bias30, c.pooled30, c.diffs30
+    mae5, pooled5, diff5 = c.mae5, c.pooled5, c.diff5
 
     figure_path = cfg.resolve(cfg.paths.reports_dir) / "figures" / FIGURE
     _figure(mae30, figure_path)

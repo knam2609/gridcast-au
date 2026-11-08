@@ -505,14 +505,14 @@ class DelayCheck:
     pooled: dict[str, float]
 
     @classmethod
-    def of(cls, res: TargetResults, headline_hours: float) -> DelayCheck:
+    def of(cls, res: TargetResults, headline_hours: float, split: str = "dev") -> DelayCheck:
         model = next(m for m in res.models if m.startswith(f"{HEADLINE}_delay"))
         return cls(
             model,
             float(run_config(res, model)["delay_hours"]),
             headline_hours,
-            res.by_horizon("dev", "mae"),
-            pooled(res),
+            res.by_horizon(split, "mae"),
+            pooled(res, split),
         )
 
 
