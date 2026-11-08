@@ -371,6 +371,81 @@ def backtest(
     )
 
 
+@app.command("evaluate-holdout")
+def evaluate_holdout(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    check_only: Annotated[
+        bool, typer.Option("--check-only", help="Run the refusal checks only; fit nothing")
+    ] = False,
+) -> None:
+    """M2 holdout, scored once (S5): frozen recipe, exact reproduction check, then scoring."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.evaluation.holdout import (
+        HoldoutRefused,
+        ReproductionFailed,
+        git_state,
+        preflight,
+        run_holdout,
+        store_holdout,
+    )
+
+    cfg = load_config()
+    engine = get_engine()
+    git = git_state(cfg.backtest.frozen_ml_commit)
+    try:
+        refs = preflight(engine, cfg, region, git)
+    except HoldoutRefused as exc:
+        typer.echo(f"REFUSED: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(
+        f"checks pass: config {cfg.backtest.frozen_ml_config_hash}, commit {git.sha}, "
+        f"frozen code unchanged since {cfg.backtest.frozen_ml_commit}, holdout not yet scored"
+    )
+    for key, res in refs.items():
+        typer.echo(f"  run 2 '{key}' batch {res.batch_id}")
+    if check_only:
+        return
+    t0 = time.perf_counter()
+    try:
+        run = run_holdout(
+            engine, cfg, region, git, cfg.data_path(cfg.ml.model_dir), references=refs
+        )
+    except (HoldoutRefused, ReproductionFailed) as exc:
+        typer.echo(f"STOPPED: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    batches = store_holdout(engine, cfg, region, run, git)
+    rows = [
+        [
+            r.evaluation_set,
+            r.retrain,
+            len(r.models),
+            f"{r.issue_times:,}",
+            r.fits,
+            "exact" if r.passed else "FAILED",
+        ]
+        for r in run.reproductions
+    ]
+    typer.echo(
+        tabulate(
+            rows,
+            headers=["set", "retrain", "models", "dev issue times", "fits", "reproduction"],
+            tablefmt="github",
+        )
+    )
+    for es in run.sets:
+        typer.echo(
+            f"stored {es.run_config['evaluation_set']}: batch {batches[es.key]}, "
+            f"{es.run_config['n_origins']:,} issue times, "
+            f"{es.run_config['scored_pairs']:,} common pairs"
+        )
+    typer.echo(
+        f"took {(time.perf_counter() - t0) / 3600:.1f} h; scores are in the database, "
+        "`gridcast report-holdout` writes the report"
+    )
+
+
 @app.command("backtest-ml")
 def backtest_ml(
     region: Annotated[str, typer.Option(help="Region id")] = "VIC1",

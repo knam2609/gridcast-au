@@ -6,7 +6,7 @@ REGIONS ?= VIC1
 DAYS ?= 2026-10-01
 CHECK_MONTH ?= 2026-09
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo weather calendar dq backtest backtest-ml weather-ablation report report-m2 report-aemo catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -65,6 +65,9 @@ backtest: ## Walk-forward evaluation of all baselines (demand + price)
 
 backtest-ml: ## M2 walk-forward: LightGBM + ridge (A/C/D/C⁺/D⁺), per-retrain selection; several hours
 	$(UV) run gridcast backtest-ml --region $(firstword $(REGIONS))
+
+evaluate-holdout: ## M2 holdout, scored ONCE (S5): refuses unless frozen config/code, clean tree, not yet scored; ~12-14 h
+	$(UV) run gridcast evaluate-holdout --region $(firstword $(REGIONS))
 
 weather-ablation: ## M2 weather-feature drop/add test on the stored ML run (~30-40 min)
 	$(UV) run gridcast weather-ablation --region $(firstword $(REGIONS))

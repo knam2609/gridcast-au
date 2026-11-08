@@ -56,6 +56,7 @@ forecast:
 backtest:
   eval_start: "2021-11-01"           # after weekly-lag and 28-day-profile warm-up
   holdout_start: "2025-10-01"        # final 12 months: reported separately, never used for selection
+  holdout_end: "2026-10-01"          # exclusive: M2 holdout issue times Oct 2025 → Sep 2026 (step 6)
   reference_model:
     demand: weekly_naive
     price: weekly_naive

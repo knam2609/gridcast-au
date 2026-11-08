@@ -66,9 +66,14 @@ def store_backtest(
     run_config: dict[str, Any],
     artifact_paths: dict[str, Path],
     batch_id: uuid.UUID,
+    sha: str | None = None,
 ) -> dict[str, int]:
-    """Insert one model_runs row per model plus its metrics and latest-origin forecasts."""
-    sha = git_sha()
+    """Insert one model_runs row per model plus its metrics and latest-origin forecasts.
+
+    ``sha`` is the commit to record (a long run passes the one it started from); by default
+    the current checkout's.
+    """
+    sha = sha or git_sha()
     run_ids: dict[str, int] = {}
     last = len(out.origins) - 1
     issue_time = out.origin_times[last].to_pydatetime()

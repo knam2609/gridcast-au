@@ -104,6 +104,9 @@ class ForecastConfig(BaseModel):
 class BacktestConfig(BaseModel):
     eval_start: dt.date
     holdout_start: dt.date
+    # First NEM-time day after the holdout's issue times (exclusive); the M2 holdout run
+    # (`gridcast evaluate-holdout`) scores every issue time in [holdout_start, holdout_end).
+    holdout_end: dt.date | None = None
     reference_model: dict[str, str]
     # M2 holdout freeze (docs/plans/m2_plan.md, step 6): the ML config hash and the commit
     # whose model and feature code produced it. A unit test fails if the config drifts.
@@ -363,6 +366,9 @@ class AppConfig(BaseModel):
             raise ValueError(f"features.single_site {self.features.single_site!r} is not a site")
         if not self.ml.first_issue <= self.ml.plus_first_issue < self.backtest.holdout_start:
             raise ValueError("expected ml.first_issue <= ml.plus_first_issue < holdout_start")
+        end = self.backtest.holdout_end
+        if end is not None and end <= self.backtest.holdout_start:
+            raise ValueError("expected backtest.holdout_start < backtest.holdout_end")
         expected = 1
         for lo, hi in self.ml.lead_bands:
             if lo != expected or hi < lo:
