@@ -197,6 +197,12 @@ Branch `m2-weather-demand-ml` from `m1-pipeline-baseline` (or from `main`, once 
   - The four retrains inside the holdout (2025-11-01, 2026-02-01, 2026-05-01, 2026-08-01) select their settings on their own last 8 weeks, which lie in the holdout period. An operational retrain would do the same, and no forecast uses data after its issue time.
   - The run uses a separate git worktree checked out at its commit, so work in the main tree cannot change the code it runs or the commit it records.
   - `gridcast report-holdout` writes `reports/m2_holdout.md`: the replication verdicts, MAE by lead time against the best baseline, A and D, C⁺/D⁺, the delay check, segments, quarters, failure cases and the holdout part of the AEMO benchmark (same alignments and bootstrap as step 5).
+- *Progress (2026-11-09):*
+  - 1 Oct 2026 is loaded (`make ingest-daily`). The match check passed: all 8,640 September intervals have identical demand, and every other loaded column except `price_status` matches too (`docs/data_sources.md` §7). October weather is loaded.
+  - `gridcast evaluate-holdout` (commit `a72408c`) and `gridcast report-holdout` (commit `9d75dbc`) are built and tested on synthetic data. On the real database, `evaluate-holdout --check-only` passed every refusal check and found run 2's three batches.
+  - **The single run started at 01:57 local on 2026-11-09**, from a git worktree at `a72408c` (`../gridcast-au-holdout`). Its log is `<data root>/logs/holdout-20261109-0157.log` and ends with `exit=<code>`. It expects 17,520 holdout and 2,928 development issue times, 5 retrains and 8.1 M training rows.
+  - Its first fit (lgbm_A and ridge_A, 2025-08-01, 5–30 min band) chose the same settings with the same early-stopping MAE as run 2's log. The formal check runs after each set's walk-forward.
+  - The outcome will be recorded here.
 
 ## 5. New dependencies and compute
 
