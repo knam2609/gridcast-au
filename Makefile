@@ -4,7 +4,7 @@ START ?= 2021-10
 END ?= 2026-09
 REGIONS ?= VIC1
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest weather calendar dq backtest backtest-ml weather-ablation report report-m2 catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-aemo weather calendar dq backtest backtest-ml weather-ablation report report-m2 catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -41,6 +41,9 @@ migrate: ## Apply database migrations
 
 ingest: ## Download, validate and load AEMO MMSDM data (START/END/REGIONS overridable)
 	$(UV) run gridcast ingest --start $(START) --end $(END) --regions $(REGIONS)
+
+ingest-aemo: ## Download and load AEMO pre-dispatch + 5-min pre-dispatch forecasts (M2 benchmark; ~2.6 GB cached)
+	$(UV) run gridcast ingest-aemo --regions $(REGIONS)
 
 weather: ## Download, validate and load Open-Meteo weather (GFS forecasts + ERA5; START/END overridable)
 	$(UV) run gridcast ingest-weather --start $(START) --end $(END)

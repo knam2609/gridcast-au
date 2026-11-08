@@ -231,3 +231,29 @@ Measured on the full load (all five sites, NEM months Oct 2021 → Sep 2026 = va
 > Source: Australian Bureau of Statistics, Regional population 2024-25, CC BY 4.0.
 
 **Limitations.** Melbourne carries about 90% of the weight, so the weighted temperature is close to Melbourne's own. The weights are fixed, although Melbourne grew from 4.87 M (2021) to 5.33 M (2025, preliminary); the shares barely move. A population is not an electricity load: industrial loads (for example the Portland smelter, outside these sites) are not represented.
+
+## 6. AEMO's own demand forecasts: pre-dispatch "all runs" archives (M2 benchmark)
+
+- **Use:** a **benchmark only**, never a model input (`docs/plans/m2_plan.md` §2.6). Loaded by `gridcast ingest-aemo` (`make ingest-aemo`) into `aemo_demand_forecasts` (migration `0004_aemo_forecasts`), for VIC1, archive months Sep 2024 → Sep 2026. September 2024 holds the runs for issue times before 04:00 on 1 October 2024. Holdout months are loaded but compared only in step 6.
+- **Files:** in each MMSDM month, `PREDISP_ALL_DATA/PUBLIC_ARCHIVE#PREDISPATCHREGIONSUM#ALL#FILE01#…zip` and `P5MIN_ALL_DATA/PUBLIC_ARCHIVE#P5MIN_REGIONSOLUTION#ALL#FILE01#…zip`, each about 50 MB a month (2.4 GB over the 25 months). The `#ALL#` archives hold every run; the `DATA/` tables of the same name do not. They are cached under `raw/mmsdm/<TABLE>_ALL/` with the same `listing.json` and SHA-256 rules as §1.
+- **Licence:** as §1 (AEMO copyright permissions).
+
+| | 30-minute pre-dispatch | 5-minute pre-dispatch |
+|---|---|---|
+| MMS section | `PREDISPATCH.REGION_SOLUTION`, v8–9 accepted | `P5MIN.REGIONSOLUTION`, v9–10 accepted |
+| Runs | 48 a day | 288 a day |
+| `run_time` (stored, UTC) | 04:00 NEM time + (PP − 1) × 30 min on the trading day of `PREDISPATCHSEQNO` = `YYYYMMDDPP` | `RUN_DATETIME` |
+| Targets | 30-minute periods ending 30 min … 16–39.5 h after the run time | 5-minute intervals ending 0 … 55 min after it |
+| `TOTALDEMAND` | mean over the 30-minute period (step 0) | that interval; interval 0 is the dispatch demand |
+| `available_at` = `LASTCHANGED` | 55–819 s **after** the run time | 119–279 s **before** the run time |
+
+Timing ranges are over the 25 loaded months (`aemo_run_timing` passes, and every run has one `LASTCHANGED`).
+
+**Loader rules.** Columns are mapped by name; other table versions fail. Only `INTERVENTION = 0` rows are kept, and a duplicate (region, run, target) fails the month. A run whose first pre-dispatch period does not end 30 minutes after its run time fails, and so does a 5-minute interval outside 0–55 minutes.
+
+**Data-quality checks** (`gridcast dq`):
+
+- `aemo_missing_runs` (warn): runs missing from the 30- or 5-minute cadence. Over Sep 2024 → Sep 2026 these are 3 pre-dispatch and 17 five-minute runs: about an hour on 5 September 2024 (13:30–14:25 NEM time), 20 minutes on 19 November 2024 and one five-minute run on 4 March 2025. Every run sits in its own trading month's archive. In November 2024 the loader also dropped 143 pre-dispatch and 144 five-minute rows of an intervention run (`INTERVENTION = 1`).
+- `aemo_run_timing` (warn): runs published outside the expected window (pre-dispatch up to 15 min after its run time; 5-minute pre-dispatch up to 10 min before it), or published more than once.
+- `aemo_p5min_alignment` (fail): a timestamp-alignment guard. Interval 0 of a 5-minute run should equal the dispatch demand of the interval ending at its run time. Aligned, at most 7.25% of a month's values differ (mean absolute difference ≤ 0.32 MW; the cause of the small differences is unverified). Shifted by one interval either way, at least 99.97% differ by 38–124 MW on average. The check fails a month where more than half differ.
+- `aemo_out_of_range` (fail): forecast demand outside the region's plausible bounds.

@@ -127,6 +127,17 @@ evaluation:
     - day: 2024-12-09
       label: "Short afternoon demand spike, cause unverified (m2_handoff.md)"
 
+aemo:
+  # AEMO's own demand forecasts: every run of 30-minute pre-dispatch and 5-minute
+  # pre-dispatch (MMSDM "all runs" archives, ~50 MB a month each, cached under raw/).
+  # A benchmark only, never a model input (m2_plan.md §2.6). Holdout months are loaded but
+  # compared only in step 6.
+  ingest_start_month: "2024-09"   # Sep 2024 holds the runs for issue times before 04:00 on 1 Oct
+  ingest_end_month: "2026-09"
+  first_issue: "2024-10-01"       # development comparison: Oct 2024 -> backtest.holdout_start
+  predispatch_published_within_minutes: 15   # LASTCHANGED expected 76-241 s after the run time
+  p5min_published_within_minutes: 10         # LASTCHANGED expected 160-276 s before the run time
+
 weather:
   # Hourly weather for population-weighted regional features (M2). Values come from
   # Open-Meteo (CC BY 4.0, free tier is non-commercial); see docs/data_sources.md §4.

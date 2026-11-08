@@ -18,7 +18,7 @@ from typing import Any, Literal
 from sqlalchemy import Engine, text
 
 from gridcast.config import PROJECT_ROOT, AppConfig, MarketLimits
-from gridcast.timeutils import month_bounds_utc, month_hours_utc
+from gridcast.timeutils import NEM_TZ, month_bounds_utc, month_hours_utc
 
 # Stand-in for "from the start of the data" in expected-missing ranges.
 _BEGINNING = dt.datetime(1900, 1, 1, tzinfo=dt.UTC)
@@ -92,7 +92,19 @@ WEATHER_CHECKS: tuple[DQCheck, ...] = (
     ),
 )
 
-ALL_CHECKS: tuple[DQCheck, ...] = MARKET_CHECKS + WEATHER_CHECKS
+AEMO_CHECKS: tuple[DQCheck, ...] = (
+    DQCheck("aemo_missing_runs", "warn", "AEMO runs missing from the cadence", "n_missing"),
+    DQCheck("aemo_run_timing", "warn", "AEMO runs published outside the expected window"),
+    DQCheck(
+        "aemo_p5min_alignment",
+        "fail",
+        "Months where most 5-min pre-dispatch interval-0 values differ from dispatch demand",
+        "n_differ",
+    ),
+    DQCheck("aemo_out_of_range", "fail", "AEMO forecast demand outside plausible bounds"),
+)
+
+ALL_CHECKS: tuple[DQCheck, ...] = MARKET_CHECKS + WEATHER_CHECKS + AEMO_CHECKS
 
 
 @dataclass(slots=True)
@@ -135,6 +147,7 @@ def check_params(
         "fy_caps": [limits.market_price_cap[f"{y}-{(y + 1) % 100:02d}"].value for y in fy_years],
         "stale_after_days": cfg.sources.mmsdm.stale_after_days,
         **weather_params(cfg, start_month, end_month),
+        **aemo_params(cfg, start_month, end_month),
     }
     if region_id is not None:
         lo, hi = cfg.region(region_id).demand_plausible_mw
@@ -169,6 +182,34 @@ def weather_params(cfg: AppConfig, start_month: dt.date, end_month: dt.date) -> 
         "run_every_hours": w.forecasts.run_every_hours,
         "publication_delay_seconds": w.forecasts.publication_delay.total_seconds(),
     }
+
+
+def aemo_params(cfg: AppConfig, start_month: dt.date, end_month: dt.date) -> dict[str, Any]:
+    """Expected AEMO run grids (UTC) over the AEMO archive months inside the check window.
+
+    Archive month M holds pre-dispatch runs for the trading days of M (04:00 NEM time on the
+    1st to 03:30 on the 1st of M+1) and 5-minute runs from 00:05 on the 1st to 00:00 on the
+    1st of M+1. Outside the AEMO window the grids are empty (first > last).
+    """
+    first = max(start_month, _month(cfg.aemo.ingest_start_month))
+    last = min(end_month, _month(cfg.aemo.ingest_end_month))
+    begin = dt.datetime(first.year, first.month, 1, tzinfo=NEM_TZ).astimezone(dt.UTC)
+    after = dt.datetime(last.year, last.month, 28, tzinfo=NEM_TZ) + dt.timedelta(days=4)
+    end = after.replace(day=1).astimezone(dt.UTC)
+    if first > last:
+        end = begin - dt.timedelta(days=1)
+    return {
+        "aemo_pd_first": begin + dt.timedelta(hours=4),
+        "aemo_pd_last": end + dt.timedelta(hours=4) - dt.timedelta(minutes=30),
+        "aemo_p5_first": begin + dt.timedelta(minutes=5),
+        "aemo_p5_last": end,
+        "aemo_pd_within": cfg.aemo.predispatch_published_within_minutes,
+        "aemo_p5_within": cfg.aemo.p5min_published_within_minutes,
+    }
+
+
+def _month(value: str) -> dt.date:
+    return dt.datetime.strptime(value, "%Y-%m").date()  # noqa: DTZ007 - date only
 
 
 def run_check(engine: Engine, check: DQCheck, params: dict[str, Any]) -> DQResult:

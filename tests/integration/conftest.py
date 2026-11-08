@@ -22,7 +22,7 @@ from tests.open_meteo_fixtures import TODAY, FakeOpenMeteo, om_config
 OCT = dt.date(2021, 10, 1)
 
 TABLES = (
-    "dq_results, forecasts, forecast_metrics, model_runs, calendar_days, "
+    "dq_results, forecasts, forecast_metrics, model_runs, calendar_days, aemo_demand_forecasts, "
     "weather_forecasts, weather_observations, weather_sites, "
     "market_intervals, ingestion_runs, regions"
 )

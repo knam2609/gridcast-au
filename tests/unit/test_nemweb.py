@@ -114,3 +114,51 @@ def test_gives_up_after_max_retries(tmp_path: Path) -> None:
     ):
         client.list_month("DISPATCHREGIONSUM", 2025, 1)
     assert len(calls) == 3
+
+
+PD_PAGE = month_dir_url(BASE, 2025, 1, "PREDISP_ALL_DATA")
+PD_PATH = "/MMSDM/2025/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/PREDISP_ALL_DATA/"
+LISTING_ALL = f"""<pre>
+<A HREF="{PD_PATH}PUBLIC_ARCHIVE%23PREDISPATCHREGIONSUM%23ALL%23FILE01%23202501010000.zip">a</A>
+<A HREF="{PD_PATH}PUBLIC_ARCHIVE%23PREDISPATCHPRICE%23ALL%23FILE01%23202501010000.zip">b</A>
+<A HREF="{PD_PATH}PUBLIC_ARCHIVE%23PREDISPATCHREGIONSUM%23FILE01%23202501010000.zip">c</A>
+</pre>"""
+
+
+def test_all_runs_listing_matches_only_the_all_archive() -> None:
+    assert PD_PAGE.endswith("/MMSDM_2025_01/MMSDM_Historical_Data_SQLLoader/PREDISP_ALL_DATA/")
+    files = parse_listing(
+        LISTING_ALL, "PREDISPATCHREGIONSUM", 2025, 1, PD_PAGE, "PREDISP_ALL_DATA", all_runs=True
+    )
+    assert [f.filename for f in files] == [
+        "PUBLIC_ARCHIVE#PREDISPATCHREGIONSUM#ALL#FILE01#202501010000.zip"
+    ]
+    assert files[0].folder == "PREDISP_ALL_DATA" and files[0].all_runs
+    assert files[0].dataset == "PREDISPATCHREGIONSUM_ALL"
+    # The DATA/ pattern never picks up an #ALL# archive (and vice versa).
+    plain = parse_listing(LISTING_ALL, "PREDISPATCHREGIONSUM", 2025, 1, PD_PAGE)
+    assert [f.filename for f in plain] == [
+        "PUBLIC_ARCHIVE#PREDISPATCHREGIONSUM#FILE01#202501010000.zip"
+    ]
+
+
+def test_all_runs_archive_cached_apart_from_data_table(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if str(request.url) == PD_PAGE:
+            return httpx.Response(200, text=LISTING_ALL)
+        return httpx.Response(200, content=b"zip")
+
+    with NemwebClient(_cfg(), tmp_path, transport=httpx.MockTransport(handler)) as client:
+        got = client.fetch_month(
+            "PREDISPATCHREGIONSUM", 2025, 1, folder="PREDISP_ALL_DATA", all_runs=True
+        )
+        again = client.fetch_month(
+            "PREDISPATCHREGIONSUM", 2025, 1, folder="PREDISP_ALL_DATA", all_runs=True
+        )
+    assert [d.from_cache for d in again] == [True]
+    assert got[0].path.parent == tmp_path / "mmsdm" / "PREDISPATCHREGIONSUM_ALL" / "202501"
+    assert (got[0].path.parent / "listing.json").exists()
+    assert len(calls) == 2  # one listing, one file

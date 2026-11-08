@@ -176,6 +176,17 @@ class KnownEvent(BaseModel):
     label: str
 
 
+class AemoBenchmarkConfig(BaseModel):
+    """AEMO's own demand forecasts, a benchmark only (never a model input); m2_plan.md §2.6."""
+
+    ingest_start_month: str  # YYYY-MM, archive months downloaded and loaded
+    ingest_end_month: str
+    first_issue: dt.date  # first NEM-time issue day compared; development ends at holdout_start
+    # Data-quality bounds on publication time (LASTCHANGED) relative to the nominal run time.
+    predispatch_published_within_minutes: float = 15.0  # after the run time
+    p5min_published_within_minutes: float = 10.0  # before the run time
+
+
 class EvaluationConfig(BaseModel):
     horizons_reported: list[int]
     peak_hours_local: tuple[int, int]
@@ -330,6 +341,7 @@ class AppConfig(BaseModel):
     weather: WeatherConfig
     features: FeaturesConfig
     ml: MlConfig
+    aemo: AemoBenchmarkConfig
 
     @model_validator(mode="after")
     def _weather_regions_known(self) -> AppConfig:

@@ -119,6 +119,44 @@ def ingest_weather(
         raise typer.Exit(code=1)
 
 
+@app.command("ingest-aemo")
+def ingest_aemo(
+    start: StartOpt = None,
+    end: EndOpt = None,
+    regions: RegionsOpt = None,
+    source: Annotated[str, typer.Option(help="predispatch, p5min or all")] = "all",
+) -> None:
+    """Download, validate and load AEMO pre-dispatch demand forecasts (M2 benchmark only)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.ingestion.aemo_forecasts import FORECAST_TABLES, ingest_aemo_range
+    from gridcast.ingestion.pipeline import parse_month_arg
+
+    tables = [t for t in FORECAST_TABLES if source in ("all", t.source)]
+    if not tables:
+        raise typer.BadParameter(
+            f"source must be all or one of {[t.source for t in FORECAST_TABLES]}"
+        )
+    cfg = load_config()
+    first = parse_month_arg(start or cfg.aemo.ingest_start_month)
+    last = parse_month_arg(end or cfg.aemo.ingest_end_month)
+    results = ingest_aemo_range(get_engine(), cfg, first, last, _regions(regions), tables)
+    rows = [
+        [f"{r.period:%Y-%m}", name, r.status, r.rows_parsed, r.rows_loaded]
+        for name, months in results.items()
+        for r in months
+    ]
+    typer.echo(
+        tabulate(rows, headers=["month", "source", "status", "parsed", "loaded"], tablefmt="github")
+    )
+    failed = [
+        (name, r) for name, months in results.items() for r in months if r.status != "success"
+    ]
+    for name, r in failed:
+        typer.echo(f"FAILED {r.period:%Y-%m} {name}: {r.error}", err=True)
+    if failed:
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def dq(start: StartOpt = None, end: EndOpt = None, regions: RegionsOpt = None) -> None:
     """Run market and weather data-quality checks over the window and store results."""

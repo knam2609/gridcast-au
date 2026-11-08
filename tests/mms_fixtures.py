@@ -95,3 +95,67 @@ def price_rows(
                 }
             )
     return rows
+
+
+# AEMO forecast archives (M2 benchmark). Real files carry ~120 columns; mapping is by name.
+PREDISPATCH_COLS = [
+    "PREDISPATCHSEQNO", "RUNNO", "REGIONID", "PERIODID", "INTERVENTION", "TOTALDEMAND",
+    "AVAILABLEGENERATION", "LASTCHANGED", "DATETIME",
+]  # fmt: skip
+P5MIN_COLS = [
+    "RUN_DATETIME", "INTERVAL_DATETIME", "REGIONID", "RRP", "TOTALDEMAND", "LASTCHANGED",
+    "INTERVENTION",
+]  # fmt: skip
+
+
+def predispatch_rows(
+    trading_day: dt.date,
+    runs: Sequence[int],
+    periods: int = 4,
+    regions: Sequence[str] = ("NSW1", "VIC1"),
+) -> list[dict[str, str]]:
+    """Runs ``PP`` of a trading day: run time 04:00 NEM + (PP-1) x 30 min, periods 30 min apart."""
+    rows = []
+    for pp in runs:
+        run_time = dt.datetime.combine(trading_day, dt.time(4)) + dt.timedelta(
+            minutes=30 * (pp - 1)
+        )
+        for k in range(1, periods + 1):
+            for j, region in enumerate(regions):
+                rows.append(
+                    {
+                        "PREDISPATCHSEQNO": f"{trading_day:%Y%m%d}{pp:02d}",
+                        "RUNNO": "1",
+                        "REGIONID": region,
+                        "PERIODID": f"{k:02d}",
+                        "INTERVENTION": "0",
+                        "TOTALDEMAND": f"{4000 + 10 * k + 1000 * j + pp:.2f}",
+                        "AVAILABLEGENERATION": "9000",
+                        "LASTCHANGED": nem(run_time + dt.timedelta(seconds=134)),
+                        "DATETIME": nem(run_time + dt.timedelta(minutes=30 * k)),
+                    }
+                )
+    return rows
+
+
+def p5min_rows(
+    first_run: dt.datetime, n_runs: int, regions: Sequence[str] = ("NSW1", "VIC1")
+) -> list[dict[str, str]]:
+    """5-minute runs every 5 min from ``first_run`` (NEM time), intervals 0..11."""
+    rows = []
+    for r in range(n_runs):
+        run_time = first_run + dt.timedelta(minutes=5 * r)
+        for i in range(12):
+            for j, region in enumerate(regions):
+                rows.append(
+                    {
+                        "RUN_DATETIME": nem(run_time),
+                        "INTERVAL_DATETIME": nem(run_time + dt.timedelta(minutes=5 * i)),
+                        "REGIONID": region,
+                        "RRP": "50",
+                        "TOTALDEMAND": f"{4000 + i + 1000 * j + r:.2f}",
+                        "LASTCHANGED": nem(run_time - dt.timedelta(seconds=270)),
+                        "INTERVENTION": "0",
+                    }
+                )
+    return rows

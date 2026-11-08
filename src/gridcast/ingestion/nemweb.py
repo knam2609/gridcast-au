@@ -5,6 +5,10 @@ file naming changed over time:
 
 * ``PUBLIC_DVD_DISPATCHREGIONSUM_202110010000.zip``            (older)
 * ``PUBLIC_ARCHIVE#DISPATCHREGIONSUM#FILE01#202501010000.zip`` (newer, may have FILE02…)
+
+Tables live in the month's ``DATA/`` folder, except the "all runs" forecast archives (M2's AEMO
+benchmark), which have their own folders and an ``#ALL#`` name segment, e.g.
+``PREDISP_ALL_DATA/PUBLIC_ARCHIVE#PREDISPATCHREGIONSUM#ALL#FILE01#202501010000.zip``.
 """
 
 from __future__ import annotations
@@ -46,6 +50,13 @@ class ArchiveFile:
     part: int
     filename: str  # decoded, e.g. PUBLIC_ARCHIVE#DISPATCHPRICE#FILE01#202501010000.zip
     url: str
+    folder: str = "DATA"
+    all_runs: bool = False  # an "#ALL#" archive (every forecast run), not the DATA/ table
+
+    @property
+    def dataset(self) -> str:
+        """Cache directory name: the "all runs" archive is kept apart from the DATA/ table."""
+        return f"{self.table}_ALL" if self.all_runs else self.table
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,16 +68,24 @@ class DownloadedFile:
     from_cache: bool
 
 
-def month_dir_url(base_url: str, year: int, month: int) -> str:
+def month_dir_url(base_url: str, year: int, month: int, folder: str = "DATA") -> str:
     return (
         f"{base_url.rstrip('/')}/{year:04d}/MMSDM_{year:04d}_{month:02d}/"
-        "MMSDM_Historical_Data_SQLLoader/DATA/"
+        f"MMSDM_Historical_Data_SQLLoader/{folder}/"
     )
 
 
-def table_file_pattern(table: str) -> re.Pattern[str]:
-    """Anchored pattern matching only ``table`` (never e.g. ``PRE<table>`` or ``<table>_D``)."""
+def table_file_pattern(table: str, all_runs: bool = False) -> re.Pattern[str]:
+    """Anchored pattern matching only ``table`` (never e.g. ``PRE<table>`` or ``<table>_D``).
+
+    ``all_runs`` matches the ``PUBLIC_ARCHIVE#<table>#ALL#FILEnn#…`` archives only (the old
+    ``PUBLIC_DVD`` naming predates the months these are used for).
+    """
     t = re.escape(table)
+    if all_runs:
+        return re.compile(
+            rf"^PUBLIC_ARCHIVE#{t}#ALL#FILE(?P<part_arc>\d{{2}})#(?P<stamp_arc>\d{{12}})\.zip$"
+        )
     return re.compile(
         rf"^PUBLIC_(?:"
         rf"DVD_{t}(?:_FILE(?P<part_dvd>\d{{2}}))?_(?P<stamp_dvd>\d{{12}})"
@@ -75,9 +94,17 @@ def table_file_pattern(table: str) -> re.Pattern[str]:
     )
 
 
-def parse_listing(html: str, table: str, year: int, month: int, page_url: str) -> list[ArchiveFile]:
+def parse_listing(
+    html: str,
+    table: str,
+    year: int,
+    month: int,
+    page_url: str,
+    folder: str = "DATA",
+    all_runs: bool = False,
+) -> list[ArchiveFile]:
     """Extract the archive files for ``table`` from a NEMWeb directory-listing page."""
-    pattern = table_file_pattern(table)
+    pattern = table_file_pattern(table, all_runs)
     expected_stamp = f"{year:04d}{month:02d}010000"
     found: dict[str, ArchiveFile] = {}
     for href in _HREF_RE.findall(html):
@@ -85,11 +112,11 @@ def parse_listing(html: str, table: str, year: int, month: int, page_url: str) -
         m = pattern.match(filename)
         if not m:
             continue
-        stamp = m.group("stamp_dvd") or m.group("stamp_arc")
+        stamp = m.groupdict().get("stamp_dvd") or m.group("stamp_arc")
         if stamp != expected_stamp:
             log.warning("mmsdm.unexpected_stamp", file=filename, expected=expected_stamp)
             continue
-        part = int(m.group("part_dvd") or m.group("part_arc") or 1)
+        part = int(m.groupdict().get("part_dvd") or m.group("part_arc") or 1)
         found[filename] = ArchiveFile(
             table=table,
             year=year,
@@ -97,6 +124,8 @@ def parse_listing(html: str, table: str, year: int, month: int, page_url: str) -
             part=part,
             filename=filename,
             url=urljoin(page_url, href),
+            folder=folder,
+            all_runs=all_runs,
         )
     return sorted(found.values(), key=lambda f: f.part)
 
@@ -169,16 +198,18 @@ class NemwebClient:
         response.raise_for_status()
         return response
 
-    def list_month(self, table: str, year: int, month: int) -> list[ArchiveFile]:
-        page_url = month_dir_url(self.cfg.base_url, year, month)
+    def list_month(
+        self, table: str, year: int, month: int, folder: str = "DATA", all_runs: bool = False
+    ) -> list[ArchiveFile]:
+        page_url = month_dir_url(self.cfg.base_url, year, month, folder)
         html = self._get(page_url).text
-        files = parse_listing(html, table, year, month, page_url)
+        files = parse_listing(html, table, year, month, page_url, folder, all_runs)
         if not files:
             raise FileNotFoundError(f"No {table} file listed for {year}-{month:02d} at {page_url}")
         return files
 
     def cache_path(self, f: ArchiveFile) -> Path:
-        return self.raw_dir / "mmsdm" / f.table / f"{f.year:04d}{f.month:02d}" / f.filename
+        return self.raw_dir / "mmsdm" / f.dataset / f"{f.year:04d}{f.month:02d}" / f.filename
 
     def download(self, f: ArchiveFile) -> DownloadedFile:
         """Download ``f`` into the cache unless an intact cached copy already exists."""
@@ -211,20 +242,25 @@ class NemwebClient:
         log.info("mmsdm.downloaded", file=f.filename, bytes=len(response.content))
         return DownloadedFile(f, path, digest, len(response.content), from_cache=False)
 
-    def month_files(self, table: str, year: int, month: int) -> list[ArchiveFile]:
+    def month_files(
+        self, table: str, year: int, month: int, folder: str = "DATA", all_runs: bool = False
+    ) -> list[ArchiveFile]:
         """Files for ``table``/month, from a cached listing if available, else NEMWeb.
 
         The listing itself is cached so that multi-part months can never be partially
         reused from cache (every listed part is always downloaded or hash-verified).
         """
-        listing_path = self.raw_dir / "mmsdm" / table / f"{year:04d}{month:02d}" / "listing.json"
+        dataset = f"{table}_ALL" if all_runs else table
+        listing_path = self.raw_dir / "mmsdm" / dataset / f"{year:04d}{month:02d}" / "listing.json"
         if listing_path.exists():
             return [ArchiveFile(**item) for item in json.loads(listing_path.read_text())]
-        files = self.list_month(table, year, month)
+        files = self.list_month(table, year, month, folder, all_runs)
         listing_path.parent.mkdir(parents=True, exist_ok=True)
         listing_path.write_text(json.dumps([asdict(f) for f in files], indent=2))
         return files
 
-    def fetch_month(self, table: str, year: int, month: int) -> list[DownloadedFile]:
+    def fetch_month(
+        self, table: str, year: int, month: int, folder: str = "DATA", all_runs: bool = False
+    ) -> list[DownloadedFile]:
         """Download (or reuse from cache) every part of ``table`` for one month."""
-        return [self.download(f) for f in self.month_files(table, year, month)]
+        return [self.download(f) for f in self.month_files(table, year, month, folder, all_runs)]

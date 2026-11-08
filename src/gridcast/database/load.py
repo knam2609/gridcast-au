@@ -267,3 +267,25 @@ def upsert_weather_forecasts(conn: Connection, df: pd.DataFrame, ingestion_run_i
         ("model", "site_id", "offset_days", "valid_time"),
         ingestion_run_id,
     )
+
+
+AEMO_FORECAST_COLUMNS: tuple[str, ...] = (
+    "source",
+    "region_id",
+    "run_time",
+    "target_end",
+    "resolution_minutes",
+    "available_at",
+    "total_demand_mw",
+)
+
+
+def upsert_aemo_forecasts(conn: Connection, df: pd.DataFrame, ingestion_run_id: int) -> int:
+    return _copy_upsert(
+        conn,
+        "aemo_demand_forecasts",
+        df,
+        AEMO_FORECAST_COLUMNS,
+        ("source", "region_id", "run_time", "target_end"),
+        ingestion_run_id,
+    )
