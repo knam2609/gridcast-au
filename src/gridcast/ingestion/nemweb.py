@@ -9,6 +9,10 @@ file naming changed over time:
 Tables live in the month's ``DATA/`` folder, except the "all runs" forecast archives (M2's AEMO
 benchmark), which have their own folders and an ``#ALL#`` name segment, e.g.
 ``PREDISP_ALL_DATA/PUBLIC_ARCHIVE#PREDISPATCHREGIONSUM#ALL#FILE01#202501010000.zip``.
+
+The same client also fetches NEMWeb's daily archive of the five-minute dispatch reports
+(``Reports/Archive/DispatchIS_Reports/PUBLIC_DISPATCHIS_YYYYMMDD.zip``, a rolling window of
+about a year), used only for days the monthly archive does not have yet (M2 step 6).
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import TracebackType
@@ -52,6 +57,7 @@ class ArchiveFile:
     url: str
     folder: str = "DATA"
     all_runs: bool = False  # an "#ALL#" archive (every forecast run), not the DATA/ table
+    source_dir: str = "mmsdm"  # top-level cache directory under raw/
 
     @property
     def dataset(self) -> str:
@@ -128,6 +134,41 @@ def parse_listing(
             all_runs=all_runs,
         )
     return sorted(found.values(), key=lambda f: f.part)
+
+
+DAILY_TABLE = "DISPATCHIS"
+DAILY_SOURCE_DIR = "nemweb_daily"
+_DAILY_RE = re.compile(r"^PUBLIC_DISPATCHIS_(?P<day>\d{8})\.zip$")
+
+
+def daily_filename(day: dt.date) -> str:
+    return f"PUBLIC_DISPATCHIS_{day:%Y%m%d}.zip"
+
+
+def daily_archive_file(day: dt.date, url: str) -> ArchiveFile:
+    """The daily dispatch-report archive of NEM-time ``day`` (intervals ending 00:05 → 24:00)."""
+    return ArchiveFile(
+        table=DAILY_TABLE,
+        year=day.year,
+        month=day.month,
+        part=day.day,
+        filename=daily_filename(day),
+        url=url,
+        folder="DispatchIS_Reports",
+        source_dir=DAILY_SOURCE_DIR,
+    )
+
+
+def parse_daily_listing(html: str, page_url: str) -> dict[dt.date, ArchiveFile]:
+    """Daily dispatch-report archives listed on NEMWeb's ``DispatchIS_Reports`` page, by day."""
+    found: dict[dt.date, ArchiveFile] = {}
+    for href in _HREF_RE.findall(html):
+        filename = unquote(href.rsplit("/", 1)[-1])
+        m = _DAILY_RE.match(filename)
+        if m:
+            day = dt.datetime.strptime(m.group("day"), "%Y%m%d").date()  # noqa: DTZ007
+            found[day] = daily_archive_file(day, urljoin(page_url, href))
+    return found
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -209,7 +250,7 @@ class NemwebClient:
         return files
 
     def cache_path(self, f: ArchiveFile) -> Path:
-        return self.raw_dir / "mmsdm" / f.dataset / f"{f.year:04d}{f.month:02d}" / f.filename
+        return self.raw_dir / f.source_dir / f.dataset / f"{f.year:04d}{f.month:02d}" / f.filename
 
     def download(self, f: ArchiveFile) -> DownloadedFile:
         """Download ``f`` into the cache unless an intact cached copy already exists."""
@@ -264,3 +305,29 @@ class NemwebClient:
     ) -> list[DownloadedFile]:
         """Download (or reuse from cache) every part of ``table`` for one month."""
         return [self.download(f) for f in self.month_files(table, year, month, folder, all_runs)]
+
+    def fetch_daily_reports(
+        self, listing_url: str, days: Sequence[dt.date]
+    ) -> dict[dt.date, DownloadedFile]:
+        """Download (or reuse from cache) the daily dispatch-report archive of each day.
+
+        The listing is read only if some day is not cached yet, so cached days stay usable
+        after they leave NEMWeb's rolling window.
+        """
+        files: dict[dt.date, ArchiveFile] = {}
+        for day in days:
+            f = daily_archive_file(day, url="")
+            meta = self.cache_path(f).with_name(f.filename + ".meta.json")
+            if self.cache_path(f).exists() and meta.exists():
+                files[day] = daily_archive_file(day, json.loads(meta.read_text())["url"])
+        todo = [d for d in days if d not in files]
+        if todo:
+            listed = parse_daily_listing(self._get(listing_url).text, listing_url)
+            missing = [d for d in todo if d not in listed]
+            if missing:
+                raise FileNotFoundError(
+                    f"no daily dispatch report listed for {[str(d) for d in missing]} "
+                    f"at {listing_url}"
+                )
+            files |= {d: listed[d] for d in todo}
+        return {day: self.download(files[day]) for day in days}

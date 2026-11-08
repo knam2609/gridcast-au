@@ -3,8 +3,10 @@ UV ?= uv
 START ?= 2021-10
 END ?= 2026-09
 REGIONS ?= VIC1
+DAYS ?= 2026-10-01
+CHECK_MONTH ?= 2026-09
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-aemo weather calendar dq backtest backtest-ml weather-ablation report report-m2 report-aemo catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo weather calendar dq backtest backtest-ml weather-ablation report report-m2 report-aemo catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -41,6 +43,9 @@ migrate: ## Apply database migrations
 
 ingest: ## Download, validate and load AEMO MMSDM data (START/END/REGIONS overridable)
 	$(UV) run gridcast ingest --start $(START) --end $(END) --regions $(REGIONS)
+
+ingest-daily: ## Load DAYS from NEMWeb's daily dispatch reports after an exact match with MMSDM over CHECK_MONTH (M2 step 6)
+	$(UV) run gridcast ingest-daily $(foreach d,$(DAYS),--day $(d)) --check-month $(CHECK_MONTH) --regions $(REGIONS)
 
 ingest-aemo: ## Download and load AEMO pre-dispatch + 5-min pre-dispatch forecasts (M2 benchmark; ~2.6 GB cached)
 	$(UV) run gridcast ingest-aemo --regions $(REGIONS)

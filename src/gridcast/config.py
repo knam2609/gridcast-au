@@ -75,8 +75,19 @@ class MmsdmSourceConfig(BaseModel):
     stale_after_days: int = 75
 
 
+class DailyReportsConfig(BaseModel):
+    """NEMWeb's daily archive of the five-minute dispatch reports (M2 step 6).
+
+    Used only for days the monthly MMSDM archive does not have yet, after an exact match
+    check against MMSDM on days present in both; requests reuse the ``mmsdm`` settings.
+    """
+
+    listing_url: str
+
+
 class SourcesConfig(BaseModel):
     mmsdm: MmsdmSourceConfig
+    nemweb_daily: DailyReportsConfig | None = None
 
 
 class IngestionConfig(BaseModel):

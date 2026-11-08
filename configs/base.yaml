@@ -37,6 +37,12 @@ sources:
     tables: [DISPATCHREGIONSUM, DISPATCHPRICE]
     # MMSDM monthly archives are published ~2-6 weeks after month end.
     stale_after_days: 75
+  nemweb_daily:
+    # Daily archive of the 5-minute dispatch reports (rolling, about a year), one zip per
+    # NEM-time day holding 288 report zips. Only for days MMSDM does not have yet (M2 step 6,
+    # 1 Oct 2026), after `gridcast ingest-daily` matches it exactly against MMSDM on a month
+    # present in both. Requests use the mmsdm settings above.
+    listing_url: https://nemweb.com.au/Reports/Archive/DispatchIS_Reports/
 
 ingestion:
   start_month: "2021-10"   # 5-minute settlement (5MS) began 1 Oct 2021

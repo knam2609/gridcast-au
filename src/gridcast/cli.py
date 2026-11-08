@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 from tabulate import tabulate
@@ -10,6 +10,9 @@ from tabulate import tabulate
 from gridcast import __version__
 from gridcast.config import get_settings, load_config, load_market_limits
 from gridcast.logs import configure_logging, get_logger
+
+if TYPE_CHECKING:
+    from gridcast.ingestion.daily import MatchCheck
 
 app = typer.Typer(
     name="gridcast",
@@ -117,6 +120,75 @@ def ingest_weather(
         typer.echo(f"FAILED {r.period:%Y-%m} {r.dataset}: {r.error}", err=True)
     if failed:
         raise typer.Exit(code=1)
+
+
+@app.command("ingest-daily")
+def ingest_daily_cmd(
+    day: Annotated[
+        list[str], typer.Option("--day", help="NEM-time day YYYY-MM-DD to load (repeatable)")
+    ],
+    check_month: Annotated[
+        str,
+        typer.Option(
+            "--check-month", help="Month YYYY-MM loaded from MMSDM, compared with the daily reports"
+        ),
+    ],
+    regions: RegionsOpt = None,
+) -> None:
+    """Load days MMSDM lacks from NEMWeb's daily dispatch reports, after an exact match check."""
+    import datetime as dt
+
+    from gridcast.database.engine import get_engine
+    from gridcast.ingestion.daily import DailyCheckFailed, ingest_daily
+    from gridcast.ingestion.pipeline import parse_month_arg
+
+    try:
+        days = [dt.date.fromisoformat(d) for d in day]
+    except ValueError as exc:
+        raise typer.BadParameter(f"--day must be YYYY-MM-DD: {exc}") from exc
+    cfg = load_config()
+    try:
+        result = ingest_daily(
+            get_engine(), cfg, days, parse_month_arg(check_month), _regions(regions)
+        )
+    except DailyCheckFailed as exc:
+        _echo_match_check(exc.check)
+        typer.echo(f"FAILED: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    _echo_match_check(result.check)
+    typer.echo(
+        tabulate(
+            [[d, n] for d, n in result.loaded.items()],
+            headers=["day (NEM)", "rows loaded"],
+            tablefmt="github",
+        )
+    )
+    typer.echo(f"check written to {result.report_path}")
+
+
+def _echo_match_check(check: MatchCheck) -> None:
+    typer.echo(
+        f"match check {check.month} ({check.days} days, {', '.join(check.regions)}; loaded from "
+        f"{', '.join(check.loaded_sources)}): intervals only in the daily reports "
+        f"{check.only_daily}, only loaded {check.only_loaded}; passed: {check.passed}"
+    )
+    rows = [
+        [
+            c.column,
+            c.compared,
+            c.differing,
+            "" if c.max_abs_difference is None else f"{c.max_abs_difference:g}",
+            "yes" if c.must_match else "",
+        ]
+        for c in check.columns
+    ]
+    typer.echo(
+        tabulate(
+            rows,
+            headers=["column", "compared", "differing", "max |diff|", "must match"],
+            tablefmt="github",
+        )
+    )
 
 
 @app.command("ingest-aemo")

@@ -44,17 +44,31 @@ class ParseStats:
     members: int = 0
 
 
+def _zip_members(zf: zipfile.ZipFile, label: str) -> Iterator[tuple[str, Iterator[list[str]]]]:
+    """CSV members of an open zip, then those of every zip nested in it (in name order).
+
+    NEMWeb's daily report archives are zips of zips: one inner zip (holding one CSV) per
+    five-minute report.
+    """
+    names = zf.namelist()
+    csvs = [n for n in names if n.upper().endswith(".CSV")]
+    nested = sorted(n for n in names if n.upper().endswith(".ZIP"))
+    if not csvs and not nested:
+        raise MmsFormatError(f"{label}: zip contains no .CSV member")
+    for name in csvs:
+        with zf.open(name) as raw:
+            text = io.TextIOWrapper(raw, encoding="latin-1", newline="")
+            yield name, csv.reader(text)
+    for name in nested:
+        with zipfile.ZipFile(io.BytesIO(zf.read(name))) as inner:
+            yield from _zip_members(inner, name)
+
+
 def _iter_members(path: Path) -> Iterator[tuple[str, Iterator[list[str]]]]:
-    """Yield ``(member_name, csv_rows)`` for a zipped (one or more .CSV) or plain CSV file."""
+    """Yield ``(member_name, csv_rows)`` for a plain CSV or a zip of CSVs (or of such zips)."""
     if path.suffix.lower() == ".zip":
         with zipfile.ZipFile(path) as zf:
-            members = [n for n in zf.namelist() if n.upper().endswith(".CSV")]
-            if not members:
-                raise MmsFormatError(f"{path.name}: zip contains no .CSV member")
-            for name in members:
-                with zf.open(name) as raw:
-                    text = io.TextIOWrapper(raw, encoding="latin-1", newline="")
-                    yield name, csv.reader(text)
+            yield from _zip_members(zf, path.name)
     else:
         with path.open(encoding="latin-1", newline="") as fh:
             yield path.name, csv.reader(fh)

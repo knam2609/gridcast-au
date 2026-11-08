@@ -159,3 +159,57 @@ def p5min_rows(
                     }
                 )
     return rows
+
+
+def report_lines(
+    sections: Sequence[tuple[str, str, str, Sequence[str], Sequence[dict[str, str]]]],
+) -> list[str]:
+    """One MMS report file holding several sections (as a five-minute dispatch report does)."""
+    lines = [
+        "C,NEMP.WORLD,DISPATCHIS,AEMO,PUBLIC,2026/10/01,00:00:16,0000000540479331,DISPATCHIS,0000000540479329"
+    ]
+    for package, report, version, columns, rows in sections:
+        lines.append(",".join(["I", package, report, version, *columns]))
+        for row in rows:
+            values = [row.get(c, "") for c in columns]
+            lines.append(",".join(["D", package, report, version, *[f'"{v}"' for v in values]]))
+    lines.append(f'C,"END OF REPORT",{len(lines) + 1}')
+    return lines
+
+
+def write_daily_archive(
+    path: Path,
+    regionsum: Sequence[dict[str, str]],
+    price: Sequence[dict[str, str]],
+    chunks: int = 2,
+) -> Path:
+    """A NEMWeb daily dispatch-report archive: a zip of ``chunks`` report zips, one CSV each.
+
+    Real archives hold one report zip per five-minute interval; the parser does not care how
+    many intervals a report holds, so tests use a few larger ones.
+    """
+    import io
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    step_r = -(-len(regionsum) // chunks)
+    step_p = -(-len(price) // chunks)
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as outer:
+        for k in range(chunks):
+            lines = report_lines(
+                [
+                    ("DISPATCH", "PRICE", "5", PRICE_COLS, price[k * step_p : (k + 1) * step_p]),
+                    (
+                        "DISPATCH",
+                        "REGIONSUM",
+                        "9",
+                        REGIONSUM_COLS,
+                        regionsum[k * step_r : (k + 1) * step_r],
+                    ),
+                ]
+            )
+            stem = f"PUBLIC_DISPATCHIS_{path.stem[-8:]}{k:04d}_{k:016d}"
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as inner:
+                inner.writestr(f"{stem}.CSV", "\r\n".join(lines) + "\r\n")
+            outer.writestr(f"{stem}.zip", buf.getvalue())
+    return path
