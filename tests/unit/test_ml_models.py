@@ -204,6 +204,13 @@ def test_config_hash_tracks_model_settings_only() -> None:
     assert ml_config_hash(changed) != h
 
 
+def test_ml_config_matches_holdout_freeze() -> None:
+    """The holdout config is frozen (m2_plan.md step 6): an ML/feature setting change fails."""
+    cfg = load_config()
+    assert cfg.backtest.frozen_ml_config_hash is not None
+    assert ml_config_hash(cfg) == cfg.backtest.frozen_ml_config_hash
+
+
 def test_evaluate_accepts_extra_segments_and_split_subset() -> None:
     from gridcast.forecasting.backtest import evaluate, run_backtest
     from gridcast.forecasting.origins import ForecastSetup, nem_midnight_utc

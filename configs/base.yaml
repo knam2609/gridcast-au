@@ -53,6 +53,10 @@ backtest:
   reference_model:
     demand: weekly_naive
     price: weekly_naive
+  # Frozen 2026-11-08, before the AEMO benchmark (M2 step 5) and before any holdout scoring.
+  # Second development run's config; model/feature code as at this commit. Do not edit.
+  frozen_ml_config_hash: "b88eae0a04e176af"
+  frozen_ml_commit: "96a6e50"
 
 baselines:
   median_profile_lookback_days: 28

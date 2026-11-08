@@ -94,6 +94,10 @@ class BacktestConfig(BaseModel):
     eval_start: dt.date
     holdout_start: dt.date
     reference_model: dict[str, str]
+    # M2 holdout freeze (docs/plans/m2_plan.md, step 6): the ML config hash and the commit
+    # whose model and feature code produced it. A unit test fails if the config drifts.
+    frozen_ml_config_hash: str | None = None
+    frozen_ml_commit: str | None = None
 
 
 class BaselinesConfig(BaseModel):
