@@ -186,6 +186,8 @@ def test_holdout_reproduces_scores_once_and_locks(two_months: Engine, tmp_path: 
     assert "Replication of S1–S4 on the holdout" in report
     assert report.count("**holds**") + report.count("**does not hold**") == 4
     assert "AEMO benchmark, holdout part" in report
+    assert "## Bias by month (diagnostic, added after scoring)" in report
+    assert "pooled bias (forecast − actual) is" in report
     assert "none: every target interval comes from MMSDM" in report
     assert (tmp_path / "reports" / "figures" / "m2_holdout_mae_by_lead.png").is_file()
     assert (tmp_path / "reports" / "figures" / "m2_holdout_aemo_mae_by_lead.png").is_file()

@@ -12,6 +12,8 @@ report is built (the leakage property tests are run by this command).
   written, with the same code as the development report, and reported as *holds* or *does
   not hold*. They do not change the development verdicts.
 * The holdout part of the AEMO benchmark uses the step-5 alignments and bootstrap.
+* *Bias by month* is a diagnostic added after the holdout was scored and read (it says so in
+  the report). It reads the stored forecasts of both periods; nothing is re-run.
 """
 
 from __future__ import annotations
@@ -89,6 +91,7 @@ PERIOD_MODELS = (
     "weekly_naive",
 )
 QUARTER_MODELS = ("lgbm_A", "lgbm_C", "lgbm_D", "ridge_C", "daily_naive")
+BIAS_MODELS = ("lgbm_C", "lgbm_A", "lgbm_D", "daily_naive")
 PLUS_MODELS = (
     "lgbm_Cplus",
     "lgbm_Dplus",
@@ -271,6 +274,96 @@ def quarterly_errors(pairs: Pairs, models: Sequence[str]) -> pd.DataFrame:
         row["n"] = int(mask.sum())
         rows[q] = row
     return pd.DataFrame(rows).T
+
+
+def monthly_bias(pairs: Pairs, models: Sequence[str]) -> pd.DataFrame:
+    """Per NEM-time month of the issue time: pairs, mean actual, each model's bias and MAE.
+
+    Pooled over every lead time on the batch's common pairs. Columns: ``n``, ``actual``,
+    ``bias_<model>`` and ``mae_<model>``; the index is ``YYYY-MM``.
+    """
+    month = np.asarray(pairs.origin_times.tz_convert(NEM_TZ).strftime("%Y-%m"))
+    rows = {}
+    for key in sorted(set(month)):
+        sel = month == key
+        mask = pairs.mask[sel]
+        y = pairs.actual[sel][mask]
+        row: dict[str, float] = {"n": float(mask.sum()), "actual": float(np.mean(y))}
+        for m in models:
+            err = pairs.predictions[m][sel][mask].astype(np.float64) - y
+            row[f"bias_{m}"] = float(np.mean(err))
+            row[f"mae_{m}"] = float(np.mean(np.abs(err)))
+        rows[key] = row
+    return pd.DataFrame(rows).T
+
+
+def _month_label(key: object) -> str:
+    return f"{pd.Timestamp(f'{key}-01'):%b %Y}"
+
+
+def _bias_section(
+    dev_months: pd.DataFrame, hold_months: pd.DataFrame, models: Sequence[str]
+) -> list[str]:
+    """Diagnostic added after the holdout was scored: where C's holdout bias comes from."""
+    shown_dev = dev_months.iloc[-len(hold_months) :]
+    rows = [
+        [
+            _month_label(key),
+            period,
+            f"{int(r['n']):,}",
+            _fmt(r["actual"]),
+            *[f"{r[f'bias_{m}']:+.1f}" for m in models],
+            _fmt(r[f"mae_{HEADLINE}"]),
+        ]
+        for period, frame in (("development", shown_dev), ("holdout", hold_months))
+        for key, r in frame.iterrows()
+    ]
+    c_bias = f"bias_{HEADLINE}"
+    worst = str(hold_months[c_bias].idxmin())
+    worst_dev = str(dev_months[c_bias].idxmin())
+    top_hold = str(hold_months["actual"].idxmax())
+    top_dev = str(dev_months["actual"].idxmax())
+    higher = float(hold_months["actual"].max()) > float(dev_months["actual"].max())
+
+    def at(frame: pd.DataFrame, key: str, col: str) -> float:
+        return float(frame[col].to_numpy()[frame.index.get_loc(key)])
+
+    others = [
+        f"{model_label(m)} {at(hold_months, worst, f'bias_{m}'):+.1f} MW"
+        for m in models
+        if m != HEADLINE
+    ]
+    headers = [
+        "Issue month",
+        "Period",
+        "Pairs",
+        "Mean actual (MW)",
+        *[f"Bias {model_label(m)}" for m in models],
+        f"MAE {model_label(HEADLINE)}",
+    ]
+    return [
+        "## Bias by month (diagnostic, added after scoring)\n",
+        "Added to this report after the holdout was scored, to locate its largest change from "
+        "development: LightGBM C's bias. It reads the same stored forecasts; nothing was re-run, "
+        "re-selected or re-scored. Rows: the last development year (run 2) and the holdout, by "
+        "NEM-time month of the issue time, all lead times pooled on each batch's common pairs. "
+        "*Mean actual* is the mean demand over the month's scored pairs. Bias is forecast − "
+        "actual (MW).\n",
+        _md_table(headers, rows, "ll" + "r" * (len(headers) - 2)),
+        "",
+        f"- LightGBM C's most negative monthly bias in the holdout is {_month_label(worst)} "
+        f"({at(hold_months, worst, c_bias):+.1f} MW"
+        + (f"; {', '.join(others)}" if others else "")
+        + ").",
+        f"- In development (every issue month, {_month_label(dev_months.index[0])} → "
+        f"{_month_label(dev_months.index[-1])}), its most negative was "
+        f"{_month_label(worst_dev)} ({at(dev_months, worst_dev, c_bias):+.1f} MW).",
+        f"- The highest mean actual demand of any holdout month is {_month_label(top_hold)} "
+        f"({_fmt(at(hold_months, top_hold, 'actual'))} MW); of any development month, "
+        f"{_month_label(top_dev)} ({_fmt(at(dev_months, top_dev, 'actual'))} MW)"
+        + (". The holdout month is higher than every development month." if higher else "."),
+        "",
+    ]
 
 
 def _daily_check(cfg: AppConfig) -> dict[str, Any] | None:
@@ -614,6 +707,15 @@ def build_report(
     cross = first_better(table, HEADLINE, "persistence")
     jumps, typical = band_jumps(table, HEADLINE, boundaries)
     quarters = quarterly_errors(pairs, [m for m in QUARTER_MODELS if m in main.models])
+    bias_models = [m for m in BIAS_MODELS if m in main.models]
+    hold_months = monthly_bias(pairs, bias_models)
+    dev_pairs = load_pairs(dev["main"], data_root, builder.ctx.times)
+    if int(dev_pairs.mask.sum()) != int(run_config(dev["main"], HEADLINE)["scored_pairs"]):
+        raise ValueError("run 2's stored predictions do not reproduce its scored-pair count")
+    dev_months = monthly_bias(dev_pairs, bias_models)
+    del dev_pairs
+    bias_dev = dev["main"].value(HEADLINE, "dev", "all", 0, "bias")
+    bias_hold = main.value(HEADLINE, "holdout", "all", 0, "bias")
     c_dev, c_hold = dev_pooled[HEADLINE], hold_pooled[HEADLINE]
     env_dev = float(envelope(dev_table, baselines).mean())
     env_hold = float(envelope(table, baselines).mean())
@@ -652,6 +754,9 @@ def build_report(
         f"{_fmt(c_dev)} MW in development ({100 * (c_hold / c_dev - 1):+.1f}%); the best "
         f"baseline's mean MAE moved from {_fmt(env_dev)} to {_fmt(env_hold)} MW "
         f"({100 * (env_hold / env_dev - 1):+.1f}%).",
+        f"- LightGBM C's pooled bias (forecast − actual) is {bias_hold:+.1f} MW on the holdout "
+        f"against {bias_dev:+.1f} MW in development; see *Bias by month* (a diagnostic added "
+        "after scoring).",
         "",
         "## Provenance\n",
         _provenance(cfg, sets, dev, leakage, region_id, report_sha, daily_rows, daily),
@@ -770,6 +875,7 @@ def build_report(
             ],
         ),
         "",
+        *_bias_section(dev_months, hold_months, bias_models),
         "## Model selection at the holdout retrains\n",
         "LightGBM C, per retrain and lead band: the winning setting and the best early-stopping "
         "MAE each target form reached. Retrains inside the holdout select on their own last "
@@ -808,6 +914,9 @@ def build_report(
         "- **Development numbers are slightly optimistic.** The development period was "
         "looked at twice (two development runs, `reports/m2_demand.md`); these holdout numbers "
         "are not.\n"
+        "- **Added after scoring:** *Bias by month* and the bias line of the *Summary* were "
+        "added to this report after the holdout had been scored and read, to locate its largest "
+        "change from development. They read the stored forecasts only.\n"
         "- **Retrains inside the holdout** select their settings on their own last weeks, "
         "which lie in the holdout period. An operational retrain would do the same; no "
         "forecast uses data after its issue time.\n"
