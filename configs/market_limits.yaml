@@ -1,0 +1,16 @@
+# NEM market price cap (MPC) and market floor price (MPF), $/MWh, by financial year
+# (1 July - 30 June). Used only as data-quality bounds: an RRP above the cap or below
+# the floor for its financial year is flagged for investigation, never silently dropped.
+#
+# Provenance (`source`):
+#   aemc      - AEMC "Schedule of reliability settings" for that financial year
+#   secondary - third-party compilation (CRAN `aemo` R package / WattClarity); confirm
+#               against the AEMC schedule before relying on it for anything but QA bounds.
+market_floor: -1000.0
+market_price_cap:
+  "2021-22": {value: 15100.0, source: secondary}
+  "2022-23": {value: 15500.0, source: secondary}
+  "2023-24": {value: 16600.0, source: secondary}
+  "2024-25": {value: 17500.0, source: secondary}
+  "2025-26": {value: 20300.0, source: aemc}
+  "2026-27": {value: 23200.0, source: secondary}

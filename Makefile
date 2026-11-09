@@ -1,0 +1,58 @@
+.DEFAULT_GOAL := help
+UV ?= uv
+START ?= 2021-10
+END ?= 2026-09
+REGIONS ?= VIC1
+
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest calendar dq backtest report pipeline
+
+help: ## Show available targets
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
+
+setup: ## Install Python deps (uv) and create .env from the example if missing
+	$(UV) sync
+	@test -f .env || (cp .env.example .env && echo "Created .env from .env.example; set a password.")
+
+lint: ## Ruff lint + format check
+	$(UV) run ruff check src tests sql/migrations
+	$(UV) run ruff format --check src tests sql/migrations
+
+format: ## Auto-format and fix lint
+	$(UV) run ruff format src tests sql/migrations
+	$(UV) run ruff check --fix src tests sql/migrations
+
+typecheck: ## mypy on src/
+	$(UV) run mypy
+
+test: ## Unit tests (no database required)
+	$(UV) run pytest
+
+test-integration: ## Integration tests against the docker-compose database
+	$(UV) run pytest -m integration
+
+db-up: ## Start PostgreSQL and wait until healthy
+	docker compose up -d --wait db
+
+db-down: ## Stop PostgreSQL (data volume is kept)
+	docker compose down
+
+migrate: ## Apply database migrations
+	$(UV) run alembic upgrade head
+
+ingest: ## Download, validate and load AEMO MMSDM data (START/END/REGIONS overridable)
+	$(UV) run gridcast ingest --start $(START) --end $(END) --regions $(REGIONS)
+
+calendar: ## Build calendar_days (VIC holidays, weekends, DST-change days)
+	$(UV) run gridcast calendar --regions $(REGIONS)
+
+dq: ## Run data-quality checks and store results
+	$(UV) run gridcast dq --regions $(REGIONS)
+
+backtest: ## Walk-forward evaluation of all baselines (demand + price)
+	$(UV) run gridcast backtest --target demand --region $(firstword $(REGIONS))
+	$(UV) run gridcast backtest --target price --region $(firstword $(REGIONS))
+
+report: ## Generate reports/m1_baseline.md from stored metrics
+	$(UV) run gridcast report --region $(firstword $(REGIONS))
+
+pipeline: db-up migrate ingest calendar dq backtest report ## Full milestone-1 pipeline end to end
