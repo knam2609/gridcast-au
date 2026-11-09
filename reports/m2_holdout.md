@@ -1,12 +1,13 @@
 # Milestone 2: the holdout, scored once
 
-> **Generated** by `gridcast report-holdout` on 2026-11-09 00:57 UTC from the stored holdout run (issue times 2025-10-01 → 2026-09-30, NEM time). Do not edit by hand. The model config was frozen before the AEMO benchmark and before any holdout scoring; this is the unbiased estimate of how the recipe performs.
+> **Generated** by `gridcast report-holdout` on 2026-11-09 01:04 UTC from the stored holdout run (issue times 2025-10-01 → 2026-09-30, NEM time). Do not edit by hand. The model config was frozen before the AEMO benchmark and before any holdout scoring; this is the unbiased estimate of how the recipe performs.
 
 ## Summary
 
 - **S5 passes:** the holdout was scored by one `evaluate-holdout` run of the frozen config, after it reproduced run 2's development forecasts exactly.
 - **4 of 4 development criteria hold on the holdout** (replication, reported, not pass/fail).
 - LightGBM C's pooled MAE is 312.0 MW on the holdout against 263.6 MW in development (+18.4%); the best baseline's mean MAE moved from 463.0 to 493.9 MW (+6.7%).
+- LightGBM C's pooled bias (forecast − actual) is -104.1 MW on the holdout against -5.2 MW in development; see *Bias by month* (a diagnostic added after scoring).
 
 ## Provenance
 
@@ -24,7 +25,7 @@
 | Development reference (run 2) | main `6d783932-5834-4e18-a9e8-0e3567db46e6`, plus `94ea74a5-f644-46cf-8dce-dc82e8f13f11`, delay `358eeab3-29b6-4ef3-be14-0f2447799f58` |
 | Market data after the MMSDM archive | 282 target intervals (2026-10-01) from NEMWeb's daily dispatch reports, loaded after a match check against MMSDM over 2026-09: 8,640 intervals compared, demand different at 0 (`docs/data_sources.md` §7) |
 | Leakage property tests (run by this command) | 6 passed, 0 failed |
-| Report generated from commit | `891b2d746682591e07a7eb9cb0eb177589aed1e2` |
+| Report generated from commit | `c32cb95d597b22ba1333fabe317c22388cbb89d5` |
 
 ## S5: holdout used once
 
@@ -181,6 +182,41 @@ Pooled MAE (MW) by NEM-time quarter of the issue time.
 | 2026 Q2 | 1,257,984 | 268.7 | 284.0 | 291.5 | 281.1 | 388.8 | -7.4 |
 | 2026 Q3 | 1,271,808 | 332.6 | 330.5 | 311.5 | 353.4 | 486.8 | +18.9 |
 
+## Bias by month (diagnostic, added after scoring)
+
+Added to this report after the holdout was scored, to locate its largest change from development: LightGBM C's bias. It reads the same stored forecasts; nothing was re-run, re-selected or re-scored. Rows: the last development year (run 2) and the holdout, by NEM-time month of the issue time, all lead times pooled on each batch's common pairs. *Mean actual* is the mean demand over the month's scored pairs. Bias is forecast − actual (MW).
+
+| Issue month | Period | Pairs | Mean actual (MW) | Bias LightGBM C | Bias LightGBM A | Bias LightGBM D | Bias Daily naive | MAE LightGBM C |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Oct 2024 | development | 428,544 | 4,136.7 | +48.0 | +104.3 | +64.4 | +3.6 | 281.3 |
+| Nov 2024 | development | 414,720 | 4,229.9 | -46.9 | -36.0 | -15.4 | +10.0 | 329.6 |
+| Dec 2024 | development | 428,544 | 4,101.3 | +20.6 | +15.8 | +65.4 | +14.6 | 370.6 |
+| Jan 2025 | development | 428,544 | 4,423.0 | +0.9 | +62.6 | +39.5 | -23.9 | 339.6 |
+| Feb 2025 | development | 387,072 | 4,824.7 | -88.0 | -149.8 | -60.0 | -5.7 | 373.7 |
+| Mar 2025 | development | 428,544 | 4,686.4 | +0.4 | +4.9 | -1.7 | +8.1 | 305.4 |
+| Apr 2025 | development | 414,720 | 4,466.4 | -35.2 | +23.2 | -25.8 | -21.3 | 227.5 |
+| May 2025 | development | 428,544 | 5,035.0 | -16.1 | +64.5 | -28.3 | -4.3 | 214.7 |
+| Jun 2025 | development | 414,720 | 5,892.6 | -110.6 | -70.0 | -110.0 | -43.9 | 222.4 |
+| Jul 2025 | development | 428,544 | 5,941.9 | -104.5 | -38.0 | -146.5 | +1.0 | 292.7 |
+| Aug 2025 | development | 428,544 | 5,538.5 | -45.2 | -52.6 | -47.6 | +32.7 | 277.4 |
+| Sep 2025 | development | 414,720 | 4,810.4 | -65.6 | -3.3 | -68.7 | +12.2 | 308.2 |
+| Oct 2025 | holdout | 428,544 | 4,431.6 | -89.4 | -18.5 | -70.7 | +15.8 | 314.7 |
+| Nov 2025 | holdout | 414,720 | 4,345.4 | -44.8 | +0.6 | -45.8 | +4.8 | 276.4 |
+| Dec 2025 | holdout | 428,544 | 4,170.0 | +59.8 | +52.5 | +53.3 | +28.4 | 355.0 |
+| Jan 2026 | holdout | 428,544 | 4,629.0 | -85.0 | -88.1 | -99.5 | -38.1 | 345.0 |
+| Feb 2026 | holdout | 387,072 | 4,706.8 | -70.7 | -11.1 | -65.4 | -17.5 | 338.0 |
+| Mar 2026 | holdout | 428,544 | 4,682.3 | -109.4 | -21.1 | -121.1 | +6.3 | 271.3 |
+| Apr 2026 | holdout | 414,720 | 4,652.4 | -54.0 | +25.4 | -61.0 | +5.0 | 225.1 |
+| May 2026 | holdout | 428,544 | 5,325.9 | -200.2 | -92.4 | -223.0 | -34.3 | 274.0 |
+| Jun 2026 | holdout | 414,720 | 5,932.2 | -307.3 | -77.7 | -314.8 | -16.9 | 353.3 |
+| Jul 2026 | holdout | 428,544 | 6,384.3 | -304.2 | -172.1 | -229.7 | -7.2 | 355.5 |
+| Aug 2026 | holdout | 428,544 | 5,872.9 | -17.3 | -58.5 | -86.4 | +40.6 | 313.9 |
+| Sep 2026 | holdout | 414,720 | 4,987.5 | -23.9 | -46.0 | -60.7 | -6.9 | 321.8 |
+
+- LightGBM C's most negative monthly bias in the holdout is Jun 2026 (-307.3 MW; LightGBM A -77.7 MW, LightGBM D -314.8 MW, Daily naive -16.9 MW).
+- In development (every issue month, Nov 2022 → Sep 2025), its most negative was Jun 2024 (-172.6 MW).
+- The highest mean actual demand of any holdout month is Jul 2026 (6,384.3 MW); of any development month, Jul 2025 (5,941.9 MW). The holdout month is higher than every development month.
+
 ## Model selection at the holdout retrains
 
 LightGBM C, per retrain and lead band: the winning setting and the best early-stopping MAE each target form reached. Retrains inside the holdout select on their own last 8 weeks, which lie in the holdout period, as an operational retrain would.
@@ -311,6 +347,7 @@ The step-5 comparison (`reports/m2_aemo.md`) repeated on the holdout issue times
 
 - **One look.** The holdout is scored once (S5). A bug found later is disclosed and its effect reported; the holdout is not re-run to fix it.
 - **Development numbers are slightly optimistic.** The development period was looked at twice (two development runs, `reports/m2_demand.md`); these holdout numbers are not.
+- **Added after scoring:** *Bias by month* and the bias line of the *Summary* were added to this report after the holdout had been scored and read, to locate its largest change from development. They read the stored forecasts only.
 - **Retrains inside the holdout** select their settings on their own last weeks, which lie in the holdout period. An operational retrain would do the same; no forecast uses data after its issue time.
 - **Split by issue time** (as in M1): development issue times on the last day before the holdout have targets on its first day. Those actuals were used to score the development period, never to fit a model.
 - **282 target intervals** come from NEMWeb's daily dispatch reports, because the monthly MMSDM archive for that month was not yet published (see *Provenance*).
