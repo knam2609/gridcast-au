@@ -66,7 +66,7 @@ backtest: ## Walk-forward evaluation of all baselines (demand + price)
 backtest-ml: ## M2 walk-forward: LightGBM + ridge (A/C/D/C⁺/D⁺), per-retrain selection; several hours
 	$(UV) run gridcast backtest-ml --region $(firstword $(REGIONS))
 
-evaluate-holdout: ## M2 holdout, scored ONCE (S5): refuses unless frozen config/code, clean tree, not yet scored; ~12-14 h
+evaluate-holdout: ## M2 holdout, scored ONCE (S5): refuses unless frozen config/code, clean tree, not yet scored; took 10 h
 	$(UV) run gridcast evaluate-holdout --region $(firstword $(REGIONS))
 
 weather-ablation: ## M2 weather-feature drop/add test on the stored ML run (~30-40 min)
