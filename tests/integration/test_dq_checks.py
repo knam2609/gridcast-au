@@ -5,7 +5,7 @@ from sqlalchemy import Engine, text
 
 from gridcast.config import load_config, load_market_limits
 from gridcast.database.load import ensure_regions, start_ingestion_run, upsert_market_intervals
-from gridcast.validation.checks import CHECKS, DQResult, run_checks
+from gridcast.validation.checks import MARKET_CHECKS, DQResult, run_checks
 from tests.integration.factories import clean_month
 
 pytestmark = pytest.mark.integration
@@ -32,7 +32,9 @@ def loaded(db: Engine) -> Engine:
 def _run(engine: Engine, stale_after_days: int = 100_000) -> dict[str, DQResult]:
     cfg = load_config()
     cfg.sources.mmsdm.stale_after_days = stale_after_days
-    results = run_checks(engine, cfg, load_market_limits(cfg), ["VIC1"], OCT, OCT)
+    results = run_checks(
+        engine, cfg, load_market_limits(cfg), ["VIC1"], OCT, OCT, checks=MARKET_CHECKS
+    )
     return {r.check_name: r for r in results}
 
 
@@ -43,7 +45,7 @@ def _sql(engine: Engine, sql: str) -> None:
 
 def test_clean_data_passes_every_check(loaded: Engine) -> None:
     results = _run(loaded)
-    assert set(results) == {c.name for c in CHECKS}
+    assert set(results) == {c.name for c in MARKET_CHECKS}
     assert {name: r.status for name, r in results.items() if r.status != "pass"} == {}
 
 
@@ -51,7 +53,7 @@ def test_results_are_persisted(loaded: Engine) -> None:
     _run(loaded)
     with loaded.connect() as conn:
         n = conn.execute(text("SELECT count(DISTINCT check_name) FROM dq_results")).scalar_one()
-    assert n == len(CHECKS)
+    assert n == len(MARKET_CHECKS)
 
 
 def test_missing_intervals_reported_as_one_gap(loaded: Engine) -> None:

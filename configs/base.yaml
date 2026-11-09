@@ -3,10 +3,13 @@
 project: gridcast-au
 
 paths:
-  raw_dir: data/raw            # cached source downloads (gitignored)
-  interim_dir: data/interim    # parsed monthly parquet (gitignored)
-  backtest_dir: data/backtests # full backtest predictions (gitignored)
-  reports_dir: reports
+  # Large local data lives under data_root (default ./data, gitignored). Point it elsewhere,
+  # e.g. an external drive, with the GRIDCAST_DATA_ROOT environment variable.
+  data_root: data
+  raw_dir: raw                 # cached source downloads
+  interim_dir: interim         # parsed monthly parquet
+  backtest_dir: backtests      # full backtest predictions
+  reports_dir: reports         # project-relative; generated reports are versioned
 
 nem:
   # AEMO publishes all market timestamps in "NEM time" = AEST, a fixed UTC+10
@@ -34,6 +37,12 @@ sources:
     tables: [DISPATCHREGIONSUM, DISPATCHPRICE]
     # MMSDM monthly archives are published ~2-6 weeks after month end.
     stale_after_days: 75
+  nemweb_daily:
+    # Daily archive of the 5-minute dispatch reports (rolling, about a year), one zip per
+    # NEM-time day holding 288 report zips. Only for days MMSDM does not have yet (M2 step 6,
+    # 1 Oct 2026), after `gridcast ingest-daily` matches it exactly against MMSDM on a month
+    # present in both. Requests use the mmsdm settings above.
+    listing_url: https://nemweb.com.au/Reports/Archive/DispatchIS_Reports/
 
 ingestion:
   start_month: "2021-10"   # 5-minute settlement (5MS) began 1 Oct 2021
@@ -47,14 +56,199 @@ forecast:
 backtest:
   eval_start: "2021-11-01"           # after weekly-lag and 28-day-profile warm-up
   holdout_start: "2025-10-01"        # final 12 months: reported separately, never used for selection
+  holdout_end: "2026-10-01"          # exclusive: M2 holdout issue times Oct 2025 → Sep 2026 (step 6)
   reference_model:
     demand: weekly_naive
     price: weekly_naive
+  # Frozen 2026-11-08, before the AEMO benchmark (M2 step 5) and before any holdout scoring.
+  # Second development run's config; model/feature code as at this commit. Do not edit.
+  frozen_ml_config_hash: "b88eae0a04e176af"
+  frozen_ml_commit: "96a6e50"
 
 baselines:
   median_profile_lookback_days: 28
+
+features:
+  # M2 feature builder; every feature is listed in docs/feature_catalogue.md (generated).
+  degree_base_c: 18.0        # cooling degrees = max(T - base, 0), heating = max(base - T, 0)
+  single_site: melbourne     # its temperature is a feature on its own, besides the weighted mean
+  # Robustness check: rebuild C with this GFS publication delay (headline uses
+  # weather.forecasts.publication_delay_hours); reported, never used for the headline.
+  delay_sensitivity_hours: 8.0
+
+ml:
+  # Walk-forward ML evaluation (M2, docs/plans/m2_plan.md §2.4). Dates are NEM-time days.
+  first_issue: "2022-11-01"        # every model has >= 12 months of training data
+  plus_first_issue: "2025-02-01"   # C⁺/D⁺: GFS multi-variable archive starts 2024-01-19
+  plus_train_start: "2024-01-19"   # C⁺/D⁺ training issue times start here (same archive start)
+  retrain_every_months: 3          # quarterly retrains, anchored at first_issue
+  early_stopping_weeks: 8          # last weeks of each training window; then refit on all of it
+  # Training sample: every issue time, targets every N steps (3 = 15 min), staggered so that
+  # every lead time and 5-minute slot is trained on.
+  sample_every_steps: 3
+  # Each ML model is one fit per lead band (inclusive horizon steps; must cover 1..H). A
+  # single global model let long-lead corrections swamp the short leads (step 3 spike).
+  # Second development run (m2_plan.md §4 step 4): four bands, 5-30 min, 35 min-2 h,
+  # 2 h 5 min-6 h, 6 h 5 min-24 h (run 1: [[1, 24], [25, 288]]; spikes/m2/band_layout.py).
+  lead_bands: [[1, 6], [7, 24], [25, 72], [73, 288]]
+  seed: 2609
+  lightgbm:
+    # Fixed settings; objective, num_leaves and the target form are selected (see grid).
+    learning_rate: 0.05
+    min_data_in_leaf: 200
+    feature_fraction: 0.9
+    max_rounds: 5000
+    early_stopping_rounds: 100
+    num_threads: 0                 # 0 = OpenMP default (all cores)
+  ridge:
+    max_rows: 500000               # seeded subsample of the training rows (~220 coefficients)
+    spline_knots: 6                # temperature spline (variants with weather)
+  grid:
+    # Searched at EVERY retrain and lead band: each setting early-stops on that retrain's
+    # last early_stopping_weeks, the lowest MAE there wins and is refit on the whole window.
+    # residual: y(t) - y(t-24h); direct: y(t); anchored: y(t) - [y(o) + y(t-24h) - y(o-24h)];
+    # latest: y(t) - y(o) (added for the second development run)
+    target_forms: [residual, direct, anchored, latest]
+    lightgbm_objective: [l2, l1]
+    lightgbm_num_leaves: [31, 127]     # 255 dropped: slowest and least accurate on pre-scoring data
+    ridge_alpha: [0.1, 1.0, 10.0, 100.0, 1000.0]
+  model_dir: models                   # under the data root
 
 evaluation:
   horizons_reported: [1, 6, 12, 48, 144, 288]
   peak_hours_local: [17, 21]         # [start, end) local hour of the evening peak
   price_spike_threshold: 300.0       # $/MWh
+  # Weather segments (M2), from ERA5 population-weighted values on the target's local day.
+  hot_day_max_temp_c: 35.0           # daily maximum temperature at least this
+  cloudy_day_mean_cloud_pct: 80.0    # daytime mean cloud cover at least this
+  daytime_hours_local: [9, 17]       # [start, end) local hour of "daytime"
+  # M2 step 4: weather-feature drop/add test (m2_plan.md §2.5) at two retrains whose
+  # early-stopping slices cover a summer (7 Dec 2024 → 31 Jan 2025) and a winter
+  # (6 Jun → 31 Jul 2025). A feature improving MAE by more than this share is flagged.
+  weather_ablation_retrains: [2025-02-01, 2025-08-01]
+  ablation_flag_share: 0.15
+  failure_days: 10                   # worst local days (leads 2-24 h) in the M2 report
+  known_events:                      # always shown in the M2 failure cases
+    - day: 2024-02-13
+      label: "Severe storms: transmission towers down, widespread outages"
+    - day: 2024-12-09
+      label: "Short afternoon demand spike, cause unverified (m2_handoff.md)"
+
+aemo:
+  # AEMO's own demand forecasts: every run of 30-minute pre-dispatch and 5-minute
+  # pre-dispatch (MMSDM "all runs" archives, ~50 MB a month each, cached under raw/).
+  # A benchmark only, never a model input (m2_plan.md §2.6). Holdout months are loaded but
+  # compared only in step 6.
+  ingest_start_month: "2024-09"   # Sep 2024 holds the runs for issue times before 04:00 on 1 Oct
+  ingest_end_month: "2026-09"
+  first_issue: "2024-10-01"       # development comparison: Oct 2024 -> backtest.holdout_start
+  predispatch_published_within_minutes: 15   # LASTCHANGED expected 76-241 s after the run time
+  p5min_published_within_minutes: 10         # LASTCHANGED expected 160-276 s before the run time
+
+weather:
+  # Hourly weather for population-weighted regional features (M2). Values come from
+  # Open-Meteo (CC BY 4.0, free tier is non-commercial); see docs/data_sources.md §4.
+  population:
+    # Fixed weights: ERP at 30 June 2024 by ABS Significant Urban Area (SUA).
+    source: >-
+      ABS, Regional population 2024-25 (released 31 March 2026), data cube 32180DS0004,
+      Table 2 "Estimated resident population, Significant Urban Areas", ERP at 30 June 2024
+      (revised estimate). CC BY 4.0, © Commonwealth of Australia.
+    year: 2024
+  sites:
+    # Coordinates are town centres (Melbourne: the step-0 spike point near the CBD).
+    # Weights = SUA populations / regional total, computed in code.
+    melbourne:
+      name: Melbourne
+      region_id: VIC1
+      latitude: -37.83
+      longitude: 144.98
+      sua_population: {"Melbourne": 5225364}
+    geelong:
+      name: Geelong
+      region_id: VIC1
+      latitude: -38.15
+      longitude: 144.36
+      sua_population: {"Geelong": 308021}
+    ballarat:
+      name: Ballarat
+      region_id: VIC1
+      latitude: -37.56
+      longitude: 143.85
+      sua_population: {"Ballarat": 118841}
+    bendigo:
+      name: Bendigo
+      region_id: VIC1
+      latitude: -36.76
+      longitude: 144.28
+      sua_population: {"Bendigo": 105610}
+    latrobe_valley:
+      name: Latrobe Valley
+      region_id: VIC1
+      latitude: -38.23     # Morwell, between Traralgon and Moe
+      longitude: 146.40
+      sua_population: {"Traralgon - Morwell": 43841, "Moe - Newborough": 22359}
+  variables:
+    # kind: "instant" = value at the labelled hour (interpolated linearly to 5 minutes);
+    #       "preceding_hour_mean" = mean over the hour ending at the label.
+    # plausible: data-quality bounds for Victorian sites (flagged, never clipped).
+    # clip_to: physical range of a bounded variable (see clip_tolerance below).
+    temperature_2m:       {unit: "°C",   kind: instant,             plausible: [-15.0, 50.0]}
+    apparent_temperature: {unit: "°C",   kind: instant,             plausible: [-25.0, 60.0]}
+    relative_humidity_2m: {unit: "%",    kind: instant,             plausible: [0.0, 100.0], clip_to: [0.0, 100.0]}
+    cloud_cover:          {unit: "%",    kind: instant,             plausible: [0.0, 100.0], clip_to: [0.0, 100.0]}
+    shortwave_radiation:  {unit: "W/m²", kind: preceding_hour_mean, plausible: [0.0, 1400.0]}
+    wind_speed_10m:       {unit: "m/s",  kind: instant,             plausible: [0.0, 50.0]}
+  # The GFS archive holds cloud cover values of exactly -1 % and 101 % (2024-2025, at
+  # 00/06/12/18 UTC): rounding artefacts. Values of a clip_to variable at most this far
+  # outside its range are clipped to it on load and counted (weather_clipped_values check);
+  # anything further out is rejected.
+  clip_tolerance: 1.0
+  forecasts:
+    # Variant C: archived GFS forecasts from Open-Meteo's Previous Runs API.
+    model: gfs_seamless
+    offsets_days: [1, 2]
+    # previous_dayK at valid hour t comes from the run initialised at floor_6h(t - 24K h)
+    # (verified exactly in step 0); it is usable from run_init + publication delay.
+    run_every_hours: 6
+    publication_delay_hours: 6
+    # Values known to be missing from the archive (step 0, docs/m2_data_spike.md §1), by
+    # valid time in UTC, inclusive. first: null = from the start of the data. Reported as
+    # warnings; any other missing value fails the weather_gaps check.
+    expected_missing:
+      - reason: gfs_archive_seam
+        variables: [temperature_2m]
+        offset_days: 1
+        first: "2023-12-30T00:00:00Z"
+        last: "2024-01-19T11:00:00Z"
+      - reason: gfs_archive_seam
+        variables: [temperature_2m]
+        offset_days: 2
+        first: "2023-12-30T00:00:00Z"
+        last: "2024-01-20T11:00:00Z"
+      - reason: before_multivariable_archive
+        variables: [apparent_temperature, relative_humidity_2m, cloud_cover, shortwave_radiation, wind_speed_10m]
+        offset_days: 1
+        first: null
+        last: "2024-01-19T11:00:00Z"
+      - reason: before_multivariable_archive
+        variables: [apparent_temperature, relative_humidity_2m, cloud_cover, shortwave_radiation, wind_speed_10m]
+        offset_days: 2
+        first: null
+        last: "2024-01-20T11:00:00Z"
+  observations:
+    # Variant D: ERA5 reanalysis from Open-Meteo's Historical Weather API (perfect-foresight
+    # oracle; published ~5 days late, so never usable at forecast time).
+    model: era5
+  open_meteo:
+    previous_runs_url: https://previous-runs-api.open-meteo.com/v1/forecast
+    archive_url: https://archive-api.open-meteo.com/v1/archive
+    user_agent: "gridcast-au/0.1 (+https://github.com/knam2609/gridcast-au)"
+    # Free tier: 600 calls/min, 5,000/hour, 10,000/day; a request over 2 weeks or 10
+    # variables counts as several calls (one site-month of 12 columns ≈ 2.7 calls).
+    request_delay_seconds: 1.0
+    timeout_seconds: 120
+    max_retries: 6
+    retry_backoff_seconds: 5.0   # 5, 10, 20, 40, 60 s between attempts on 429/5xx
+    # Responses whose last date is this recent are not cached (archives may still fill in).
+    settle_days: 10

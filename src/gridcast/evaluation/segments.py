@@ -1,9 +1,10 @@
 """Evaluation segments, defined on the *target* interval.
 
 Calendar segments (peak, weekend, holiday, DST) are known in advance. Market-state
-segments (price spike, negative price, intervention) condition on what actually happened
-and are therefore *ex-post* diagnostics: they describe where a model fails, they cannot
-be used to choose a model at forecast time.
+segments (price spike, negative price, intervention) and the M2 weather segments (very hot
+or very cloudy local days, from ERA5) condition on what actually happened and are
+therefore *ex-post* diagnostics: they describe where a model fails, they cannot be used to
+choose a model at forecast time.
 """
 
 from __future__ import annotations
@@ -61,4 +62,57 @@ def target_segments(frame: pd.DataFrame, cfg: EvaluationConfig) -> dict[str, np.
         "market_intervention": intervention,
     }
     assert list(segments) == list(SEGMENT_DESCRIPTIONS)
+    return segments
+
+
+WEATHER_SEGMENT_DESCRIPTIONS: dict[str, str] = {
+    "very_hot_day": "Local days whose weighted ERA5 maximum temperature is at least {hot:g} °C "
+    "(ex-post)",
+    "very_cloudy_day": "Local days whose weighted ERA5 cloud cover averages at least {cloud:g}% "
+    "over {day} local (ex-post)",
+}
+
+
+def describe_weather_segments(cfg: EvaluationConfig) -> dict[str, str]:
+    lo, hi = cfg.daytime_hours_local
+    return {
+        k: v.format(
+            hot=cfg.hot_day_max_temp_c,
+            cloud=cfg.cloudy_day_mean_cloud_pct,
+            day=f"{lo:02d}:00-{hi:02d}:00",
+        )
+        for k, v in WEATHER_SEGMENT_DESCRIPTIONS.items()
+    }
+
+
+def weather_segments(
+    local_day: np.ndarray,
+    local_hour: np.ndarray,
+    temperature: np.ndarray,
+    cloud_cover: np.ndarray,
+    cfg: EvaluationConfig,
+) -> dict[str, np.ndarray]:
+    """Very hot / very cloudy local days, as masks aligned with the context grid.
+
+    ``temperature`` and ``cloud_cover`` are observed (ERA5) population-weighted values on
+    the 5-minute grid. Missing values are ignored; a day with no values is in neither
+    segment. Daytime is ``[start, end)`` local hour of the interval start.
+    """
+    lo, hi = cfg.daytime_hours_local
+    frame = pd.DataFrame(
+        {
+            "day": local_day,
+            "temp": temperature,
+            "cloud": np.where((local_hour >= lo) & (local_hour < hi), cloud_cover, np.nan),
+        }
+    )
+    daily = frame.groupby("day").agg(max_temp=("temp", "max"), day_cloud=("cloud", "mean"))
+    max_temp = daily["max_temp"].reindex(local_day).to_numpy(dtype=np.float64)
+    day_cloud = daily["day_cloud"].reindex(local_day).to_numpy(dtype=np.float64)
+    with np.errstate(invalid="ignore"):
+        segments = {
+            "very_hot_day": max_temp >= cfg.hot_day_max_temp_c,
+            "very_cloudy_day": day_cloud >= cfg.cloudy_day_mean_cloud_pct,
+        }
+    assert list(segments) == list(WEATHER_SEGMENT_DESCRIPTIONS)
     return segments

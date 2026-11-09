@@ -47,6 +47,18 @@ def month_bounds_utc(year: int, month: int) -> tuple[pd.Timestamp, pd.Timestamp]
     return (start + INTERVAL).tz_convert("UTC"), end.tz_convert("UTC")
 
 
+def month_hours_utc(year: int, month: int) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """First and last whole hour (UTC, inclusive) that hourly data must cover for a month.
+
+    The month's intervals end in ``(start, end]`` (NEM time), so hourly values are needed
+    from ``floor_1h`` of the first interval to ``ceil_1h`` of the last: ``[start, end]``.
+    NEM time is a whole-hour offset from UTC, so both bounds are whole UTC hours.
+    """
+    start = pd.Timestamp(year=year, month=month, day=1, tz=NEM_TZ)
+    end = start + pd.offsets.MonthBegin(1)
+    return start.tz_convert("UTC"), end.tz_convert("UTC")
+
+
 def to_local(utc_values: pd.Series, tz: str) -> pd.Series:
     """Convert UTC timestamps to a local IANA time zone (DST-aware)."""
     return utc_values.dt.tz_convert(ZoneInfo(tz))

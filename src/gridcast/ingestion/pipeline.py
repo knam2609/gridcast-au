@@ -111,7 +111,7 @@ def ingest_month(
         frame, demand, price = transform_month(
             [d.path for d in demand_files], [d.path for d in price_files], regions
         )
-        interim = cfg.resolve(cfg.paths.interim_dir) / DATASET / f"{period:%Y%m}.parquet"
+        interim = cfg.data_path(cfg.paths.interim_dir) / DATASET / f"{period:%Y%m}.parquet"
         interim.parent.mkdir(parents=True, exist_ok=True)
         frame.to_parquet(interim, index=False)
 
@@ -160,7 +160,7 @@ def ingest_range(
     for region in regions:
         cfg.region(region)  # fail fast on unknown regions
     own_client = client is None
-    nemweb = client or NemwebClient(cfg.sources.mmsdm, cfg.resolve(cfg.paths.raw_dir))
+    nemweb = client or NemwebClient(cfg.sources.mmsdm, cfg.data_path(cfg.paths.raw_dir))
     try:
         return [ingest_month(engine, nemweb, cfg, m, regions) for m in iter_months(start, end)]
     finally:

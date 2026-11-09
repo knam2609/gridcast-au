@@ -90,3 +90,98 @@ def summarise_schema_errors(exc: pa.errors.SchemaErrors, max_checks: int = 10) -
         for row in grouped.itertuples()
     ]
     return "; ".join(parts)
+
+
+# --- Weather (milestone 2) -------------------------------------------------------------------
+
+HOUR = pd.Timedelta(hours=1)
+
+# Physically impossible beyond these (rejected). Plausibility bounds for Victorian sites live
+# in configs/base.yaml (weather.variables.*.plausible) and are data-quality checks instead.
+WEATHER_HARD_BOUNDS: dict[str, tuple[float, float]] = {
+    "temperature_2m": (-90.0, 60.0),
+    "apparent_temperature": (-100.0, 80.0),
+    "relative_humidity_2m": (0.0, 100.0),
+    "cloud_cover": (0.0, 100.0),
+    "shortwave_radiation": (0.0, 1500.0),
+    "wind_speed_10m": (0.0, 120.0),
+}
+
+utc_hour = [
+    pa.Check(_is_utc, element_wise=False, error="must be tz-aware UTC"),
+    pa.Check(lambda s: s.dt.floor(HOUR) == s, error="must be on a whole hour"),
+]
+
+
+def _weather_columns(site_ids: Collection[str]) -> dict[str, pa.Column]:
+    return {
+        "model": pa.Column(str, coerce=True),
+        "site_id": pa.Column(str, pa.Check.isin(sorted(site_ids)), coerce=True),
+        "valid_time": pa.Column(checks=utc_hour, nullable=False),
+        **{
+            var: pa.Column(float, pa.Check.in_range(lo, hi), nullable=True, coerce=True)
+            for var, (lo, hi) in WEATHER_HARD_BOUNDS.items()
+        },
+    }
+
+
+def _not_all_missing(df: pd.DataFrame) -> pd.Series:
+    return df[list(WEATHER_HARD_BOUNDS)].notna().any(axis=1)
+
+
+def weather_observations_schema(site_ids: Collection[str]) -> pa.DataFrameSchema:
+    return pa.DataFrameSchema(
+        _weather_columns(site_ids),
+        checks=[
+            pa.Check(_not_all_missing, error="row has no weather values"),
+            pa.Check(
+                lambda df: ~df.duplicated(["model", "site_id", "valid_time"], keep=False),
+                error="duplicate (model, site_id, valid_time)",
+            ),
+        ],
+        strict=True,
+        ordered=False,
+        name="weather_observations",
+    )
+
+
+def weather_forecasts_schema(
+    site_ids: Collection[str],
+    offsets_days: Collection[int],
+    run_every: pd.Timedelta,
+    publication_delay: pd.Timedelta,
+) -> pa.DataFrameSchema:
+    """Archived forecasts, including the exact run-timing rule (docs/m2_data_spike.md §3)."""
+
+    def expected_run_init(df: pd.DataFrame) -> pd.Series:
+        lead = pd.to_timedelta(df["offset_days"].astype("int64") * 24, unit="h")
+        return (df["valid_time"] - lead).dt.floor(run_every)
+
+    return pa.DataFrameSchema(
+        {
+            **_weather_columns(site_ids),
+            "offset_days": pa.Column("int16", pa.Check.isin(sorted(offsets_days))),
+            "run_init": pa.Column(checks=utc_timestamp[:1], nullable=False),
+            "available_at": pa.Column(checks=utc_timestamp[:1], nullable=False),
+        },
+        checks=[
+            pa.Check(_not_all_missing, error="row has no weather values"),
+            pa.Check(
+                lambda df: df["run_init"] == expected_run_init(df),
+                error="run_init != floor(valid_time - offset_days x 24 h, run cadence)",
+            ),
+            pa.Check(
+                lambda df: df["available_at"] == df["run_init"] + publication_delay,
+                error="available_at != run_init + publication delay",
+            ),
+            pa.Check(
+                lambda df: (
+                    ~df.duplicated(["model", "site_id", "offset_days", "valid_time"], keep=False)
+                ),
+                error="duplicate (model, site_id, offset_days, valid_time)",
+            ),
+        ],
+        strict=True,
+        ordered=False,
+        name="weather_forecasts",
+    )
