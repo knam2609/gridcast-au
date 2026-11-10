@@ -6,7 +6,7 @@ REGIONS ?= VIC1
 DAYS ?= 2026-10-01
 CHECK_MONTH ?= 2026-09
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -80,6 +80,9 @@ report-m2: ## Generate reports/m2_demand.md from the stored ML run (S1-S4, runs 
 
 report-aemo: ## Generate reports/m2_aemo.md: frozen model vs AEMO pre-dispatch (development part)
 	$(UV) run gridcast report-aemo --region $(firstword $(REGIONS))
+
+intervals-conformal: ## M3 step 1: conformal intervals around run 2's dev forecasts (C + baselines); minutes
+	$(UV) run gridcast intervals-conformal --region $(firstword $(REGIONS))
 
 report-holdout: ## Generate reports/m2_holdout.md from the stored holdout run (S5, replication, AEMO holdout part)
 	$(UV) run gridcast report-holdout --region $(firstword $(REGIONS))

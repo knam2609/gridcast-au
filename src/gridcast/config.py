@@ -219,6 +219,47 @@ class EvaluationConfig(BaseModel):
     known_events: list[KnownEvent] = Field(default_factory=list)
 
 
+class IntervalGridConfig(BaseModel):
+    """Conformal candidate streams (m3_plan.md §2.2): the product of these, in this order."""
+
+    window_weeks: list[int]
+    groupings: list[Literal["lead", "lead_tod"]]
+    aci_gammas: list[float]  # 0 = ACI off
+
+
+class IntervalsConfig(BaseModel):
+    """Milestone 3: prediction intervals for demand (docs/plans/m3_plan.md).
+
+    Not part of the frozen M2 hash (``backtest.frozen_ml_config_hash``).
+    """
+
+    # First scored issue day (a quarterly retrain of ml.first_issue's schedule). Development
+    # runs to backtest.holdout_start; issue times before first_issue are pre-scoring data.
+    first_issue: dt.date
+    levels: list[int]  # central levels, percent
+    headline_level: int
+    # Stored development point forecasts (M2 run 2, evaluation set "main") and the point
+    # models that get conformal intervals.
+    source_batch: str
+    point_models: list[str]
+    selection_weeks: int = 8  # selection slice before each retrain (like early stopping)
+    grid: IntervalGridConfig
+    tod_block_starts: list[int]  # local hours starting the time-of-day blocks
+    # Extreme-event groups known at the issue time: forecast (GFS, population-weighted)
+    # daily maximum of the target's local day at least / at most these.
+    hot_day_max_temp_c: float = 35.0
+    cold_day_max_temp_c: float
+    output_dir: Path = Path("intervals")  # under the data root
+
+    @model_validator(mode="after")
+    def _consistent(self) -> IntervalsConfig:
+        if self.headline_level not in self.levels:
+            raise ValueError("intervals.headline_level must be one of intervals.levels")
+        if any(not 0 < lv < 100 for lv in self.levels) or self.levels != sorted(set(self.levels)):
+            raise ValueError("intervals.levels must be ascending percentages in (0, 100)")
+        return self
+
+
 # Hourly weather variables, in storage order. They are columns of weather_forecasts and
 # weather_observations (migration 0003), so the config must list exactly these.
 WEATHER_VARIABLES: tuple[str, ...] = (
@@ -356,6 +397,7 @@ class AppConfig(BaseModel):
     features: FeaturesConfig
     ml: MlConfig
     aemo: AemoBenchmarkConfig
+    intervals: IntervalsConfig
 
     @model_validator(mode="after")
     def _weather_regions_known(self) -> AppConfig:
@@ -376,6 +418,8 @@ class AppConfig(BaseModel):
             expected = hi + 1
         if expected != self.forecast.horizon_steps + 1:
             raise ValueError("ml.lead_bands must end at forecast.horizon_steps")
+        if not self.ml.first_issue < self.intervals.first_issue < self.backtest.holdout_start:
+            raise ValueError("expected ml.first_issue < intervals.first_issue < holdout_start")
         return self
 
     def resolve(self, path: Path) -> Path:

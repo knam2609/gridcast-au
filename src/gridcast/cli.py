@@ -499,6 +499,43 @@ def backtest_ml(
     typer.echo(f"{time.perf_counter() - t0:.0f}s")
 
 
+@app.command("intervals-conformal")
+def intervals_conformal(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    workers: Annotated[int, typer.Option(help="Point models run in parallel")] = 4,
+) -> None:
+    """M3 step 1: conformal intervals around run 2's development forecasts (C and baselines)."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.intervals.batch import run_intervals_conformal, run_name
+
+    cfg = load_config()
+    t0 = time.perf_counter()
+    batch, metrics = run_intervals_conformal(get_engine(), cfg, region, workers=workers)
+    levels = cfg.intervals.levels
+    rows = []
+    for model, m in metrics.items():
+        pooled = m[m["horizon"] == 0].set_index("metric")["value"]
+        rows.append(
+            [
+                run_name(model),
+                *(100 * pooled[f"coverage_{lv}"] for lv in levels),
+                *(pooled[f"interval_score_{lv}"] for lv in levels),
+                pooled["wis"],
+            ]
+        )
+    headers = [
+        "run",
+        *(f"cov{lv} %" for lv in levels),
+        *(f"IS{lv}" for lv in levels),
+        "WIS",
+    ]
+    typer.echo(f"\nstored interval batch {batch}: development issue times, pooled over leads")
+    typer.echo(tabulate(rows, headers=headers, floatfmt=".1f", tablefmt="github"))
+    typer.echo(f"{time.perf_counter() - t0:.0f}s")
+
+
 @app.command("weather-ablation")
 def weather_ablation(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
     """Weather-feature drop/add test (m2_plan.md §2.5) on the stored ML run; ~30-40 min."""

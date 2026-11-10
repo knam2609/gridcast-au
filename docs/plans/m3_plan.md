@@ -2,7 +2,7 @@
 
 **Goal:** give the M2 demand forecast honest uncertainty: prediction intervals whose coverage matches their stated level overall, at every lead time and during extreme events, that are sharper than intervals built around the baselines, and that are compared with AEMO's own probabilistic demand forecasts where that comparison is valid.
 
-**Status:** planned 2026-11-10 after a question round with the user. Step 0 done (2026-11-10, [`docs/m3_data_spike.md`](../m3_data_spike.md)): AEMO's POE forecasts are usable, with a disclosed caveat. Branch `m3-prediction-intervals`, from `main` at `a1b26bb` (M1 and M2 merged). The success criteria in §3 were agreed before any interval result existed.
+**Status:** planned 2026-11-10 after a question round with the user. Step 0 done (2026-11-10, [`docs/m3_data_spike.md`](../m3_data_spike.md)): AEMO's POE forecasts are usable, with a disclosed caveat. Step 1's pre-scoring spike done (2026-11-10, [`docs/m3_prescoring_spike.md`](../m3_prescoring_spike.md)): the candidate grid and the cold threshold are fixed below, before any scored interval existed. Branch `m3-prediction-intervals`, from `main` at `a1b26bb` (M1 and M2 merged). The success criteria in §3 were agreed before any interval result existed.
 
 ## 1. Decisions (agreed 2026-11-10)
 
@@ -32,16 +32,23 @@
 ### 2.2 Rolling conformal intervals (methods 1 and 3)
 
 - **Score.**
-  - Method (1) uses the signed residual e = y − ŷ.
-  - Method (3) (CQR) uses s = max(q̂_lo − y, y − q̂_hi).
-  - The lower and upper bounds come from separate quantiles of the score, so the intervals can be asymmetric. They correct for a bias such as the winter under-forecast, rather than only widening.
+  - Method (1) uses the signed residual e = y − ŷ: the upper bound is ŷ plus a high quantile of e, the lower bound ŷ plus a low quantile.
+  - Method (3) (CQR) uses one score per side (the asymmetric form of Romano et al. 2019): q̂_lo − y for the lower bound and y − q̂_hi for the upper. *Clarified in step 1:* the symmetric score max(q̂_lo − y, y − q̂_hi) would correct both sides by the same amount, which contradicts the next point.
+  - The lower and upper bounds come from separate quantiles, so the intervals can be asymmetric. They correct for a bias such as the winter under-forecast, rather than only widening.
 - **Information rule.**
   - At issue time *o*, the calibration set for lead *h* holds only pairs (o′, h) whose target is known at *o* (o′ + h ≤ o), within the trailing window.
   - Intervals at *o* change only when data ending at or before *o* change. Property tests check this (§2.5).
-- **Candidate grid (fixed in step 1 on pre-scoring data, recorded before scoring):**
+- **Candidate grid (fixed in step 1 on pre-scoring data, recorded before scoring; [`docs/m3_prescoring_spike.md`](../m3_prescoring_spike.md), user decisions 2026-11-10):**
   - window length ∈ {4, 8, 13, 26} weeks;
-  - grouping ∈ {per lead; per lead × a time-of-day block of the target};
-  - adaptive conformal inference (ACI, Gibbs & Candès 2021): step γ ∈ {0 (off), and up to two positive values}. ACI updates each lead's miscoverage target with only the coverage outcomes known by *o*, so it reacts to drift with a delay of *h*.
+  - grouping ∈ {per lead; per lead × a time-of-day block of the target}. **Blocks: 8 × 3 h**, starting at local hours 0, 3, …, 21 of the target's start;
+  - adaptive conformal inference (ACI, Gibbs & Candès 2021): **step γ ∈ {0 (off), 0.001, 0.005}**. ACI updates each lead's miscoverage target with only the coverage outcomes known by *o*, so it reacts to drift with a delay of *h*.
+  - That is 4 × 2 × 3 = 24 candidate streams per point model.
+- **Implementation rules (step 1, [`src/gridcast/intervals/conformal.py`](../../src/gridcast/intervals/conformal.py)):**
+  - *Window:* the latest W issue times whose lead-*h* target is known at *o*, so every lead has a window of the same length; only scored pairs (the common mask) enter it.
+  - *Conformal quantile:* the k-th smallest of the window's n scores, k = ⌈(n + 1)(1 − β)⌉, with β the side's miscoverage target (α/2 without ACI). If k falls outside [1, n], the window's most extreme score is used and the bound is counted as clipped.
+  - *ACI:* per lead, level and side: β ← β + γ(α/2 − miss), applied at the issue time when the outcome becomes known, with β kept in [0, ½].
+  - *Crossed intervals* (lower above upper, possible with ACI or CQR) are output as a zero-width interval at the midpoint and counted.
+  - *Bookkeeping:* every outcome is used (for ACI, selection and diagnostics) only from the issue time at which it is known. The leakage tests (§2.5) cover all three uses.
 - **Selection.**
   - All candidate streams are computed continuously from the warm-up onwards, each using past data only.
   - At each quarterly retrain, for each level and each M2 lead band (5–30 min, 35 min–2 h, 2 h 5 min–6 h, 6 h 5 min–24 h), the stream with the lowest mean interval score over the last 8 weeks is used for the next quarter. Ties go to the first candidate in grid order.
@@ -74,7 +81,7 @@
   - by year and by retrain quarter.
 - **Uncertainty of the coverage numbers:** errors are correlated in time, so coverage and score differences get **block-bootstrap intervals that resample whole days**, as in M2's AEMO comparison.
 - **Extreme-event groups.**
-  - *Known at issue time:* forecast daily maximum ≥ 35 °C (weighted GFS temperature); a cold threshold, fixed in step 1 from pre-scoring data; public holidays; DST-change days.
+  - *Known at issue time:* forecast daily maximum ≥ 35 °C (weighted GFS temperature); forecast daily maximum **≤ 12 °C** (cold, fixed in step 1 from pre-scoring data: 11 such days against 8 hot days in Nov 2022 → Jul 2023); public holidays; DST-change days.
   - *Defined by outcome (biased by construction, in a separate table):*
     - the top 1% of actual demand intervals;
     - intervals with price > $300/MWh (`evaluation.price_spike_threshold`);
@@ -168,6 +175,10 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
   - the time-of-day blocks;
   - the cold threshold.
   Record them in this plan before any scored interval exists.
+- *Spike outcome (2026-11-10, [`docs/m3_prescoring_spike.md`](../m3_prescoring_spike.md)); the user chose the recommended option each time:*
+  - **Blocks:** 8 × 3 h. Every layout beat per-lead calibration for LightGBM C (IS80 −8% to −15%). The gain flattens at 3 h; 2 h blocks were 0.5% better at 80% but have a third fewer calibration points per block.
+  - **ACI:** γ ∈ {0, 0.001, 0.005}. No γ > 0 improved LightGBM C on pre-scoring data, and γ ≥ 0.01 under-covered long leads. Small steps did help persistence and weekly naive, and the per-retrain selection can still choose γ = 0.
+  - **Cold:** forecast daily maximum ≤ 12 °C.
 - Migration `0005_intervals`, if needed (for example, allow `model_kind = 'interval'`).
 - `gridcast intervals-conformal` stores interval batches (parquet bounds per level under the data root, plus `model_runs` rows) for LightGBM C and the three baselines.
 
