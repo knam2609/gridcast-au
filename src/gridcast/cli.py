@@ -536,6 +536,106 @@ def intervals_conformal(
     typer.echo(f"{time.perf_counter() - t0:.0f}s")
 
 
+@app.command("backtest-qr")
+def backtest_qr(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    until: Annotated[
+        str | None,
+        typer.Option(help="Smoke run: stop before this NEM date (YYYY-MM-DD); nothing is stored"),
+    ] = None,
+) -> None:
+    """M3 step 2: quantile LightGBM C walk-forward (development), reusing run 2's settings."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.forecasting.origins import nem_midnight_utc
+    from gridcast.intervals.qr_batch import (
+        RUN_NAME,
+        cost_estimate,
+        run_backtest_qr,
+        score_development,
+        smoke_metrics,
+        store_qr,
+    )
+    from gridcast.intervals.quantile import quantile_key
+    from gridcast.provenance import git_sha
+
+    cfg = load_config()
+    smoke = until is not None
+    sha = git_sha()
+    if not smoke and (sha is None or sha.endswith("-dirty")):
+        typer.echo("refused: the full QR run must start from a clean commit (git status)")
+        raise typer.Exit(code=1)
+    engine = get_engine()
+    t0 = time.perf_counter()
+    run = run_backtest_qr(
+        engine,
+        cfg,
+        region,
+        until=nem_midnight_utc(until) if until is not None else None,
+        model_root=None if smoke else cfg.data_path(cfg.ml.model_dir),
+    )
+    short = {"residual": "res", "direct": "dir", "anchored": "anc", "latest": "lat"}
+    rows = []
+    for rec in run.result.fits:
+        fit_seconds = sum(q.score_seconds + q.refit_seconds for q in rec.quantiles)
+        rows.append(
+            [
+                rec.retrain,
+                rec.band,
+                rec.rows,
+                *(
+                    f"{short[q.chosen['target_form']]}/{q.chosen['num_leaves']} "
+                    f"{q.n_trees} {q.es_pinball:.1f}"
+                    for q in rec.quantiles
+                ),
+                100 * rec.crossing_share,
+                rec.point_refit_seconds + fit_seconds,
+            ]
+        )
+    keys = [quantile_key(t) for t in run.result.taus]
+    headers = ["retrain", "band", "rows", *keys, "crossed %", "fit s"]
+    typer.echo(
+        f"\n{RUN_NAME}: per (retrain, band) and quantile, the chosen form/leaves, trees and "
+        "early-stopping pinball loss (MW); point forecasts reproduced run 2 exactly"
+    )
+    typer.echo(tabulate(rows, headers=headers, floatfmt=".2f", tablefmt="github"))
+
+    levels = cfg.intervals.levels
+    if smoke:
+        m = smoke_metrics(run, cfg).set_index("metric")["value"]
+        label = "smoke run, every scorable pair (pre-scoring issue times)"
+    else:
+        metrics, summary = score_development(run, cfg)
+        m = metrics[metrics["horizon"] == 0].set_index("metric")["value"]
+        label = f"development from {summary['first_issue']}, {summary['scored_pairs']:,} pairs"
+    typer.echo(f"\nraw QR, pooled over leads ({label})")
+    table = [
+        [
+            *(100 * m[f"coverage_{lv}"] for lv in levels),
+            *(m[f"interval_score_{lv}"] for lv in levels),
+            m["wis"],
+            100 * m["crossing"],
+        ]
+    ]
+    headers = [*(f"cov{lv} %" for lv in levels), *(f"IS{lv}" for lv in levels), "WIS"]
+    typer.echo(tabulate(table, headers=[*headers, "crossed %"], floatfmt=".1f", tablefmt="github"))
+
+    if smoke:
+        est = cost_estimate(run)
+        typer.echo(
+            f"\nsmoke run (--until {until}): nothing stored. {est['smoke_hours']:.2f} h, of "
+            f"which fits {est['smoke_fit_hours']:.2f} h. Full development run "
+            f"({est['retrains']:.0f} retrains), estimated: {est['full_hours_by_rows']:.1f} h "
+            f"scaled by training rows, {est['full_hours_by_run2']:.1f} h scaled by run 2's "
+            "own fit-time growth"
+        )
+    else:
+        run_id = store_qr(engine, cfg, region, run, metrics, summary, sha)
+        typer.echo(f"\nstored QR batch {run.batch_id} (run {run_id})")
+    typer.echo(f"{time.perf_counter() - t0:.0f}s")
+
+
 @app.command("weather-ablation")
 def weather_ablation(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
     """Weather-feature drop/add test (m2_plan.md §2.5) on the stored ML run; ~30-40 min."""

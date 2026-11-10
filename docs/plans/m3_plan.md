@@ -14,7 +14,7 @@
 | Interval baselines | Conformal intervals around persistence, daily naive and weekly naive, built with the same procedure as method (1) |
 | Levels | **80% headline** (AEMO's POE90–POE10 band); 50% and 95% also reported. QR quantiles: 0.025, 0.1, 0.25, 0.75, 0.9, 0.975. The median used in the weighted interval score is the point forecast |
 | Conformal settings | **Re-selected at every quarterly retrain** from past data only, as in M2: every candidate setting is scored on the last 8 weeks before the retrain and the best one is used for the next quarter |
-| QR tuning | **Reuse the point model's choices:** at each retrain and lead band, the target form and leaf count that M2's point model chose; only the objective changes to quantile. Early stopping by pinball loss |
+| QR tuning | **Changed 2026-11-11 (user decision after the step-2 smoke run): per-quantile selection.** At each retrain and lead band, every quantile scores M2's 8 settings (4 target forms × leaf counts 31 and 127; objective `quantile`) by its own pinball loss on the early-stopping slice and refits the lowest. *Originally:* reuse the point model's target form and leaf count, a choice made to save compute. The smoke run on the first retrain (pre-scoring data only) put that design at about 1.5 h instead of the 4–6 h estimated, which removed the reason for it. Its raw-QR results (80% coverage 67%; 22% of pairs crossed before sorting) were seen when deciding; this is disclosed. **Second smoke run, with the selection (same retrain and fold):** 1,206 s, projecting 9–11 h for the full run. On the fold it was slightly worse than reusing the point settings (IS80 1370.5 against 1339.4, WIS 155.9 against 154.1, 80% coverage 68.4% against 67.2%, 27.5% of pairs crossed against 22.4%). The user kept per-quantile selection for an overnight run, since one retrain is thin evidence |
 | Extreme events | **Both kinds, labelled separately:** groups known at the issue time (honest conditional coverage) and groups defined by the outcome (shown with their built-in downward bias explained). **Reported only, not pass/fail** |
 | Holdout | Develop and select on the development period only, freeze the interval recipe, then score the holdout year (Oct 2025 → Sep 2026) **once**, with an S5-style lock. **Disclosed:** the holdout is new for intervals, but its point errors (including the winter under-forecast) were already seen in M2 |
 | AEMO probabilistic forecasts | **Included after step 0** (`PDPASA_REGIONSOLUTION`, `LOR` runs). **Headline: the POE90–POE10 band as published**; beside it, the same half-width re-centred on the matched pre-dispatch `TOTALDEMAND`. `DEMAND50`'s unexplained offset of about +40 MW is disclosed (user decision 2026-11-10, spike §6) |
@@ -58,11 +58,17 @@
 
 - **Setup.**
   - Same features (variant C), lead bands, training sample, retrain schedule and walk-forward harness as M2.
-  - At each retrain and band, the target form and `num_leaves` are copied from run 2's stored selection records. The objective becomes `quantile` with α ∈ {0.025, 0.1, 0.25, 0.75, 0.9, 0.975}.
-  - Each quantile early-stops by pinball loss on the last 8 weeks of the window and is then refit on the whole window, as M2's point models were.
-  - A quantile of y − anchor plus an anchor known at *o* is a quantile of y, so every target form carries over.
+  - The objective is `quantile` with α ∈ {0.025, 0.1, 0.25, 0.75, 0.9, 0.975}.
+  - **Per-quantile selection (§1, changed 2026-11-11):** at each retrain and band, each quantile early-stops every candidate (target form ∈ {residual, direct, anchored, latest} × `num_leaves` ∈ {31, 127}, in that order) by pinball loss on the last 8 weeks of the window. The lowest wins (ties to the first in grid order) and only it is refit on the whole window, as M2's point models were. *Originally:* the target form and `num_leaves` copied from run 2's stored selection records.
+  - A quantile of y − anchor plus an anchor known at *o* is a quantile of y, so every target form applies.
 - **Crossing:** quantiles are sorted per pair (rearrangement), and the crossing rate before sorting is reported.
 - **Cost:** measured on the first retrain in a smoke run before the full run (§5). If the full run looks longer than about 10 h, ask the user again before starting it.
+- **Implementation (step 2, [`src/gridcast/intervals/quantile.py`](../../src/gridcast/intervals/quantile.py), [`qr_batch.py`](../../src/gridcast/intervals/qr_batch.py)):**
+  - *Where the code lives:* under `gridcast.intervals`, not next to `models/ml.py` as first written, so that the frozen M2 paths (`evaluation.holdout.FROZEN_PATHS`) stay byte-identical. The quantile model subclasses M2's `LightGBMModel` (objective `quantile`, metric `quantile` = mean pinball loss).
+  - *Training rows:* the loop reuses M2's harness functions unchanged. It builds M2's A, C and D samples and trains C on the rows all three share, exactly as run 2 did. M2's `run_walk_forward` cannot train one variant on a group's shared rows, so the loop itself is new.
+  - *Point reproduction at every (retrain, band):* the loop also refits run 2's chosen point setting with its stored tree count (still useful after the switch to per-quantile selection: it pins the training rows). Its cutoff and row counts must match run 2's record before any quantile is fitted, and each fold's point forecasts must equal run 2's stored ones exactly; otherwise the run stops and nothing is stored. This proves the quantiles train on the point model's rows.
+  - *Issue times:* forecasts for every development issue time from 2022-11-01 (the pre-scoring ones are CQR's calibration warm-up in step 3). Metrics only from `intervals.first_issue`, on run 2's common mask, scored against run 2's stored actuals, as in step 1.
+  - *Provenance:* the full run refuses a working tree with uncommitted changes. It records every quantile's candidates and selection (pinball loss, tree count), the crossing share per (retrain, band) and the reproduction result.
 
 ### 2.4 Scores and diagnostics
 
@@ -96,7 +102,7 @@
   - Control tests show the checks fail when the information rule is broken.
 - **The M2 freeze stays intact.**
   - M3 settings go in a new top-level `intervals:` config section, so the M2 config hash (`b88eae0a04e176af`) and its unit test are unaffected.
-  - New code lives in new modules (`src/gridcast/intervals/`, plus a quantile model next to `models/ml.py`).
+  - New code lives in new modules under `src/gridcast/intervals/`, including the quantile model (step 2 placed it there rather than next to `models/ml.py`, so the frozen paths stay unchanged).
   - If a frozen module must change, the change is additive and disclosed, and a test shows the M2 point path is unchanged.
 
 ### 2.6 AEMO probabilistic demand (included after step 0)
@@ -187,7 +193,7 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
   - Results are only printed and stored at this step; the step-4 report evaluates them.
 
 **Step 2. Quantile LightGBM walk-forward (development).**
-- Quantile model; reuse run 2's per-retrain selections (§2.3).
+- Quantile model with per-quantile selection at every retrain (§2.3; first written as reusing run 2's per-retrain selections, changed 2026-11-11, §1).
 - Smoke run on the first retrain (2022-11-01) to measure the cost, then the full development run from a clean commit (an overnight run, logged under `<data root>/logs/`).
 - `gridcast backtest-qr` stores the QR batch with fits, tree counts and crossing rates.
 
@@ -220,9 +226,9 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
 
 - **Dependencies:** none expected. LightGBM's `quantile` objective, numpy and pandas are enough.
 - **Conformal:** minutes to tens of minutes per batch. Every candidate stream for 288 leads, three levels and four point models (C plus three baselines) is vectorised over leads.
-- **QR, development:** 6 quantiles × 4 bands × 2 fits (early-stopping fit, refit) × 12 retrains = 576 fits.
-  - Run 2's LightGBM fits took about 10–20 s each on average, and the quantile objective is usually slower.
-  - Rough estimate: **4–6 h** for development and about **2 h** for the holdout's 5 retrains. The step-2 smoke run measures this before the full run.
+- **QR, development:** with per-quantile selection (§1), 6 quantiles × 4 bands × (8 early-stopping fits + 1 refit) × 12 retrains = 2,592 fits, plus 48 point refits for the reproduction check.
+  - *Planned estimate (reusing the point settings, 576 fits):* 4–6 h for development and about 2 h for the holdout's 5 retrains.
+  - *Measured (step-2 smoke runs, first retrain):* 203 s reusing the point settings (projected 1.5 h for the full run); 1,206 s with per-quantile selection, projected **9.0 h** scaled by training rows and **11.0 h** scaled by run 2's own fit-time growth.
 - **Storage:** about 1 GB of interval bounds and about 0.5 GB of QR model files under the data root, gitignored.
 
 ## 6. Risks
@@ -232,7 +238,8 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
 | Errors drift (the winter under-forecast), so past residuals stop describing future ones | Rolling windows and ACI candidates, asymmetric bounds, coverage by month; the holdout winter is a known stress test, disclosed |
 | Correlated errors make the coverage numbers look more precise than they are | Block bootstrap by day; tolerances (±2 pp pooled, ±5 pp per lead) chosen with this in mind |
 | The ACI feedback for lead *h* arrives *h* later | Updates use only outcomes known by *o*; covered by the leakage tests |
-| Tail quantiles would prefer other settings than the point model's | Accepted by the user to save compute; raw QR calibration is reported, and CQR corrects coverage |
+| Tail quantiles would prefer other settings than the point model's | *Originally accepted to save compute.* Resolved on 2026-11-11: each quantile now selects its own setting at every retrain (§1), since the smoke run showed the compute was cheap. Raw QR calibration is still reported, and CQR corrects coverage |
+| Per-quantile settings make crossing more likely (different target forms per quantile) | Rearrangement; the crossing share before sorting is recorded per (retrain, band) and per lead |
 | QR quantiles cross | Rearrangement; crossing rate reported |
 | QR costs more than estimated | Smoke run first; ask again above about 10 h |
 | AEMO's POE band is symmetric, under-covers, and its centre is offset ~+40 MW from `TOTALDEMAND` for unknown reasons (step 0) | Reported as facts about AEMO's band, not as a calibration contest; the band as published is the headline with a re-centred sensitivity beside it; the offset is disclosed |

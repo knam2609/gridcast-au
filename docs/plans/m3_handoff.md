@@ -2,6 +2,18 @@
 
 Read this, then [`m3_plan.md`](m3_plan.md). For the M2 history, see [`m2_handoff.md`](m2_handoff.md) and [`m2_plan.md`](m2_plan.md).
 
+> **Update, 2026-11-11 (tenth session, step 2a: QR code, smoke runs, a design change):**
+> - **Code:** `src/gridcast/intervals/quantile.py` (the quantile model, per-quantile selection and the QR walk-forward) and `qr_batch.py` (`gridcast backtest-qr`, `make backtest-qr`). Placed under `intervals/` so the frozen M2 paths stay unchanged. Step 1's `batch.py` gained shared metric and storage helpers (`bounds_metrics`, `per_lead_rows`, `insert_run`); its outputs are unchanged.
+>   - C trains on the rows M2's A, C and D share, as in run 2.
+>   - At every (retrain, band) the loop also refits run 2's point setting with its stored tree count. The row counts must match run 2's records, and the fold forecasts must equal run 2's stored ones exactly; otherwise the run stops and nothing is stored.
+>   - Tests: `tests/unit/test_quantile.py` (selection, exact reproduction and refusals, a leakage property with its control) and `tests/integration/test_intervals_qr.py`.
+> - **Smoke run 1** (first retrain, reusing run 2's settings as planned): 203 s, point forecasts reproduced exactly. That projects 1.5 h for the full run, not the planned 4–6 h. Raw QR on the fold (pre-scoring): 80% coverage 67.2%, IS80 1339.4, 22.4% of pairs crossed before sorting.
+> - **User decision 1:** since compute was the reason for reusing the point settings, switch to **per-quantile selection**. Each quantile scores M2's 8 settings (4 target forms × 31/127 leaves) by pinball loss on the early-stopping slice and refits the best.
+> - **Smoke run 2** (per-quantile selection): 1,206 s, reproduced exactly, projecting **9.0–11.0 h**. On the same fold it was slightly worse: IS80 1370.5, WIS 155.9 against 154.1, coverage 68.4%, 27.5% crossed.
+> - **User decision 2:** keep per-quantile selection and run it overnight, since one retrain is thin evidence. Both decisions and the smoke numbers are in `m3_plan.md` §1, §2.3, §5 and §6. Logs: `<data root>/logs/m3/backtest-qr-smoke-20261111.log` and `backtest-qr-smoke2-20261111.log`.
+>
+> **Next:** the full development run (`gridcast backtest-qr`, refuses a dirty tree), from a worktree at the step-2a commit with its own `.venv` and a copy of `.env`, as M2's holdout run did. Then record the outcome (step 2b) and go on to step 3 (CQR).
+>
 > **Update, 2026-11-10 (ninth session, step 1 done):** two commits.
 > - **`819e862` (step 1a):** the interval core in `src/gridcast/intervals/` (scores; exact rolling order statistics; conformal with time-of-day grouping, per-side ACI and per-retrain selection; the CQR form, ready for step 3), with its tests.
 >   - The tests: an exact match against a slow reference, and leakage property tests whose controls catch an off-by-one information rule.

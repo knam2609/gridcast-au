@@ -83,3 +83,13 @@ def read_stored_batch(directory: Path, batch_id: str, target: str = "demand") ->
     if any(v.shape != actual.shape for v in forecasts.values()):
         raise ValueError("every model must have the same leads as the actuals")
     return StoredBatch(batch_id, times, actual, forecasts)
+
+
+def read_stored_model(
+    directory: Path, batch_id: str, model: str, target: str = "demand"
+) -> tuple[pd.DatetimeIndex, np.ndarray]:
+    """One model's stored forecasts (or ``actual``) of a batch: issue times and values."""
+    path = directory / f"{target}__{model}__{batch_id}.parquet"
+    if not path.is_file():
+        raise FileNotFoundError(f"no stored {target} forecasts of {model!r} for batch {batch_id}")
+    return _read(path)

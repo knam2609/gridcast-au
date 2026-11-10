@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from collections.abc import Mapping
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -34,7 +35,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import Engine, text
+from sqlalchemy import Connection, Engine, text
 
 from gridcast.config import AppConfig
 from gridcast.forecasting.origins import ForecastSetup, nem_midnight_utc
@@ -167,15 +168,24 @@ def conformal_for(task: PointTask) -> ConformalResult:
     return result
 
 
-def interval_metrics(
-    result: ConformalResult, actual: np.ndarray, mask: np.ndarray, point: np.ndarray
+def bounds_metrics(
+    lower: Mapping[int, np.ndarray],
+    upper: Mapping[int, np.ndarray],
+    actual: np.ndarray,
+    mask: np.ndarray,
+    point: np.ndarray,
 ) -> pd.DataFrame:
-    """Long table (metric, horizon, value, n) from the stored float32 bounds."""
+    """Long table (metric, horizon, value, n) of bounds keyed by level; horizon 0 = pooled.
+
+    Coverage, share below and above, width and interval score per level, plus the weighted
+    interval score with ``point`` as the median. Bounds are scored as float64 copies of
+    whatever is passed (the stored float32 values).
+    """
     rows: list[tuple[str, int, float, int]] = []
     intervals = {}
-    for level in result.lower:
-        lo = result.lower[level].astype(np.float64)
-        hi = result.upper[level].astype(np.float64)
+    for level in lower:
+        lo = lower[level].astype(np.float64)
+        hi = upper[level].astype(np.float64)
         intervals[level] = (lo, hi)
         pooled, n = summarise(lo, hi, actual, mask, level)
         per, n_h = summarise(lo, hi, actual, mask, level, axis=0)
@@ -186,16 +196,33 @@ def interval_metrics(
                 for h in range(actual.shape[1])
             )
     wis = np.where(mask, weighted_interval_score(point, intervals, actual), 0.0)
-    n_h = mask.sum(axis=0)
-    rows.append(("wis", 0, float(wis.sum() / mask.sum()), int(mask.sum())))
-    rows.extend(
-        ("wis", h + 1, float(wis[:, h].sum() / n_h[h]) if n_h[h] else float("nan"), int(n_h[h]))
-        for h in range(actual.shape[1])
-    )
+    rows.extend(per_lead_rows("wis", wis, mask))
     return pd.DataFrame(rows, columns=["metric", "horizon", "value", "n"])
 
 
-def _wide(times: pd.DatetimeIndex, values: np.ndarray) -> pd.DataFrame:
+def per_lead_rows(
+    metric: str, values: np.ndarray, mask: np.ndarray
+) -> list[tuple[str, int, float, int]]:
+    """Pooled (horizon 0) and per-lead means of ``values`` over ``mask``."""
+    v = np.where(mask, values, 0.0)
+    n_h = mask.sum(axis=0)
+    n = int(mask.sum())
+    rows = [(metric, 0, float(v.sum() / n) if n else float("nan"), n)]
+    rows.extend(
+        (metric, h + 1, float(v[:, h].sum() / n_h[h]) if n_h[h] else float("nan"), int(n_h[h]))
+        for h in range(values.shape[1])
+    )
+    return rows
+
+
+def interval_metrics(
+    result: ConformalResult, actual: np.ndarray, mask: np.ndarray, point: np.ndarray
+) -> pd.DataFrame:
+    """:func:`bounds_metrics` of a conformal result's stored (float32) bounds."""
+    return bounds_metrics(result.lower, result.upper, actual, mask, point)
+
+
+def wide(times: pd.DatetimeIndex, values: np.ndarray) -> pd.DataFrame:
     frame = pd.DataFrame(values, columns=[f"h{h:03d}" for h in range(1, values.shape[1] + 1)])
     frame.insert(0, "origin_time", times)
     return frame
@@ -208,7 +235,7 @@ def save_results(
     times: pd.DatetimeIndex,
 ) -> None:
     directory.mkdir(parents=True, exist_ok=False)
-    _wide(times, actual.astype(np.float32)).to_parquet(
+    wide(times, actual.astype(np.float32)).to_parquet(
         directory / "actual.parquet", index=False, compression="zstd"
     )
     for model, res in results.items():
@@ -217,10 +244,62 @@ def save_results(
         name = run_name(model)
         for level in res.lower:
             for side, values in (("lo", res.lower[level]), ("hi", res.upper[level])):
-                _wide(times, values).to_parquet(
+                wide(times, values).to_parquet(
                     directory / f"{name}__{side}{level}.parquet", index=False, compression="zstd"
                 )
         res.daily.to_parquet(directory / f"{name}__daily.parquet", index=False)
+
+
+def insert_run(
+    conn: Connection,
+    batch_id: uuid.UUID,
+    name: str,
+    region_id: str,
+    eval_window: tuple[pd.Timestamp, pd.Timestamp],
+    holdout: pd.Timestamp,
+    config: dict[str, Any],
+    sha: str | None,
+    artifact: Path,
+    metrics: pd.DataFrame,
+) -> int:
+    """One ``model_runs`` row of kind ``interval``, plus its metrics (split ``dev``, all pairs)."""
+    run_id = conn.execute(
+        text(
+            """
+            INSERT INTO model_runs
+                (batch_id, model_name, model_kind, target, region_id, eval_start,
+                 eval_end, holdout_start, config, git_sha, artifact_path, status,
+                 finished_at)
+            VALUES (:batch, :name, 'interval', :target, :region, :eval_start,
+                    :eval_end, :holdout, CAST(:config AS jsonb), :sha, :artifact,
+                    'success', now())
+            RETURNING run_id
+            """
+        ),
+        {
+            "batch": batch_id,
+            "name": name,
+            "target": TARGET,
+            "region": region_id,
+            "eval_start": eval_window[0].to_pydatetime(),
+            "eval_end": eval_window[1].to_pydatetime(),
+            "holdout": holdout.to_pydatetime(),
+            "config": json.dumps(config, default=str),
+            "sha": sha,
+            "artifact": str(artifact),
+        },
+    ).scalar_one()
+    records = metrics.assign(split="dev", segment="all").to_dict(orient="records")
+    conn.execute(
+        text(
+            """
+            INSERT INTO forecast_metrics (run_id, split, segment, horizon, metric, value, n)
+            VALUES (:run_id, :split, :segment, :horizon, :metric, :value, :n)
+            """
+        ),
+        [_metric_row(int(run_id), r) for r in records],
+    )
+    return int(run_id)
 
 
 def store_runs(
@@ -249,42 +328,17 @@ def store_runs(
                 "crossed": {str(k): v for k, v in res.crossed.items()},
                 "clipped": res.clipped.to_dict(orient="records"),
             }
-            run_id = conn.execute(
-                text(
-                    """
-                    INSERT INTO model_runs
-                        (batch_id, model_name, model_kind, target, region_id, eval_start,
-                         eval_end, holdout_start, config, git_sha, artifact_path, status,
-                         finished_at)
-                    VALUES (:batch, :name, 'interval', :target, :region, :eval_start,
-                            :eval_end, :holdout, CAST(:config AS jsonb), :sha, :artifact,
-                            'success', now())
-                    RETURNING run_id
-                    """
-                ),
-                {
-                    "batch": batch_id,
-                    "name": run_name(model),
-                    "target": TARGET,
-                    "region": region_id,
-                    "eval_start": res.origin_times[0].to_pydatetime(),
-                    "eval_end": res.origin_times[-1].to_pydatetime(),
-                    "holdout": holdout.to_pydatetime(),
-                    "config": json.dumps(config, default=str),
-                    "sha": sha,
-                    "artifact": str(artifact),
-                },
-            ).scalar_one()
-            run_ids[model] = int(run_id)
-            records = metrics[model].assign(split="dev", segment="all").to_dict(orient="records")
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO forecast_metrics (run_id, split, segment, horizon, metric, value, n)
-                    VALUES (:run_id, :split, :segment, :horizon, :metric, :value, :n)
-                    """
-                ),
-                [_metric_row(int(run_id), r) for r in records],
+            run_ids[model] = insert_run(
+                conn,
+                batch_id,
+                run_name(model),
+                region_id,
+                (res.origin_times[0], res.origin_times[-1]),
+                holdout,
+                config,
+                sha,
+                artifact,
+                metrics[model],
             )
     return run_ids
 
