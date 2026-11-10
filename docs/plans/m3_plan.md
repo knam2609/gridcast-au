@@ -181,6 +181,10 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
   - **Cold:** forecast daily maximum ≤ 12 °C.
 - Migration `0005_intervals`, if needed (for example, allow `model_kind = 'interval'`).
 - `gridcast intervals-conformal` stores interval batches (parquet bounds per level under the data root, plus `model_runs` rows) for LightGBM C and the three baselines.
+- *Outcome (2026-11-10):* the core and the spike are in commit `819e862`. Migration 0005 allows `model_kind = 'interval'`.
+  - `gridcast intervals-conformal` ran from that commit in 308 s. It stored batch `72eb5209-9bef-4870-a375-131a86ee7e0f` (interval config hash `d34273400899af69`): 24 candidate streams per point model and 108 selections each (9 retrains × 3 levels × 4 bands), with no empty intervals.
+  - Storage is 1.4 GB, above the §5 estimate of about 1 GB.
+  - Results are only printed and stored at this step; the step-4 report evaluates them.
 
 **Step 2. Quantile LightGBM walk-forward (development).**
 - Quantile model; reuse run 2's per-retrain selections (§2.3).
