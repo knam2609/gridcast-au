@@ -196,6 +196,17 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
 - Quantile model with per-quantile selection at every retrain (§2.3; first written as reusing run 2's per-retrain selections, changed 2026-11-11, §1).
 - Smoke run on the first retrain (2022-11-01) to measure the cost, then the full development run from a clean commit (an overnight run, logged under `<data root>/logs/`).
 - `gridcast backtest-qr` stores the QR batch with fits, tree counts and crossing rates.
+- *Outcome (2026-11-11):* `gridcast backtest-qr` ran from a worktree at `6fdbac5` in 28,059 s (7.8 h; folds 19.5–64.2 min, the 2025-08-01 retrain the longest). It stored QR batch **`4bab11d7-4301-4c74-9f32-ddd9644f3921`** (run 85; QR config hash `8767a8948966637c`), 505 MB of quantiles under `<data root>/intervals/` and 265 MB of models under `<data root>/models/`. Log: `<data root>/logs/m3/backtest-qr-20261111-0123.log`.
+  - **Point reproduction passed** in all 12 folds: 48 refits, 51,120 issue times, 14,436,480 pairs equal to run 2's stored forecasts.
+  - **Selections:** of the 288 (retrain, band, quantile) choices, 201 chose `latest`, 43 `direct`, 26 `residual` and 18 `anchored`; 228 chose 31 leaves. 110 matched the point model's form and leaf count.
+  - **Crossing before sorting:** 23.4% of all pairs (22.4% of scored pairs); 18.1–30.0% per fold, 1.3–4.8% in the 1–6 lead band.
+  - **Raw QR, pooled** (reported only; CQR in step 3 is what U1–U3 judge), on the 10,662,528 scored pairs step 1 used:
+
+    | run | cov50 % | cov80 % | cov95 % | IS80 | WIS |
+    |---|---|---|---|---|---|
+    | qr_lgbm_C | 35.8 | 64.7 | 87.6 | 1382.2 | 159.6 |
+
+    Raw QR under-covers at every level and misses on both sides, more often above (80%: 18.8% of actuals above the upper bound, 16.5% below).
 
 **Step 3. CQR.**
 - Apply the step-1 machinery to the QR scores. Store the CQR batch.
@@ -215,7 +226,7 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
   - the frozen code is unchanged;
   - the data reach the last holdout target;
   - no interval holdout batch exists for the recipe (the U5 lock).
-- It runs QR from the 2025-08-01 retrain, using the holdout point model's stored selections for the holdout retrains.
+- It runs QR from the 2025-08-01 retrain with step 2's per-quantile selection. The point refits for the reproduction check use the holdout point model's stored selections and tree counts.
   - Before scoring anything, its Aug–Sep 2025 QR forecasts and fits must reproduce step 2's stored ones exactly; otherwise it stops.
   - It then builds conformal intervals and CQR on the holdout, with calibration windows that reach back into development data.
   - It runs from a git worktree, as M2's did.
@@ -229,7 +240,8 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
 - **QR, development:** with per-quantile selection (§1), 6 quantiles × 4 bands × (8 early-stopping fits + 1 refit) × 12 retrains = 2,592 fits, plus 48 point refits for the reproduction check.
   - *Planned estimate (reusing the point settings, 576 fits):* 4–6 h for development and about 2 h for the holdout's 5 retrains.
   - *Measured (step-2 smoke runs, first retrain):* 203 s reusing the point settings (projected 1.5 h for the full run); 1,206 s with per-quantile selection, projected **9.0 h** scaled by training rows and **11.0 h** scaled by run 2's own fit-time growth.
-- **Storage:** about 1 GB of interval bounds and about 0.5 GB of QR model files under the data root, gitignored.
+  - *Measured (step-2 full run):* 7.8 h. The longest fold, the 2025-08-01 retrain, took 64 min. The holdout's 5 retrains train on more rows, so they will take longer than the 2 h planned; at 45–75 min a retrain, about 4–6 h (a projection).
+- **Storage:** about 1 GB of interval bounds and about 0.5 GB of QR model files under the data root, gitignored. *Measured:* 1.4 GB for step 1; 505 MB of quantiles and 265 MB of models for step 2.
 
 ## 6. Risks
 
@@ -241,7 +253,7 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
 | Tail quantiles would prefer other settings than the point model's | *Originally accepted to save compute.* Resolved on 2026-11-11: each quantile now selects its own setting at every retrain (§1), since the smoke run showed the compute was cheap. Raw QR calibration is still reported, and CQR corrects coverage |
 | Per-quantile settings make crossing more likely (different target forms per quantile) | Rearrangement; the crossing share before sorting is recorded per (retrain, band) and per lead |
 | QR quantiles cross | Rearrangement; crossing rate reported |
-| QR costs more than estimated | Smoke run first; ask again above about 10 h |
+| QR costs more than estimated | Smoke run first; ask again above about 10 h. The development run took 7.8 h (step 2) |
 | AEMO's POE band is symmetric, under-covers, and its centre is offset ~+40 MW from `TOTALDEMAND` for unknown reasons (step 0) | Reported as facts about AEMO's band, not as a calibration contest; the band as published is the headline with a re-centred sensitivity beside it; the offset is disclosed |
 | M3 code accidentally changes the frozen M2 behaviour | New modules and a new config section; a test that the M2 point path is unchanged |
 

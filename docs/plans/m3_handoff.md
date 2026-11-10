@@ -2,6 +2,14 @@
 
 Read this, then [`m3_plan.md`](m3_plan.md). For the M2 history, see [`m2_handoff.md`](m2_handoff.md) and [`m2_plan.md`](m2_plan.md).
 
+> **Update, 2026-11-11 (tenth session, step 2b: the QR development run):** `gridcast backtest-qr` ran overnight from a worktree at `6fdbac5` (01:23 → 09:10 AEDT; 28,059 s in the run) and stored QR batch **`4bab11d7-4301-4c74-9f32-ddd9644f3921`** (run 85, QR config hash `8767a8948966637c`). Log: `<data root>/logs/m3/backtest-qr-20261111-0123.log`.
+> - Point reproduction passed in all 12 folds (48 refits; 14,436,480 pairs equal to run 2's).
+> - Of 288 quantile selections, 201 chose `latest` and 228 chose 31 leaves; 110 matched the point model's setting. 23.4% of pairs crossed before sorting.
+> - Raw QR, pooled over the 10,662,528 scored pairs (reported only): cov50 35.8%, cov80 64.7%, cov95 87.6%, IS80 1382.2, WIS 159.6. It under-covers on both sides, more often above. Details in `m3_plan.md` step 2.
+> - Storage: 505 MB of quantiles under `<data root>/intervals/`, 265 MB of models under `<data root>/models/`. The worktree `../gridcast-au-qr` was removed afterwards.
+>
+> **Next:** step 3, CQR. Apply the step-1 conformal machinery (time-of-day grouping, per-side ACI, per-retrain selection) to the QR scores from batch `4bab11d7…`, and store the CQR batch.
+>
 > **Update, 2026-11-11 (tenth session, step 2a: QR code, smoke runs, a design change):**
 > - **Code:** `src/gridcast/intervals/quantile.py` (the quantile model, per-quantile selection and the QR walk-forward) and `qr_batch.py` (`gridcast backtest-qr`, `make backtest-qr`). Placed under `intervals/` so the frozen M2 paths stay unchanged. Step 1's `batch.py` gained shared metric and storage helpers (`bounds_metrics`, `per_lead_rows`, `insert_run`); its outputs are unchanged.
 >   - C trains on the rows M2's A, C and D share, as in run 2.
@@ -66,6 +74,7 @@ Inputs M3 reads:
 | Development point forecasts (run 2) | batch `main` = `6d783932-5834-4e18-a9e8-0e3567db46e6`, parquet under `<data root>/backtests/` |
 | Run 2's per-retrain selections (for QR) | the `model_runs.config` records of that batch |
 | Conformal intervals around C and the baselines (step 1) | batch `72eb5209-9bef-4870-a375-131a86ee7e0f`, parquet under `<data root>/intervals/` |
+| Quantile LightGBM C, development (step 2) | batch `4bab11d7-4301-4c74-9f32-ddd9644f3921`, rearranged quantiles under `<data root>/intervals/`, models under `<data root>/models/` |
 | Holdout point forecasts (step 6 only) | batch `holdout_main` = `fcb6abb6-49a3-4923-9d79-64e05a44d75f` |
 | Frozen M2 recipe (must stay reproducible) | `backtest.frozen_ml_config_hash` = `b88eae0a04e176af`, code at `96a6e50` |
 
