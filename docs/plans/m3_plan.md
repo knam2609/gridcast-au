@@ -2,7 +2,7 @@
 
 **Goal:** give the M2 demand forecast honest uncertainty: prediction intervals whose coverage matches their stated level overall, at every lead time and during extreme events, that are sharper than intervals built around the baselines, and that are compared with AEMO's own probabilistic demand forecasts where that comparison is valid.
 
-**Status:** planned 2026-11-10 after a question round with the user; nothing implemented. Branch `m3-prediction-intervals`, from `main` at `a1b26bb` (M1 and M2 merged). The success criteria in §3 were agreed before any interval result existed.
+**Status:** planned 2026-11-10 after a question round with the user. Step 0 done (2026-11-10, [`docs/m3_data_spike.md`](../m3_data_spike.md)): AEMO's POE forecasts are usable, with a disclosed caveat. Branch `m3-prediction-intervals`, from `main` at `a1b26bb` (M1 and M2 merged). The success criteria in §3 were agreed before any interval result existed.
 
 ## 1. Decisions (agreed 2026-11-10)
 
@@ -17,7 +17,7 @@
 | QR tuning | **Reuse the point model's choices:** at each retrain and lead band, the target form and leaf count that M2's point model chose; only the objective changes to quantile. Early stopping by pinball loss |
 | Extreme events | **Both kinds, labelled separately:** groups known at the issue time (honest conditional coverage) and groups defined by the outcome (shown with their built-in downward bias explained). **Reported only, not pass/fail** |
 | Holdout | Develop and select on the development period only, freeze the interval recipe, then score the holdout year (Oct 2025 → Sep 2026) **once**, with an S5-style lock. **Disclosed:** the holdout is new for intervals, but its point errors (including the winter under-forecast) were already seen in M2 |
-| AEMO probabilistic forecasts | **Step-0 spike first**, included only if the archive, run timing and demand definition allow a fair comparison |
+| AEMO probabilistic forecasts | **Included after step 0** (`PDPASA_REGIONSOLUTION`, `LOR` runs). **Headline: the POE90–POE10 band as published**; beside it, the same half-width re-centred on the matched pre-dispatch `TOTALDEMAND`. `DEMAND50`'s unexplained offset of about +40 MW is disclosed (user decision 2026-11-10, spike §6) |
 
 ## 2. Design
 
@@ -92,14 +92,28 @@
   - New code lives in new modules (`src/gridcast/intervals/`, plus a quantile model next to `models/ml.py`).
   - If a frozen module must change, the change is additive and disclosed, and a test shows the M2 point path is unchanged.
 
-### 2.6 AEMO probabilistic demand (conditional on step 0)
+### 2.6 AEMO probabilistic demand (included after step 0)
 
-- **Data.** AEMO's PASA processes publish 10%, 50% and 90% probability-of-exceedance (POE) demand. This is believed, not checked: pre-dispatch PASA (`PDPASA_REGIONSOLUTION`) and short-term PASA (`STPASA_REGIONSOLUTION`) carry `DEMAND10/50/90`. Step 0 checks whether every run is archived, how runs are timed, which demand definition is used, and what POE means at the interval level.
-- **Semantics risk.** AEMO's POE values may be weather scenarios (for example "the demand in a 1-in-10 hot day"), not calibrated per-interval quantiles. If so, the comparison reports the empirical coverage of AEMO's POE90–POE10 band and its interval score as facts about that band, without calling it miscalibrated.
+- **Data (confirmed in step 0, [`docs/m3_data_spike.md`](../m3_data_spike.md)).**
+  - Pre-dispatch PASA, `PDPASA_REGIONSOLUTION` v7, from the MMSDM monthly `DATA/` folder: every 30-minute run is archived, with `DEMAND10/50/90` for each 30-minute period.
+  - Use `LOR` runs only (`OUTAGE_LRC` was discontinued from 31 July 2025).
+  - About 1.1 GB to download for Oct 2024 → Sep 2026. Only VIC1 `LOR` rows are kept, about 83,000 a month.
+- **What the band is.**
+  - It is exactly symmetric around `DEMAND50` and widens with lead.
+  - In the four sampled months it covered 66–78% of actual demand (pooled), so it behaves like an under-covering central band, not a weather scenario.
+  - Its coverage and interval score are reported as facts about AEMO's band, without calling it miscalibrated.
+- **Centre (user decision, spike §6).**
+  - `DEMAND50` sits about +40 MW above the matched pre-dispatch `TOTALDEMAND`, for reasons neither the documentation nor the data reveal.
+  - **Headline:** the band as published.
+  - **Beside it:** the same half-width re-centred on the matched pre-dispatch `TOTALDEMAND` (published before the PDPASA run).
+  - The offset is disclosed.
 - **Resolution.** AEMO's values are 30-minute. A 30-minute mean of 5-minute quantiles is not a quantile of the 30-minute mean, so the comparison uses our intervals recalibrated for 30-minute means:
   - conformal on the 30-minute mean residuals;
   - CQR on the period-averaged QR bounds, conformalised on 30-minute scores.
-- **Alignment.** M2's matched-information rule (AEMO's run nominally at *o*) is the headline; the strict "published by *o*" rule is reported beside it.
+- **Alignment.**
+  - *Headline (matched information):* use the run with `RUN_DATETIME = o + 30 min`. A run is identified by its first period end, so its nominal time is *o*, and it is published 4–7 minutes later.
+  - *Reported beside it (strict):* the latest run with `LASTCHANGED ≤ o`, that is, the run with `RUN_DATETIME = o`.
+  - Runs reach only to the end of the next trading day (64.6% reach 24 h), so coverage is reported by lead.
 
 ## 3. Success criteria (pre-registered)
 
@@ -136,6 +150,12 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
   - Every run archived and `DEMAND50` on the `TOTALDEMAND` definition → include it as a benchmark (§2.6, step 5).
   - The definition differs by a component available at the run time → include it only with that documented adjustment.
   - Otherwise → drop the AEMO comparison and record why in the spike document and the README.
+- *Outcome (2026-11-10):* [`docs/m3_data_spike.md`](../m3_data_spike.md), four sampled months (Oct 2024, Jan 2025, Jul 2025, Sep 2026).
+  - Every run is archived, and the timing matches M2's matched-information alignment.
+  - The band is symmetric and covers 66–78% of actual demand.
+  - `DEMAND50` is about +40 MW above the matched pre-dispatch `TOTALDEMAND`. No column or document explains it, and the data cannot tell a definition difference from a different forecast.
+  - The fallback rules did not cover this case, so the user decided: **include the comparison; headline = the band as published; the band re-centred on pre-dispatch beside it; disclose the offset.**
+  - The user first chose the re-centred band as the headline, then revised that after the per-month bias table showed re-centring would usually make AEMO's band worse (spike §4, §6).
 
 **Step 1. Interval core and conformal intervals around the stored forecasts.**
 - Package `src/gridcast/intervals/`:
@@ -165,7 +185,7 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
 
 **Step 5. Freeze, then the AEMO comparison (development part).**
 - Freeze the interval recipe: a hash of the `intervals:` config, plus the code commit, recorded in config and guarded by a unit test. This happens before the AEMO comparison, so the benchmark cannot influence the recipe. What is frozen is the recipe, including the per-retrain selection rule, not one set of fitted models.
-- If step 0 allowed it: load AEMO's POE data (migration `0006` if needed) and compare on Oct 2024 → Sep 2025 (§2.6). `reports/m3_aemo.md`.
+- Load AEMO's POE data (`PDPASA_REGIONSOLUTION`, `LOR` runs, VIC1; migration `0006` if needed; about 1.1 GB cached under the data root) and compare on Oct 2024 → Sep 2025 (§2.6): the band as published as the headline, the re-centred band beside it, and both alignments. `reports/m3_aemo.md`.
 
 **Step 6. Holdout, scored once.**
 - `gridcast evaluate-holdout-intervals` refuses to start unless:
@@ -200,7 +220,7 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
 | Tail quantiles would prefer other settings than the point model's | Accepted by the user to save compute; raw QR calibration is reported, and CQR corrects coverage |
 | QR quantiles cross | Rearrangement; crossing rate reported |
 | QR costs more than estimated | Smoke run first; ask again above about 10 h |
-| AEMO's POE may be a weather scenario, not a quantile | Checked in step 0; if so, the comparison is framed as describing AEMO's band, not as a calibration contest |
+| AEMO's POE band is symmetric, under-covers, and its centre is offset ~+40 MW from `TOTALDEMAND` for unknown reasons (step 0) | Reported as facts about AEMO's band, not as a calibration contest; the band as published is the headline with a re-centred sensitivity beside it; the offset is disclosed |
 | M3 code accidentally changes the frozen M2 behaviour | New modules and a new config section; a test that the M2 point path is unchanged |
 
 ## 7. Out of scope for M3

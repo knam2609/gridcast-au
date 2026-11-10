@@ -2,6 +2,14 @@
 
 Read this, then [`m3_plan.md`](m3_plan.md). For the M2 history, see [`m2_handoff.md`](m2_handoff.md) and [`m2_plan.md`](m2_plan.md).
 
+> **Update, 2026-11-10 (eighth session, step 0 done):** the AEMO POE spike is in [`docs/m3_data_spike.md`](../m3_data_spike.md) (script `scripts/spikes/m3/aemo_poe.py`; four sampled months cached under `<data root>/raw/spikes/m3/nemweb/`).
+> - `PDPASA_REGIONSOLUTION` (`LOR` runs) archives every 30-minute run with `DEMAND10/50/90`.
+> - Its POE90–POE10 band is exactly symmetric and covered 66–78% of actual demand.
+> - `DEMAND50` sits an unexplained ~+40 MW above the matched pre-dispatch `TOTALDEMAND`.
+> - **User decision:** include the comparison, with the band as published as the headline and a band re-centred on pre-dispatch beside it; disclose the offset. The plan's §1, §2.6 and step 0 are updated.
+>
+> **Next:** step 1. Build the interval core (`src/gridcast/intervals/`: scores, rolling conformal, ACI, per-retrain selection, leakage tests). Then run the pre-scoring spike (issue times before 2023-08-01 only) that fixes the ACI step values, the time-of-day blocks and the cold threshold, and record them in the plan before any scored interval exists. Then `gridcast intervals-conformal`.
+>
 > **Update, 2026-11-10 (eighth session, M3 planned):** three question rounds with the user settled the M3 design, recorded in `m3_plan.md` §1 before any interval code or result existed:
 > - **Methods:** conformal intervals around the stored forecasts, quantile LightGBM C, and CQR (the pre-registered headline).
 > - **Scope:** demand only, at 80% (with 50% and 95% also reported).
