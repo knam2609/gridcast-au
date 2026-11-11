@@ -2,7 +2,7 @@
 
 **Goal:** give the M2 demand forecast honest uncertainty: prediction intervals whose coverage matches their stated level overall, at every lead time and during extreme events, that are sharper than intervals built around the baselines, and that are compared with AEMO's own probabilistic demand forecasts where that comparison is valid.
 
-**Status:** planned 2026-11-10 after a question round with the user. Step 0 done (2026-11-10, [`docs/m3_data_spike.md`](../m3_data_spike.md)): AEMO's POE forecasts are usable, with a disclosed caveat. Step 1's pre-scoring spike done (2026-11-10, [`docs/m3_prescoring_spike.md`](../m3_prescoring_spike.md)): the candidate grid and the cold threshold are fixed below, before any scored interval existed. Branch `m3-prediction-intervals`, from `main` at `a1b26bb` (M1 and M2 merged). The success criteria in §3 were agreed before any interval result existed.
+**Status:** planned 2026-11-10 after a question round with the user. Step 0 done (2026-11-10, [`docs/m3_data_spike.md`](../m3_data_spike.md)): AEMO's POE forecasts are usable, with a disclosed caveat. Step 1's pre-scoring spike done (2026-11-10, [`docs/m3_prescoring_spike.md`](../m3_prescoring_spike.md)): the candidate grid and the cold threshold are fixed below, before any scored interval existed. Steps 2–3 done (2026-11-11: QR and CQR development batches). Step 4 done (2026-11-12, [`reports/m3_intervals.md`](../../reports/m3_intervals.md)): **U1–U4 pass** on the development period. Branch `m3-prediction-intervals`, from `main` at `a1b26bb` (M1 and M2 merged). The success criteria in §3 were agreed before any interval result existed.
 
 ## 1. Decisions (agreed 2026-11-10)
 
@@ -254,6 +254,17 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
   - *U4:* the command runs `tests/unit/test_interval_leakage.py` and the QR leakage test (`test_quantiles_ignore_demand_after_their_issue_time`).
   - *Presentation rules (no effect on any criterion):* event-group coverage gets a bootstrap interval only if its pairs come from at least 10 issue days. Target months with fewer than 7 days are tabled but left out of the month figure.
   - *Tests:* `tests/unit/test_m3_evaluation.py` (rearrangement, aggregation against brute force, bootstrap, U1–U4 boundaries, and the hot/cold label's information rule with a control). `tests/integration/test_m3_report.py` builds every batch on the test database with the real commands (QR faked with stored metrics). It then writes the report, and checks that the report stops when a stored metric differs or the recipe hash changed.
+
+- *Outcome (2026-11-12, step 4b):* `make report-m3` ran from `02681d6` (step 4a is `f806044` plus `02681d6`, a generated note on months with missing target days). It takes about 1 min, including the 7 leakage tests (68 s measured from `f806044`). It wrote [`reports/m3_intervals.md`](../../reports/m3_intervals.md) and four figures. Every pooled number it recomputed equalled the stored metrics. **U1–U4 pass:**
+  - **U1:** pooled 80% coverage 79.40% (95% CI 78.48–80.28% with day blocks, 78.22–80.59% with 7-day blocks).
+  - **U2:** 288 of 288 leads within 75–85%; lowest 78.97% (18 h), highest 80.36% (5 h 55 min).
+  - **U3:** 265 of 265 leads from 2 h; closest at 2 h 5 min (926.8 vs 1,574.6 MW, persistence); pooled 1,248.1 vs 2,256.1 MW.
+  - **U4:** 7 leakage tests passed, 0 failed.
+  - Reported only:
+    - CQR beats conformal-around-C on IS80 by 19.0 MW (95% CI 6.8–32.2 MW with day blocks, 1.2–36.6 MW with 7-day blocks). It does not beat it on WIS: −0.1 MW (−0.9 to +0.7).
+    - By target month, 80% coverage ranges from 67.6% (Dec 2023) to 87.8% (Apr 2025).
+    - On days with a forecast maximum ≥ 35 °C, coverage is 71.5% (67.1–75.9%), missing above on 23.9% of pairs.
+    - Rearranging CQR's bounds changes its WIS by −0.30 MW (−0.35 to −0.26).
 
 **Step 5. Freeze, then the AEMO comparison (development part).**
 - Freeze the interval recipe: a hash of the `intervals:` config, plus the code commit, recorded in config and guarded by a unit test. This happens before the AEMO comparison, so the benchmark cannot influence the recipe. What is frozen is the recipe, including the per-retrain selection rule, not one set of fitted models.
