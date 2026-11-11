@@ -18,6 +18,7 @@ Methods (all on run 2's common mask, development issue times from ``intervals.fi
 
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 import re
 import subprocess
@@ -271,6 +272,8 @@ class Pairs:
     day_ordinals: np.ndarray  # per day code: NEM date ordinal of issue
     months: list[tuple[int, int]]  # label → (year, month) of the target's local date
     month_days: list[int]  # distinct target days per month label
+    scored_days: np.ndarray  # local date ordinals of targets with a scored pair
+    target_range: tuple[int, int]  # first and last target local date ordinals
     labels: dict[str, tuple[np.ndarray, int]]
     groups: dict[str, np.ndarray]
     group_text: dict[str, str]
@@ -376,6 +379,8 @@ def load_pairs(engine: Engine, cfg: AppConfig, region_id: str, times: pd.Datetim
         day_ordinals,
         months,
         month_days,
+        np.unique(target_day[mask]),
+        (int(target_day.min()), int(target_day.max())),
         {"hour": (hour, 24), "month": (month_label, len(months))},
         groups,
         text_of,
@@ -1061,6 +1066,57 @@ def month_table(res: Results) -> str:
     return _md_table(headers, rows)
 
 
+def month_note(res: Results, cfg: AppConfig, tz: str) -> str:
+    """Which months have fewer scored target days than the period covers, and why."""
+    lo, hi = res.pairs.target_range
+    scored = set(res.pairs.scored_days.tolist())
+    short, missing = [], []
+    for y, m in res.pairs.months:
+        start = max(dt.date(y, m, 1).toordinal(), lo)
+        end = min(dt.date(y, m, calendar.monthrange(y, m)[1]).toordinal(), hi)
+        absent = [d for d in range(start, end + 1) if d not in scored]
+        if absent:
+            days = end - start + 1
+            short.append(f"{month_name(y, m)} ({days - len(absent)} of {days})")
+            missing += absent
+    note = "*Days* counts target days with at least one scored pair."
+    if not short:
+        return note
+    gaps = [
+        g
+        for g in cfg.weather.forecasts.expected_missing
+        if "temperature_2m" in g.variables and g.first is not None
+    ]
+
+    spans = [(g.first, g.last) for g in gaps if g.first is not None]
+
+    def in_gap(day: int) -> bool:
+        """The local day overlaps a configured gap (valid hours, inclusive)."""
+        first = pd.Timestamp(dt.date.fromordinal(day)).tz_localize(tz).tz_convert("UTC")
+        after = first + pd.Timedelta(days=1)
+        return any(
+            first < pd.Timestamp(last) + pd.Timedelta(hours=1) and after > pd.Timestamp(start)
+            for start, last in spans
+        )
+
+    outside = [d for d in missing if not in_gap(d)]
+    out = f"{note} Fewer days than the period covers: {', '.join(short)}."
+    if gaps and not outside:
+        ranges = "; ".join(
+            f"day-{g.offset_days} runs, valid times {g.first:%Y-%m-%d %H:%M} → "
+            f"{g.last:%Y-%m-%d %H:%M} UTC"
+            for g in gaps
+        )
+        out += (
+            " Every missing day overlaps the configured gap in the GFS temperature archive "
+            f"(`weather.forecasts.expected_missing`: {ranges}). C has no weather input there, so "
+            "run 2's common mask drops those pairs for every method."
+        )
+    else:
+        out += f" {len(outside)} of the {len(missing)} missing days overlap no known gap."
+    return out
+
+
 def hour_table(res: Results) -> str:
     methods = conditional_methods(res)
     cov = {m: res.by_label(m, "cov_80", "hour") for m in methods}
@@ -1443,6 +1499,7 @@ def build_report(
         + "\n",
         "### By month\n",
         month_table(res) + "\n",
+        month_note(res, cfg, cfg.region(region_id).local_tz) + "\n",
         "### By target hour\n",
         hour_table(res) + "\n",
         "### By year\n",
