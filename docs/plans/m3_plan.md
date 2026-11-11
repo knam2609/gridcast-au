@@ -220,6 +220,21 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
   - *Parallel by level:* levels share no state, so each runs in its own process. A unit test checks that the merged parts equal a single run over all levels.
   - *Config:* `intervals.qr_batch` is an input pointer, excluded from the interval config hash like `output_dir`. The hash therefore stays `d34273400899af69`, the value step 1's and step 2's batches recorded, and a unit test pins it.
   - *Stored metrics:* step 1's metrics, plus, per quantile level of the corrected bounds, the pinball loss and the share of actuals at or below each bound (for the reliability diagram). Also stored: the share of pairs whose levels are not nested (per-level corrections can break the nesting).
+- *Outcome (2026-11-11, step 3b):* `gridcast intervals-cqr` ran from `8168a39` in 160 s and stored CQR batch **`484194d7-2e62-4176-80b0-b8f117354929`** (run 86; interval config hash `d34273400899af69`; QR batch `4bab11d7…`). It wrote 383 MB under `<data root>/intervals/`; log `<data root>/logs/m3/intervals-cqr-20261111.log`.
+  - **Pooled development results** (reported only here; step 4's report computes U1–U4), on the 10,662,528 pairs scored in steps 1 and 2. The first two rows are from those steps' outputs:
+
+    | run | cov50 % | cov80 % | cov95 % | IS80 | WIS |
+    |---|---|---|---|---|---|
+    | conformal_lgbm_C (step 1) | 50.3 | 79.1 | 94.4 | 1267.2 | 150.6 |
+    | qr_lgbm_C, raw (step 2) | 35.8 | 64.7 | 87.6 | 1382.2 | 159.6 |
+    | **cqr_lgbm_C** | 49.7 | 79.4 | 93.9 | 1248.1 | 150.5 |
+
+  - **Selections** (108 = 9 retrains × 3 levels × 4 bands): 101 chose the time-of-day grouping, against all 108 for conformal-around-C. An ACI stream (γ > 0) won 25, 22 and 17 of the 36 selections at 50%, 80% and 95%.
+  - **Crossed intervals** (output at the midpoint): 2,714 at 50%, 11 at 80%, 1,482 at 95%, out of 14.7 million output pairs per level.
+  - **Not nested:** 14.3% of scored pairs have a wider level's bound inside a narrower level's, against 1.4% for conformal-around-C (computed from step 1's stored bounds for this comparison). The raw QR quantiles were rearranged and are always nested, so the cause is the per-level correction: each level has its own scores, ACI state and selection.
+    - Most of these pairs are between 80% and 95%: the 95% lower bound sits above the 80% one on 5.5% of pairs, and the upper bound below it on 4.1%.
+    - Each level's coverage and interval score are unaffected. The WIS and the reliability diagram combine levels, so step 4 should disclose this. Reporting a rearranged version beside them would be a new, reported-only choice for step 4's question round.
+  - Clipped bounds: at most 12.0% of one candidate's 95% upper bounds (`w4_lead_tod_g0.005`), against 12.9% for the same candidate in step 1.
 
 **Step 4. Development report.**
 - `gridcast report-m3` writes `reports/m3_intervals.md` and its figures. It computes U1–U4 in code and runs the leakage tests itself.
