@@ -51,7 +51,8 @@ class StoredBatch:
         )
 
 
-def _read(path: Path) -> tuple[pd.DatetimeIndex, np.ndarray]:
+def read_wide(path: Path) -> tuple[pd.DatetimeIndex, np.ndarray]:
+    """One wide parquet (``origin_time`` plus one column per lead): UTC issue times, values."""
     frame = pd.read_parquet(path)
     times = pd.DatetimeIndex(frame.pop("origin_time"))
     if times.tz is None or str(times.tz) != "UTC":
@@ -69,7 +70,7 @@ def read_stored_batch(directory: Path, batch_id: str, target: str = "demand") ->
     forecasts: dict[str, np.ndarray] = {}
     for path in files:
         name = path.name.split("__")[1]
-        t, values = _read(path)
+        t, values = read_wide(path)
         if times is None:
             times = t
         elif not times.equals(t):
@@ -92,4 +93,4 @@ def read_stored_model(
     path = directory / f"{target}__{model}__{batch_id}.parquet"
     if not path.is_file():
         raise FileNotFoundError(f"no stored {target} forecasts of {model!r} for batch {batch_id}")
-    return _read(path)
+    return read_wide(path)

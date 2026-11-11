@@ -142,6 +142,9 @@ intervals:
   headline_level: 80            # U1-U3 judge CQR on LightGBM C at this level
   # Development point forecasts: M2 run 2, evaluation set "main".
   source_batch: "6d783932-5834-4e18-a9e8-0e3567db46e6"
+  # Quantile LightGBM C, development (step 2, run 85): the quantiles CQR corrects (step 3).
+  # An input pointer like output_dir, so not part of the interval config hash.
+  qr_batch: "4bab11d7-4301-4c74-9f32-ddd9644f3921"
   point_models: [lgbm_C, persistence, daily_naive, weekly_naive]
   selection_weeks: 8            # selection slice before each retrain (as M2's early stopping)
   grid:

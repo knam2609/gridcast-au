@@ -242,6 +242,8 @@ class IntervalsConfig(BaseModel):
     # models that get conformal intervals.
     source_batch: str
     point_models: list[str]
+    # Stored quantile LightGBM C batch (step 2) that CQR corrects (step 3); None until run.
+    qr_batch: str | None = None
     selection_weeks: int = 8  # selection slice before each retrain (like early stopping)
     grid: IntervalGridConfig
     tod_block_starts: list[int]  # local hours starting the time-of-day blocks

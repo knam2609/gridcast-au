@@ -210,6 +210,16 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
 
 **Step 3. CQR.**
 - Apply the step-1 machinery to the QR scores. Store the CQR batch.
+- *Implementation (step 3a, [`src/gridcast/intervals/cqr_batch.py`](../../src/gridcast/intervals/cqr_batch.py), `gridcast intervals-cqr`, `make intervals-cqr`):*
+  - *Inputs:* the QR batch named by `intervals.qr_batch`, and run 2's batch for the actuals, the common mask and lgbm_C's point forecast (the WIS median).
+    - The run refuses a QR batch that is incomplete, failed its point reproduction, was trained against another source batch, or has a QR config hash other than the current recipe's.
+    - It also refuses one whose issue times or actuals differ from run 2's, or that lacks a quantile on any pair of the common mask.
+    - The CLI refuses a working tree with uncommitted changes, since U1–U3 judge this batch.
+  - *Method:* step 1's `quantile_problem` (one score per side, q̂_lo − y and y − q̂_hi) on the rearranged quantiles of each level. It runs the same 24 candidate streams with the same per-retrain selection.
+    - Calibration starts at the first development issue time (2022-11-01), as step 1's did. The pairs are run 2's common mask, so CQR gets no more calibration data than the conformal intervals.
+  - *Parallel by level:* levels share no state, so each runs in its own process. A unit test checks that the merged parts equal a single run over all levels.
+  - *Config:* `intervals.qr_batch` is an input pointer, excluded from the interval config hash like `output_dir`. The hash therefore stays `d34273400899af69`, the value step 1's and step 2's batches recorded, and a unit test pins it.
+  - *Stored metrics:* step 1's metrics, plus, per quantile level of the corrected bounds, the pinball loss and the share of actuals at or below each bound (for the reliability diagram). Also stored: the share of pairs whose levels are not nested (per-level corrections can break the nesting).
 
 **Step 4. Development report.**
 - `gridcast report-m3` writes `reports/m3_intervals.md` and its figures. It computes U1–U4 in code and runs the leakage tests itself.

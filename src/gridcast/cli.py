@@ -536,6 +536,52 @@ def intervals_conformal(
     typer.echo(f"{time.perf_counter() - t0:.0f}s")
 
 
+@app.command("intervals-cqr")
+def intervals_cqr(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    workers: Annotated[int, typer.Option(help="Levels run in parallel")] = 3,
+) -> None:
+    """M3 step 3: CQR on the stored quantile LightGBM C batch (development); clean tree only."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.intervals.cqr_batch import RUN_NAME, run_intervals_cqr
+    from gridcast.provenance import git_sha
+
+    cfg = load_config()
+    sha = git_sha()
+    if sha is None or sha.endswith("-dirty"):
+        typer.echo("refused: the CQR batch must be built from a clean commit (git status)")
+        raise typer.Exit(code=1)
+    t0 = time.perf_counter()
+    run = run_intervals_cqr(get_engine(), cfg, region, workers=workers, sha=sha)
+    levels = cfg.intervals.levels
+    pooled = run.metrics[run.metrics["horizon"] == 0].set_index("metric")["value"]
+    row = [
+        RUN_NAME,
+        *(100 * pooled[f"coverage_{lv}"] for lv in levels),
+        *(pooled[f"interval_score_{lv}"] for lv in levels),
+        pooled["wis"],
+        100 * pooled["non_nested"],
+    ]
+    headers = [
+        "run",
+        *(f"cov{lv} %" for lv in levels),
+        *(f"IS{lv}" for lv in levels),
+        "WIS",
+        "non-nested %",
+    ]
+    config = run.run_config
+    typer.echo(
+        f"\nstored CQR batch {run.batch_id} (run {run.run_id}) from QR batch {config['qr_batch']}: "
+        f"development from {config['first_issue']}, {config['scored_pairs']:,} pairs, pooled"
+    )
+    typer.echo(tabulate([row], headers=headers, floatfmt=".1f", tablefmt="github"))
+    crossed = ", ".join(f"{lv}%: {n:,}" for lv, n in run.result.crossed.items())
+    typer.echo(f"crossed intervals output at their midpoint: {crossed}")
+    typer.echo(f"{time.perf_counter() - t0:.0f}s")
+
+
 @app.command("backtest-qr")
 def backtest_qr(
     region: Annotated[str, typer.Option(help="Region id")] = "VIC1",

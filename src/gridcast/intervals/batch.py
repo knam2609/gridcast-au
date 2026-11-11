@@ -27,7 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -72,10 +72,15 @@ def _metric_row(run_id: int, r: dict[Any, Any]) -> dict[str, Any]:
     }
 
 
+# Input pointers, not recipe settings: ``qr_batch`` names the step-2 quantiles that CQR reads
+# (its own recipe is recorded as ``qr_config_hash``), so adding it left step 1's hash as it was.
+HASH_EXCLUDED: frozenset[str] = frozenset({"output_dir", "qr_batch"})
+
+
 def interval_config_hash(cfg: AppConfig) -> str:
-    """Hash of every setting that changes the intervals (not paths or reporting)."""
+    """Hash of every setting that changes the intervals (not paths, input pointers or reporting)."""
     payload = {
-        "intervals": cfg.intervals.model_dump(mode="json", exclude={"output_dir"}),
+        "intervals": cfg.intervals.model_dump(mode="json", exclude=set(HASH_EXCLUDED)),
         "forecast": cfg.forecast.model_dump(mode="json"),
         "schedule": {
             "first_issue": str(cfg.ml.first_issue),
@@ -125,6 +130,25 @@ def _load(task: PointTask) -> StoredBatch:
     return batch.restrict(end=task.end)
 
 
+def interval_groups(
+    cfg: AppConfig, region_id: str, batch: StoredBatch
+) -> dict[str, tuple[np.ndarray, int]]:
+    """Group labels of every pair's target per grouping (``lead``: one group)."""
+    setup = ForecastSetup.from_config(cfg)
+    if batch.n_leads != setup.horizon_steps:
+        raise ValueError("the stored batch does not have forecast.horizon_steps leads")
+    return {
+        "lead": (np.zeros(batch.actual.shape, dtype=np.int8), 1),
+        "lead_tod": tod_labels(
+            batch.origin_times,
+            batch.n_leads,
+            setup.issue_every_steps,
+            cfg.region(region_id).local_tz,
+            cfg.intervals.tod_block_starts,
+        ),
+    }
+
+
 def conformal_for(task: PointTask) -> ConformalResult:
     """Every candidate stream and the selection for one point model (a worker's job)."""
     cfg = task.cfg
@@ -132,19 +156,7 @@ def conformal_for(task: PointTask) -> ConformalResult:
     if task.model not in batch.forecasts:
         raise KeyError(f"batch {task.batch_id} has no forecasts from {task.model!r}")
     setup = ForecastSetup.from_config(cfg)
-    if batch.n_leads != setup.horizon_steps:
-        raise ValueError("the stored batch does not have forecast.horizon_steps leads")
-    tz = cfg.region(task.region_id).local_tz
-    groups = {
-        "lead": (np.zeros(batch.actual.shape, dtype=np.int8), 1),
-        "lead_tod": tod_labels(
-            batch.origin_times,
-            batch.n_leads,
-            setup.issue_every_steps,
-            tz,
-            cfg.intervals.tod_block_starts,
-        ),
-    }
+    groups = interval_groups(cfg, task.region_id, batch)
     problem = point_problem(
         batch.origin_times,
         setup.issue_every_steps,
@@ -233,7 +245,9 @@ def save_results(
     results: dict[str, ConformalResult],
     actual: np.ndarray,
     times: pd.DatetimeIndex,
+    name_of: Callable[[str], str] = run_name,
 ) -> None:
+    """Bounds per level and side, daily candidate statistics and the actuals (wide parquet)."""
     directory.mkdir(parents=True, exist_ok=False)
     wide(times, actual.astype(np.float32)).to_parquet(
         directory / "actual.parquet", index=False, compression="zstd"
@@ -241,7 +255,7 @@ def save_results(
     for model, res in results.items():
         if not res.origin_times.equals(times):
             raise ValueError(f"{model}: output issue times differ")
-        name = run_name(model)
+        name = name_of(model)
         for level in res.lower:
             for side, values in (("lo", res.lower[level]), ("hi", res.upper[level])):
                 wide(times, values).to_parquet(
@@ -302,6 +316,16 @@ def insert_run(
     return int(run_id)
 
 
+def result_config(res: ConformalResult) -> dict[str, Any]:
+    """The candidates, every selection, and the crossed and clipped counts of a result."""
+    return {
+        "candidates": [c.key for c in res.candidates],
+        "selections": [asdict(s) for s in res.selections],
+        "crossed": {str(k): v for k, v in res.crossed.items()},
+        "clipped": res.clipped.to_dict(orient="records"),
+    }
+
+
 def store_runs(
     engine: Engine,
     cfg: AppConfig,
@@ -323,10 +347,7 @@ def store_runs(
                 **run_config,
                 "method": METHOD,
                 "point_model": model,
-                "candidates": [c.key for c in res.candidates],
-                "selections": [asdict(s) for s in res.selections],
-                "crossed": {str(k): v for k, v in res.crossed.items()},
-                "clipped": res.clipped.to_dict(orient="records"),
+                **result_config(res),
             }
             run_ids[model] = insert_run(
                 conn,
