@@ -85,7 +85,7 @@
   - by local hour of the target;
   - by month (the winter bias found in M2);
   - by year and by retrain quarter.
-- **Uncertainty of the coverage numbers:** errors are correlated in time, so coverage and score differences get **block-bootstrap intervals that resample whole days**, as in M2's AEMO comparison.
+- **Uncertainty of the coverage numbers:** errors are correlated in time, so coverage and score differences get **block-bootstrap intervals that resample whole days**, as in M2's AEMO comparison. Step 4 adds a 7-day-block sensitivity for the pooled headline rows (user decision 2026-11-12).
 - **Extreme-event groups.**
   - *Known at issue time:* forecast daily maximum ≥ 35 °C (weighted GFS temperature); forecast daily maximum **≤ 12 °C** (cold, fixed in step 1 from pre-scoring data: 11 such days against 8 hot days in Nov 2022 → Jul 2023); public holidays; DST-change days.
   - *Defined by outcome (biased by construction, in a separate table):*
@@ -239,6 +239,21 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
 **Step 4. Development report.**
 - `gridcast report-m3` writes `reports/m3_intervals.md` and its figures. It computes U1–U4 in code and runs the leakage tests itself.
 - Contents: coverage and width by lead and level; the reliability diagram; the interval score against the baseline envelope; WIS; conditional coverage; both extreme-event tables with bootstrap intervals; the per-retrain selection summary.
+- *Decisions (question round, 2026-11-12, before the report was built). The user chose the recommended option each time:*
+  - **Non-nesting (step 3):** disclose it (share of pairs, which levels, the cause). Also add a reported-only row, **CQR, rearranged**: per pair, the six CQR bounds sorted as the quantiles τ = 0.025 … 0.975, as step 2 did for raw QR. It appears in the pooled, WIS, pinball and reliability tables, and step 6 scores it too, so development and holdout match. It does not replace the headline, and U1–U3 judge the CQR bounds as stored. *Why:* it shows whether coherent levels cost accuracy, and an API (M5) would need nested intervals. *Disclosed:* it was added after step 3's results were seen.
+  - **Figures (four):** 80% coverage by lead for every method, with U2's 75–85% band; IS80 by lead, CQR against the baseline envelope (U3); the reliability diagram; 80% coverage by target month for CQR, conformal-around-C and raw QR.
+  - **Bootstrap:** M2's settings throughout: 2,000 draws resampling whole NEM issue days, 95% percentile intervals, seed `ml.seed`. A **sensitivity with 7-day blocks** (consecutive weeks from the first scored issue day) is added for the pooled headline rows: CQR's coverage at each level, and its IS80 and WIS differences against conformal-around-C and the best baseline. *Why:* misses cluster over weather spells and 24 h leads overlap the next issue day, so day blocks may give intervals that are too narrow.
+- *Details settled without a question (stated in the report):*
+  - U3's pooled part compares with the mean over **all** leads h = 1 … 288 of the per-lead baseline minimum, as M2's S2 did.
+  - **Hot and cold groups, known at issue time:** for each pair, the population-weighted GFS temperature of every 5-minute interval of the target's local day, using the freshest forecast published by the issue time (the rule C's features use). The day's maximum is taken over the intervals that have such a value. A pair whose target day has none is in neither group.
+  - Hour, month and year groups use the target's local time; the retrain quarter uses the issue time, since selections apply to issue times.
+  - The conditional and extreme-event tables show CQR, conformal-around-C, raw QR and the **best baseline**, the conformal baseline with the lowest pooled IS80.
+- *Implementation (step 4a, [`src/gridcast/intervals/evaluation.py`](../../src/gridcast/intervals/evaluation.py), [`report.py`](../../src/gridcast/intervals/report.py), `gridcast report-m3`, `make report-m3`):*
+  - *Inputs:* the latest CQR run built on `intervals.qr_batch`, that QR run, and the latest conformal runs, which must come from one batch. Every run must carry the current interval config hash and `intervals.source_batch`, or the report stops.
+  - *Recomputation:* every per-pair statistic is recomputed from the stored bounds on run 2's common mask, then summed by NEM issue day and lead (the bootstrap's material), by target hour and month, and by event group. **The pooled values must equal each batch's stored metrics** (relative tolerance 10⁻⁹), or the report stops. The rearranged CQR row has no stored metrics; it is computed here from the stored CQR bounds.
+  - *U4:* the command runs `tests/unit/test_interval_leakage.py` and the QR leakage test (`test_quantiles_ignore_demand_after_their_issue_time`).
+  - *Presentation rules (no effect on any criterion):* event-group coverage gets a bootstrap interval only if its pairs come from at least 10 issue days. Target months with fewer than 7 days are tabled but left out of the month figure.
+  - *Tests:* `tests/unit/test_m3_evaluation.py` (rearrangement, aggregation against brute force, bootstrap, U1–U4 boundaries, and the hot/cold label's information rule with a control). `tests/integration/test_m3_report.py` builds every batch on the test database with the real commands (QR faked with stored metrics). It then writes the report, and checks that the report stops when a stored metric differs or the recipe hash changed.
 
 **Step 5. Freeze, then the AEMO comparison (development part).**
 - Freeze the interval recipe: a hash of the `intervals:` config, plus the code commit, recorded in config and guarded by a unit test. This happens before the AEMO comparison, so the benchmark cannot influence the recipe. What is frozen is the recipe, including the per-retrain selection rule, not one set of fitted models.

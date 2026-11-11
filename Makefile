@@ -6,7 +6,7 @@ REGIONS ?= VIC1
 DAYS ?= 2026-10-01
 CHECK_MONTH ?= 2026-09
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr report-m3 catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -89,6 +89,9 @@ backtest-qr: ## M3 step 2: quantile LightGBM C walk-forward (dev, run 2's settin
 
 intervals-cqr: ## M3 step 3: CQR on the stored QR batch (dev, intervals.qr_batch); minutes, clean tree only
 	$(UV) run gridcast intervals-cqr --region $(firstword $(REGIONS))
+
+report-m3: ## Generate reports/m3_intervals.md from the stored interval batches (U1-U4, runs the leakage tests)
+	$(UV) run gridcast report-m3 --region $(firstword $(REGIONS))
 
 report-holdout: ## Generate reports/m2_holdout.md from the stored holdout run (S5, replication, AEMO holdout part)
 	$(UV) run gridcast report-holdout --region $(firstword $(REGIONS))
