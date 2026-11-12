@@ -2,9 +2,31 @@
 
 from dataclasses import replace
 
+import pytest
+
 from gridcast.config import PROJECT_ROOT, load_config
 from gridcast.intervals.batch import interval_config_hash
-from gridcast.intervals.freeze import FROZEN_PATHS, RECIPE_MODULES, FreezeState
+from gridcast.intervals.freeze import FROZEN_PATHS, RECIPE_MODULES, FreezeState, freeze_state
+from gridcast.intervals.qr_batch import qr_config_hash
+
+
+def test_interval_recipe_is_frozen() -> None:
+    """The recipe was frozen in step 5 (m3_plan.md): a setting change that alters the
+    interval or QR recipe fails here, before the AEMO comparison or the holdout can use it."""
+    cfg = load_config()
+    assert cfg.intervals.frozen_commit
+    assert interval_config_hash(cfg) == cfg.intervals.frozen_config_hash == "d34273400899af69"
+    assert qr_config_hash(cfg) == cfg.intervals.frozen_qr_config_hash == "8767a8948966637c"
+
+
+def test_frozen_interval_code_is_unchanged() -> None:
+    """No file under the frozen paths differs from the frozen commit."""
+    state = freeze_state(load_config())
+    if state.sha is None:
+        pytest.skip("not a git checkout with the frozen commit")
+    assert state.frozen_changed == ()
+    assert state.problems == []
+
 
 # Modules that do not build bounds: reporting, and the freeze check itself.
 UNFROZEN = {"__init__", "evaluation", "report", "freeze"}

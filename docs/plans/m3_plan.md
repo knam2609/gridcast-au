@@ -289,6 +289,22 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
     - *Levels:* all three are built, since the recipe works per level; the AEMO comparison uses 80%.
   - **Frozen code:** M2's frozen paths, plus every `intervals` module that produces bounds (`batch`, `conformal`, `cqr_batch`, `halfhour`, `inputs`, `qr_batch`, `quantile`, `rolling`, `scores`). Not frozen: the report modules (`evaluation`, `report`), the freeze check, and the AEMO code written after the freeze.
   - **Check before the freeze commit:** the frozen code recomputes the step-1 and step-3 development bounds, and they must equal the stored batches exactly. `batch.py` and `inputs.py` were refactored after step 1, so this check is a real test. The QR code has not changed since the QR batch was built; step 6 reproduces its Aug–Sep 2025 forecasts.
+- *Outcome (2026-11-13, steps 5a and 5b):*
+  - **5a, `bc5337e`:** [`src/gridcast/intervals/halfhour.py`](../../src/gridcast/intervals/halfhour.py) (`gridcast intervals-halfhour`) and [`freeze.py`](../../src/gridcast/intervals/freeze.py) (`gridcast intervals-freeze-check`).
+    - The conformal core takes the lead step length as a parameter (default 5 minutes, so 5-minute results are unchanged); `rearrange_bounds` moved to `scores.py`.
+    - Tests: half-hour leakage properties and their controls in the U4 file (10 tests, against 7 in step 4), the half-hour run against the slow reference, the batch end to end, and the reproduction check catching a changed bound.
+  - **Half-hour batch** `27aa78d6-8ab8-4509-aa40-d8b08cda68ea` (runs 87–91), built from `bc5337e` in 153 s; log `<data root>/logs/m3/intervals-halfhour-20261113.log`. It scores 1,777,080 periods from 2023-08-01. Pooled development results, printed by the command (reported only):
+
+    | run | cov50 % | cov80 % | cov95 % | IS80 | WIS |
+    |---|---|---|---|---|---|
+    | conformal30_lgbm_C | 50.2 | 78.8 | 94.4 | 1249.9 | 148.4 |
+    | conformal30_persistence | 49.4 | 79.7 | 94.0 | 2707.0 | 383.8 |
+    | conformal30_daily_naive | 49.4 | 79.6 | 94.1 | 2395.2 | 280.1 |
+    | conformal30_weekly_naive | 50.8 | 78.2 | 93.0 | 2743.0 | 321.1 |
+    | cqr30_lgbm_C | 49.7 | 79.4 | 93.8 | 1230.5 | 148.3 |
+
+  - **Reproduction check**, run from a worktree at `bc5337e` (458 s; log `<data root>/logs/m3/intervals-freeze-check-20261113.log`): the step-1 conformal batch (4 runs) and the step-3 CQR batch, 38,016 issue times each, **reproduced exactly**, bounds and selections.
+  - **5b, the freeze:** `intervals.frozen_config_hash` = `d34273400899af69`, `intervals.frozen_qr_config_hash` = `8767a8948966637c`, `intervals.frozen_commit` = `bc5337e` (`configs/base.yaml`, excluded from the hash). Unit tests pin both hashes and check that no frozen path has changed since `bc5337e`. Only after this commit is `PDPASA_REGIONSOLUTION` downloaded.
 
 **Step 6. Holdout, scored once.**
 - `gridcast evaluate-holdout-intervals` refuses to start unless:

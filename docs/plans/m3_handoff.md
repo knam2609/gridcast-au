@@ -2,6 +2,13 @@
 
 Read this, then [`m3_plan.md`](m3_plan.md). For the M2 history, see [`m2_handoff.md`](m2_handoff.md) and [`m2_plan.md`](m2_plan.md).
 
+> **Update, 2026-11-13 (thirteenth session, steps 5a–5b: half-hour intervals, then the freeze):**
+> - **Question round (user chose every recommendation; `m3_plan.md` step 5):** build the 30-minute recalibration first, then freeze both resolutions, then load PDPASA; freeze the rearranged row; CQR, conformal-around-C and the best baseline against AEMO; M2's report layout.
+> - **`bc5337e` (5a):** `gridcast intervals-halfhour` and `gridcast intervals-freeze-check`. Half-hour batch **`27aa78d6-8ab8-4509-aa40-d8b08cda68ea`** (runs 87–91; CQR 80% coverage 79.4%, reported only). The freeze check rebuilt the step-1 and step-3 batches exactly from `bc5337e`.
+> - **5b:** the freeze record in `configs/base.yaml` (`intervals.frozen_*`: hashes `d34273400899af69` and `8767a8948966637c`, commit `bc5337e`), pinned by unit tests.
+>
+> **Next:** step 5c, load `PDPASA_REGIONSOLUTION` (migration 0006, `gridcast ingest-aemo-poe`), then 5d, `gridcast report-m3-aemo` → `reports/m3_aemo.md`.
+>
 > **Update, 2026-11-12 (twelfth session, step 4: development report):** three commits.
 > - **Question round (user chose every recommendation; `m3_plan.md` step 4):**
 >   - disclose the non-nesting, plus a reported-only *CQR, rearranged* row (also scored in step 6);

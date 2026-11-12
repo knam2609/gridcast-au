@@ -160,6 +160,13 @@ intervals:
   hot_day_max_temp_c: 35.0
   cold_day_max_temp_c: 12.0
   output_dir: intervals         # under the data root
+  # Frozen 2026-11-13 (M3 step 5), before AEMO's POE data were loaded for the comparison and
+  # before any holdout interval: the interval and QR recipe hashes, and the commit whose recipe
+  # code (intervals.freeze.FROZEN_PATHS) built the half-hour batch and reproduced the step-1
+  # and step-3 batches exactly (gridcast intervals-freeze-check). Do not edit.
+  frozen_config_hash: "d34273400899af69"
+  frozen_qr_config_hash: "8767a8948966637c"
+  frozen_commit: "bc5337e"
 
 aemo:
   # AEMO's own demand forecasts: every run of 30-minute pre-dispatch and 5-minute
