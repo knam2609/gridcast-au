@@ -55,17 +55,38 @@ def make_point_problem(
     point: np.ndarray,
     block_starts: Sequence[int] = (0, 8, 16),
     levels: Sequence[int] = LEVELS,
+    step_minutes: int = 5,
 ) -> ConformalProblem:
+    """Issue times every 30 min; leads of ``step_minutes`` (5, or 30 for half-hour periods)."""
     valid = np.isfinite(y) & np.isfinite(point)
-    groups = _groups(times, y.shape, block_starts)
-    return point_problem(times, 6, 0, y, point, valid, groups, levels)
+    groups = _groups(times, y.shape, block_starts, step_minutes)
+    every = ISSUE_MINUTES // step_minutes
+    return point_problem(times, every, 0, y, point, valid, groups, levels, step_minutes)
 
 
-def _groups(times: pd.DatetimeIndex, shape: tuple[int, int], block_starts: Sequence[int]) -> dict:
+ISSUE_MINUTES = 30
+
+
+def _groups(
+    times: pd.DatetimeIndex,
+    shape: tuple[int, int],
+    block_starts: Sequence[int],
+    step_minutes: int = 5,
+) -> dict:
+    every = ISSUE_MINUTES // step_minutes
     return {
         "lead": (np.zeros(shape, dtype=np.int8), 1),
-        "lead_tod": tod_labels(times, shape[1], 6, MEL, block_starts),
+        "lead_tod": tod_labels(times, shape[1], every, MEL, block_starts, step_minutes),
     }
+
+
+def period_quantiles(
+    quantiles: dict[int, tuple[np.ndarray, np.ndarray]],
+) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+    """Half-hour period means of 5-minute quantile forecasts, per level."""
+    from gridcast.intervals.halfhour import period_means
+
+    return {lv: (period_means(lo), period_means(hi)) for lv, (lo, hi) in quantiles.items()}
 
 
 def synthetic_quantiles(
@@ -85,11 +106,14 @@ def make_quantile_problem(
     y: np.ndarray,
     quantiles: dict[int, tuple[np.ndarray, np.ndarray]],
     block_starts: Sequence[int] = (0, 8, 16),
+    step_minutes: int = 5,
 ) -> ConformalProblem:
     valid = np.isfinite(y)
     for lo, hi in quantiles.values():
         valid &= np.isfinite(lo) & np.isfinite(hi)
-    return quantile_problem(times, 6, 0, y, quantiles, valid, _groups(times, y.shape, block_starts))
+    groups = _groups(times, y.shape, block_starts, step_minutes)
+    every = ISSUE_MINUTES // step_minutes
+    return quantile_problem(times, every, 0, y, quantiles, valid, groups, step_minutes)
 
 
 def _minutes(times: pd.DatetimeIndex) -> np.ndarray:
@@ -106,8 +130,9 @@ def reference_candidate(
     """Bounds of one candidate stream at every issue time, by (level, tail)."""
     n, n_leads = problem.shape
     t = _minutes(problem.origin_times)
-    issue_minutes = problem.issue_every_steps * 5
-    lat = problem.latency_steps * 5
+    step = problem.step_minutes
+    issue_minutes = problem.issue_every_steps * step
+    lat = problem.latency_steps * step
     window = round(window_weeks * 7 * 1440 / issue_minutes)
     labels = problem.groups[grouping][0]
     sign = {"lo": -1.0, "hi": 1.0}
@@ -117,7 +142,7 @@ def reference_candidate(
     def last_known(h: int, i: int) -> int:
         """Latest issue time whose lead-h target has ended by issue time i (-1 if none)."""
         j = i - 1
-        while j >= 0 and t[j] + 5 * h + lat > t[i]:
+        while j >= 0 and t[j] + step * h + lat > t[i]:
             j -= 1
         return j
 
@@ -187,7 +212,9 @@ def reference_conformal(
                     (j, c)
                     for j in range(ri)
                     for c in cols
-                    if t[j] >= t[ri] - span and t[j] + 5 * (c + 1) <= t[ri] and problem.valid[j, c]
+                    if t[j] >= t[ri] - span
+                    and t[j] + problem.step_minutes * (c + 1) <= t[ri]
+                    and problem.valid[j, c]
                 ]
                 best, best_score, best_n = None, math.inf, -1
                 counts = {}

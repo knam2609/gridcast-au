@@ -252,6 +252,12 @@ class IntervalsConfig(BaseModel):
     hot_day_max_temp_c: float = 35.0
     cold_day_max_temp_c: float
     output_dir: Path = Path("intervals")  # under the data root
+    # Freeze (m3_plan.md step 5), before the AEMO comparison and the holdout: the interval
+    # and QR config hashes, and the commit whose recipe code (intervals.freeze.FROZEN_PATHS)
+    # built the development batches. Unit tests fail if either drifts. Not hashed.
+    frozen_config_hash: str | None = None
+    frozen_qr_config_hash: str | None = None
+    frozen_commit: str | None = None
 
     @model_validator(mode="after")
     def _consistent(self) -> IntervalsConfig:

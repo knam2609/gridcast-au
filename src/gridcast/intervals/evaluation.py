@@ -13,8 +13,8 @@ stored batches and writes the report.
 * :func:`bootstrap_ratio` is M2's day-block bootstrap of a pooled mean (or of a difference
   of means on the same pairs), with optional longer blocks for the sensitivity check.
 * :func:`success_criteria` computes U1–U4 exactly as pre-registered.
-* :func:`rearrange_bounds` sorts the bounds of every pair across levels (the reported-only
-  *CQR, rearranged* row, user decision 2026-11-12).
+* The reported-only *CQR, rearranged* row (user decision 2026-11-12) uses
+  :func:`gridcast.intervals.scores.rearrange_bounds`, part of the frozen recipe (step 5).
 * :func:`forecast_day_max` builds the forecast daily maximum temperature known at each issue
   time (the hot and cold groups known at issue time).
 """
@@ -46,28 +46,6 @@ def tau_of(level: int, side: str) -> float:
 
 
 # --------------------------------------------------------------------------- per pair
-
-
-def rearrange_bounds(
-    lower: Mapping[int, np.ndarray], upper: Mapping[int, np.ndarray]
-) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
-    """Sort each pair's bounds across levels, read as quantiles in ascending τ.
-
-    The 2K bounds of K levels are, by τ, lo(widest) … lo(narrowest), hi(narrowest) …
-    hi(widest). Sorting them per pair makes every level nested inside the next wider one
-    (rearrangement, Chernozhukov et al. 2010, as step 2 did for raw QR). A pair with any
-    missing bound gets NaN at every level.
-    """
-    levels = sorted(lower)
-    order = [lower[lv] for lv in reversed(levels)] + [upper[lv] for lv in levels]
-    stacked = np.stack(order)
-    missing = ~np.isfinite(stacked).all(axis=0)
-    stacked = np.sort(stacked, axis=0)
-    stacked[:, missing] = np.nan
-    k = len(levels)
-    new_lower = {lv: stacked[k - 1 - i] for i, lv in enumerate(levels)}
-    new_upper = {lv: stacked[k + i] for i, lv in enumerate(levels)}
-    return new_lower, new_upper
 
 
 def nesting_failures(

@@ -74,7 +74,10 @@ def _metric_row(run_id: int, r: dict[Any, Any]) -> dict[str, Any]:
 
 # Input pointers, not recipe settings: ``qr_batch`` names the step-2 quantiles that CQR reads
 # (its own recipe is recorded as ``qr_config_hash``), so adding it left step 1's hash as it was.
-HASH_EXCLUDED: frozenset[str] = frozenset({"output_dir", "qr_batch"})
+# The freeze record (step 5) describes the recipe and is not part of it.
+HASH_EXCLUDED: frozenset[str] = frozenset(
+    {"output_dir", "qr_batch", "frozen_config_hash", "frozen_qr_config_hash", "frozen_commit"}
+)
 
 
 def interval_config_hash(cfg: AppConfig) -> str:
@@ -246,10 +249,15 @@ def save_results(
     actual: np.ndarray,
     times: pd.DatetimeIndex,
     name_of: Callable[[str], str] = run_name,
+    actual_dtype: type[np.floating[Any]] = np.float32,
 ) -> None:
-    """Bounds per level and side, daily candidate statistics and the actuals (wide parquet)."""
+    """Bounds per level and side, daily candidate statistics and the actuals (wide parquet).
+
+    The actuals are stored as float32 (M2's stored values), or as float64 where they are
+    means the run computed (half-hour periods), so that they rescore exactly.
+    """
     directory.mkdir(parents=True, exist_ok=False)
-    wide(times, actual.astype(np.float32)).to_parquet(
+    wide(times, actual.astype(actual_dtype)).to_parquet(
         directory / "actual.parquet", index=False, compression="zstd"
     )
     for model, res in results.items():

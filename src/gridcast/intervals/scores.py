@@ -76,6 +76,28 @@ def rearrange(quantiles: np.ndarray) -> np.ndarray:
     return np.sort(quantiles, axis=0)
 
 
+def rearrange_bounds(
+    lower: Mapping[int, np.ndarray], upper: Mapping[int, np.ndarray]
+) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray]]:
+    """Sort each pair's bounds across levels, read as quantiles in ascending τ.
+
+    The 2K bounds of K levels are, by τ, lo(widest) … lo(narrowest), hi(narrowest) …
+    hi(widest). Sorting them per pair makes every level nested inside the next wider one
+    (rearrangement, Chernozhukov et al. 2010, as step 2 did for raw QR). A pair with any
+    missing bound gets NaN at every level.
+    """
+    levels = sorted(lower)
+    order = [lower[lv] for lv in reversed(levels)] + [upper[lv] for lv in levels]
+    stacked = np.stack(order)
+    missing = ~np.isfinite(stacked).all(axis=0)
+    stacked = np.sort(stacked, axis=0)
+    stacked[:, missing] = np.nan
+    k = len(levels)
+    new_lower = {lv: stacked[k - 1 - i] for i, lv in enumerate(levels)}
+    new_upper = {lv: stacked[k + i] for i, lv in enumerate(levels)}
+    return new_lower, new_upper
+
+
 def crossing_share(quantiles: np.ndarray, mask: np.ndarray | None = None) -> float:
     """Share of pairs where some quantile lies below the one at the next lower level.
 

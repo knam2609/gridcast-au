@@ -15,12 +15,16 @@ from gridcast.intervals.evaluation import (
     pair_stats,
     per_lead,
     pooled,
-    rearrange_bounds,
     success_criteria,
     tau_of,
     week_blocks,
 )
-from gridcast.intervals.scores import interval_score, pinball, weighted_interval_score
+from gridcast.intervals.scores import (
+    interval_score,
+    pinball,
+    rearrange_bounds,
+    weighted_interval_score,
+)
 
 LEVELS = (50, 80, 95)
 OK = LeakageOutcome(5, 0, 0)

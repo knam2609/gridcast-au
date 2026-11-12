@@ -3,7 +3,9 @@
 Terms
 -----
 * A **pair** ``(i, h)`` is issue time ``i`` (an index into a regular issue grid) and lead
-  ``h`` (1…H). Its target is the interval ending ``h`` steps after issue time ``i``.
+  ``h`` (1…H). Its target is the interval ending ``h`` steps after issue time ``i``. A step
+  is 5 minutes (the dispatch interval), or 30 minutes for the half-hour periods of the AEMO
+  comparison (:mod:`gridcast.intervals.halfhour`); ``ConformalProblem.step_minutes`` says.
 * A **tail** is one side of one level's interval. Its bound is ``base ± Q``, where Q is a
   conformal quantile of the tail's past **scores**:
 
@@ -134,6 +136,7 @@ class ConformalProblem:
     scores: list[np.ndarray]
     tails: dict[tuple[int, str], Tail]
     groups: dict[str, tuple[np.ndarray, int]]
+    step_minutes: int = STEP_MINUTES  # length of one lead step
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -225,6 +228,7 @@ def point_problem(
     valid: np.ndarray,
     groups: Mapping[str, tuple[np.ndarray, int]],
     levels: Sequence[int],
+    step_minutes: int = STEP_MINUTES,
 ) -> ConformalProblem:
     """Conformal intervals around a point forecast (method 1): signed residuals."""
     if np.any(valid & ~(np.isfinite(y) & np.isfinite(point))):
@@ -244,6 +248,7 @@ def point_problem(
         [residual],
         tails,
         dict(groups),
+        step_minutes,
     )
 
 
@@ -255,6 +260,7 @@ def quantile_problem(
     quantiles: Mapping[int, tuple[np.ndarray, np.ndarray]],
     valid: np.ndarray,
     groups: Mapping[str, tuple[np.ndarray, int]],
+    step_minutes: int = STEP_MINUTES,
 ) -> ConformalProblem:
     """Conformalised quantile regression (method 3): one score matrix per tail.
 
@@ -272,7 +278,15 @@ def quantile_problem(
             scores.append(np.where(valid, score, np.nan))
             tails[(level, tail)] = Tail(len(scores) - 1, base.astype(np.float64))
     return ConformalProblem(
-        origin_times, issue_every_steps, latency_steps, yy, valid, scores, tails, dict(groups)
+        origin_times,
+        issue_every_steps,
+        latency_steps,
+        yy,
+        valid,
+        scores,
+        tails,
+        dict(groups),
+        step_minutes,
     )
 
 
@@ -282,16 +296,17 @@ def tod_labels(
     issue_every_steps: int,
     tz: str,
     block_starts: Sequence[int],
+    step_minutes: int = STEP_MINUTES,
 ) -> tuple[np.ndarray, int]:
     """Time-of-day block of each pair's target, from the local hour of its start.
 
     ``block_starts`` are ascending local hours; hours before the first start belong to the
-    last block (blocks may wrap past midnight).
+    last block (blocks may wrap past midnight). Leads are ``step_minutes`` long.
     """
     starts = np.asarray(block_starts)
     if starts.size == 0 or np.any(np.diff(starts) <= 0) or starts[0] < 0 or starts[-1] > 23:
         raise ValueError("block_starts must be ascending hours in 0..23")
-    step = pd.Timedelta(minutes=STEP_MINUTES)
+    step = pd.Timedelta(minutes=step_minutes)
     n = len(origin_times)
     grid = pd.date_range(origin_times[0], periods=(n - 1) * issue_every_steps + n_leads, freq=step)
     hours = grid.tz_convert(tz).hour.to_numpy()
@@ -335,7 +350,8 @@ def run_conformal(
     """
     n, n_leads = problem.shape
     times = problem.origin_times
-    issue_minutes = problem.issue_every_steps * STEP_MINUTES
+    step_minutes = problem.step_minutes
+    issue_minutes = problem.issue_every_steps * step_minutes
     _check_grid(times, issue_minutes)
     lag = known_lag(np.arange(1, n_leads + 1), problem.issue_every_steps, problem.latency_steps)
     windows = [window_steps(w, issue_minutes) for w in grid.window_weeks]
@@ -438,7 +454,7 @@ def run_conformal(
                     width + (2 / alphas) * (np.maximum(lo - yk, 0.0) + np.maximum(yk - hi, 0.0)),
                     0.0,
                 )
-            target = t_min[jj] + STEP_MINUTES * (hh + 1)
+            target = t_min[jj] + step_minutes * (hh + 1)
             r = np.searchsorted(r_min, target, side="left")
             inc = r < len(r_min)
             inc[inc] &= t_min[jj[inc]] >= r_min[r[inc]] - span

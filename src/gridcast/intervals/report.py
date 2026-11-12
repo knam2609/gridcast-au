@@ -79,12 +79,12 @@ from gridcast.intervals.evaluation import (
     pair_stats,
     per_lead,
     pooled,
-    rearrange_bounds,
     success_criteria,
     week_blocks,
 )
 from gridcast.intervals.inputs import read_stored_batch, read_wide
 from gridcast.intervals.quantile import interval_quantiles, quantile_key, quantile_levels
+from gridcast.intervals.scores import rearrange_bounds
 from gridcast.provenance import git_sha
 from gridcast.timeutils import NEM_TZ
 

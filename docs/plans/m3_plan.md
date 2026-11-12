@@ -269,6 +269,26 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
 **Step 5. Freeze, then the AEMO comparison (development part).**
 - Freeze the interval recipe: a hash of the `intervals:` config, plus the code commit, recorded in config and guarded by a unit test. This happens before the AEMO comparison, so the benchmark cannot influence the recipe. What is frozen is the recipe, including the per-retrain selection rule, not one set of fitted models.
 - Load AEMO's POE data (`PDPASA_REGIONSOLUTION`, `LOR` runs, VIC1; migration `0006` if needed; about 1.1 GB cached under the data root) and compare on Oct 2024 → Sep 2025 (§2.6): the band as published as the headline, the re-centred band beside it, and both alignments. `reports/m3_aemo.md`.
+- *Decisions (question round, 2026-11-13, before any step-5 code). The user chose the recommended option each time:*
+  - **Order:** first build the 30-minute recalibration (§2.6) and store its development batch, from our own data only. Then freeze both resolutions. Only then download `PDPASA_REGIONSOLUTION`. Nothing that faces AEMO can change once the full AEMO data are on disk. *Disclosed:* step 0 saw four sampled months of AEMO's band.
+  - **The rearranged row is frozen:** the per-pair sort moves into a frozen module, so step 6 scores it with identical code. It stays reported only.
+  - **Our intervals against AEMO:** CQR (the headline), conformal-around-C and the best conformal baseline, all recalibrated at 30 minutes. Scored at 80% only, since AEMO publishes only that band.
+  - **Layout: M2's AEMO report.**
+    - A per-lead table (30 min, 1, 2, 4, 6, 12, 18 and 24 h): coverage, share below and above, mean width and IS80. The headline column is the band as published, with matched alignment.
+    - A sensitivity table: the re-centred band and the strict alignment.
+    - Pooled IS80 and coverage differences, with the day-block bootstrap and the 7-day sensitivity.
+    - A table by issue quarter, and figures of coverage and IS80 over all 48 half-hour leads.
+    - Scored on the pairs where both alignments exist, as in M2.
+- *Details settled without a question:*
+  - **The 30-minute recipe is the interval recipe applied to half-hour periods.**
+    - *Target:* the mean of the six 5-minute actuals of the period ending o + 30k min (k = 1 … 48), as in M2's AEMO comparison.
+    - *Inputs:* the point forecast is the mean of the six 5-minute forecasts. CQR's quantiles are the means of the six rearranged 5-minute QR quantiles.
+    - *Scored pairs:* a period is scored and used for calibration only if all six of its 5-minute pairs are in the common mask.
+    - *Settings:* the same candidate grid, the same time-of-day blocks (of the period's start), the same ACI steps and the same per-retrain selection.
+    - *Lead bands:* mapped to whole periods: 30 min, 1–2 h, 2.5–6 h and 6.5–24 h (periods 1, 2–4, 5–12, 13–48).
+    - *Levels:* all three are built, since the recipe works per level; the AEMO comparison uses 80%.
+  - **Frozen code:** M2's frozen paths, plus every `intervals` module that produces bounds (`batch`, `conformal`, `cqr_batch`, `halfhour`, `inputs`, `qr_batch`, `quantile`, `rolling`, `scores`). Not frozen: the report modules (`evaluation`, `report`), the freeze check, and the AEMO code written after the freeze.
+  - **Check before the freeze commit:** the frozen code recomputes the step-1 and step-3 development bounds, and they must equal the stored batches exactly. `batch.py` and `inputs.py` were refactored after step 1, so this check is a real test. The QR code has not changed since the QR batch was built; step 6 reproduces its Aug–Sep 2025 forecasts.
 
 **Step 6. Holdout, scored once.**
 - `gridcast evaluate-holdout-intervals` refuses to start unless:

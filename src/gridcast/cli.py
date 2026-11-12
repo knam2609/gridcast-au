@@ -582,6 +582,94 @@ def intervals_cqr(
     typer.echo(f"{time.perf_counter() - t0:.0f}s")
 
 
+@app.command("intervals-halfhour")
+def intervals_halfhour(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    workers: Annotated[int, typer.Option(help="Runs in parallel")] = 4,
+) -> None:
+    """M3 step 5: conformal and CQR intervals for 30-minute means (dev); clean tree only."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.intervals.halfhour import run_intervals_halfhour
+    from gridcast.provenance import git_sha
+
+    cfg = load_config()
+    sha = git_sha()
+    if sha is None or sha.endswith("-dirty"):
+        typer.echo("refused: the half-hour batch must be built from a clean commit (git status)")
+        raise typer.Exit(code=1)
+    t0 = time.perf_counter()
+    run = run_intervals_halfhour(get_engine(), cfg, region, workers=workers, sha=sha)
+    levels = cfg.intervals.levels
+    rows = []
+    for name, m in run.metrics.items():
+        pooled = m[m["horizon"] == 0].set_index("metric")["value"]
+        rows.append(
+            [
+                f"{name} (run {run.run_ids[name]})",
+                *(100 * pooled[f"coverage_{lv}"] for lv in levels),
+                *(pooled[f"interval_score_{lv}"] for lv in levels),
+                pooled["wis"],
+            ]
+        )
+    headers = ["run", *(f"cov{lv} %" for lv in levels), *(f"IS{lv}" for lv in levels), "WIS"]
+    config = run.run_config
+    typer.echo(
+        f"\nstored half-hour interval batch {run.batch_id}: 30-minute means, development from "
+        f"{config['first_issue']}, {config['scored_pairs']:,} periods, pooled"
+    )
+    typer.echo(tabulate(rows, headers=headers, floatfmt=".1f", tablefmt="github"))
+    crossed = "; ".join(
+        f"{name}: " + ", ".join(f"{lv}%: {n:,}" for lv, n in res.crossed.items())
+        for name, res in run.results.items()
+    )
+    typer.echo(f"crossed intervals output at their midpoint: {crossed}")
+    typer.echo(f"{time.perf_counter() - t0:.0f}s")
+
+
+@app.command("intervals-freeze-check")
+def intervals_freeze_check(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    reproduce: Annotated[
+        bool, typer.Option(help="Recompute the stored dev conformal and CQR bounds (~8 min)")
+    ] = True,
+    workers: Annotated[int, typer.Option(help="Runs in parallel")] = 4,
+) -> None:
+    """M3 step 5: the interval recipe against its freeze record; exit 1 on any difference."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.intervals.freeze import freeze_state, reproduce_development
+
+    cfg = load_config()
+    t0 = time.perf_counter()
+    state = freeze_state(cfg)
+    typer.echo(
+        f"interval config hash {state.config_hash} (frozen {state.frozen_config_hash}); "
+        f"QR config hash {state.qr_config_hash} (frozen {state.frozen_qr_config_hash}); "
+        f"HEAD {state.sha}, frozen commit {state.frozen_commit}"
+    )
+    failed = False
+    for problem in state.problems:
+        typer.echo(f"problem: {problem}")
+        failed = True
+    if reproduce:
+        for r in reproduce_development(get_engine(), cfg, region, workers=workers):
+            verdict = "reproduced exactly" if r.passed else "DIFFERS"
+            detail = "" if r.passed else f" (bounds: {', '.join(r.differing_bounds) or 'equal'}; "
+            if not r.passed:
+                detail += f"selections {'equal' if r.selections_equal else 'differ'})"
+            typer.echo(
+                f"{r.run} (run {r.run_id}, batch {r.batch_id}, built at {r.git_sha}): "
+                f"{r.issue_times:,} issue times, {verdict}{detail}"
+            )
+            failed |= not r.passed
+    typer.echo(f"{time.perf_counter() - t0:.0f}s")
+    if failed:
+        raise typer.Exit(code=1)
+
+
 @app.command("backtest-qr")
 def backtest_qr(
     region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
