@@ -6,7 +6,7 @@ REGIONS ?= VIC1
 DAYS ?= 2026-10-01
 CHECK_MONTH ?= 2026-09
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check report-m3 catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check report-m3 report-m3-aemo catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -49,6 +49,9 @@ ingest-daily: ## Load DAYS from NEMWeb's daily dispatch reports after an exact m
 
 ingest-aemo: ## Download and load AEMO pre-dispatch + 5-min pre-dispatch forecasts (M2 benchmark; ~2.6 GB cached)
 	$(UV) run gridcast ingest-aemo --regions $(REGIONS)
+
+ingest-aemo-poe: ## Download and load AEMO's PDPASA POE demand forecasts (M3 benchmark; LOR runs; ~1.6 GB cached)
+	$(UV) run gridcast ingest-aemo-poe --regions $(REGIONS)
 
 weather: ## Download, validate and load Open-Meteo weather (GFS forecasts + ERA5; START/END overridable)
 	$(UV) run gridcast ingest-weather --start $(START) --end $(END)
@@ -98,6 +101,9 @@ intervals-freeze-check: ## M3 step 5: check the interval recipe against its free
 
 report-m3: ## Generate reports/m3_intervals.md from the stored interval batches (U1-U4, runs the leakage tests)
 	$(UV) run gridcast report-m3 --region $(firstword $(REGIONS))
+
+report-m3-aemo: ## Generate reports/m3_aemo.md: frozen half-hour intervals vs AEMO's POE band (development part)
+	$(UV) run gridcast report-m3-aemo --region $(firstword $(REGIONS))
 
 report-holdout: ## Generate reports/m2_holdout.md from the stored holdout run (S5, replication, AEMO holdout part)
 	$(UV) run gridcast report-holdout --region $(firstword $(REGIONS))

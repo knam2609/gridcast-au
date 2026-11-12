@@ -289,3 +289,25 @@ def upsert_aemo_forecasts(conn: Connection, df: pd.DataFrame, ingestion_run_id: 
         ("source", "region_id", "run_time", "target_end"),
         ingestion_run_id,
     )
+
+
+AEMO_POE_COLUMNS: tuple[str, ...] = (
+    "region_id",
+    "run_time",
+    "target_end",
+    "available_at",
+    "demand10_mw",
+    "demand50_mw",
+    "demand90_mw",
+)
+
+
+def upsert_aemo_poe(conn: Connection, df: pd.DataFrame, ingestion_run_id: int) -> int:
+    return _copy_upsert(
+        conn,
+        "aemo_demand_poe",
+        df,
+        AEMO_POE_COLUMNS,
+        ("region_id", "run_time", "target_end"),
+        ingestion_run_id,
+    )

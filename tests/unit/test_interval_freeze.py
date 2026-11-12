@@ -28,8 +28,9 @@ def test_frozen_interval_code_is_unchanged() -> None:
     assert state.problems == []
 
 
-# Modules that do not build bounds: reporting, and the freeze check itself.
-UNFROZEN = {"__init__", "evaluation", "report", "freeze"}
+# Modules that do not build bounds: reporting (the AEMO comparison included, written after the
+# freeze), and the freeze check itself.
+UNFROZEN = {"__init__", "evaluation", "report", "aemo_report", "freeze"}
 
 
 def test_every_intervals_module_is_frozen_or_deliberately_not() -> None:

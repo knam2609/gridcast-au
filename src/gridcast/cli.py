@@ -229,6 +229,26 @@ def ingest_aemo(
         raise typer.Exit(code=1)
 
 
+@app.command("ingest-aemo-poe")
+def ingest_aemo_poe(start: StartOpt = None, end: EndOpt = None, regions: RegionsOpt = None) -> None:
+    """Download, validate and load AEMO's PDPASA POE demand forecasts (M3 benchmark only)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.ingestion.aemo_poe import ingest_poe_range
+    from gridcast.ingestion.pipeline import parse_month_arg
+
+    cfg = load_config()
+    first = parse_month_arg(start or cfg.aemo.ingest_start_month)
+    last = parse_month_arg(end or cfg.aemo.ingest_end_month)
+    results = ingest_poe_range(get_engine(), cfg, first, last, _regions(regions))
+    rows = [[f"{r.period:%Y-%m}", r.status, r.rows_parsed, r.rows_loaded] for r in results]
+    typer.echo(tabulate(rows, headers=["month", "status", "parsed", "loaded"], tablefmt="github"))
+    failed = [r for r in results if r.status != "success"]
+    for r in failed:
+        typer.echo(f"FAILED {r.period:%Y-%m}: {r.error}", err=True)
+    if failed:
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def dq(start: StartOpt = None, end: EndOpt = None, regions: RegionsOpt = None) -> None:
     """Run market and weather data-quality checks over the window and store results."""
@@ -844,6 +864,16 @@ def report_m3(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -
     from gridcast.intervals.report import write_report as write_m3
 
     path = write_m3(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
+@app.command("report-m3-aemo")
+def report_m3_aemo(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+    """Write reports/m3_aemo.md: our half-hour intervals against AEMO's POE band (dev part)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.intervals.aemo_report import write_report as write_m3_aemo
+
+    path = write_m3_aemo(get_engine(), load_config(), region)
     typer.echo(f"wrote {path}")
 
 
