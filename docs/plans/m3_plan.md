@@ -2,7 +2,7 @@
 
 **Goal:** give the M2 demand forecast honest uncertainty: prediction intervals whose coverage matches their stated level overall, at every lead time and during extreme events, that are sharper than intervals built around the baselines, and that are compared with AEMO's own probabilistic demand forecasts where that comparison is valid.
 
-**Status:** planned 2026-11-10 after a question round with the user. Step 0 done (2026-11-10, [`docs/m3_data_spike.md`](../m3_data_spike.md)): AEMO's POE forecasts are usable, with a disclosed caveat. Step 1's pre-scoring spike done (2026-11-10, [`docs/m3_prescoring_spike.md`](../m3_prescoring_spike.md)): the candidate grid and the cold threshold are fixed below, before any scored interval existed. Steps 2–3 done (2026-11-11: QR and CQR development batches). Step 4 done (2026-11-12, [`reports/m3_intervals.md`](../../reports/m3_intervals.md)): **U1–U4 pass** on the development period. Step 5 done (2026-11-13): the interval recipe is frozen (`bc5337e`), and the AEMO comparison is in [`reports/m3_aemo.md`](../../reports/m3_aemo.md). Branch `m3-prediction-intervals`, from `main` at `a1b26bb` (M1 and M2 merged). The success criteria in §3 were agreed before any interval result existed.
+**Status:** planned 2026-11-10 after a question round with the user. Step 0 done (2026-11-10, [`docs/m3_data_spike.md`](../m3_data_spike.md)): AEMO's POE forecasts are usable, with a disclosed caveat. Step 1's pre-scoring spike done (2026-11-10, [`docs/m3_prescoring_spike.md`](../m3_prescoring_spike.md)): the candidate grid and the cold threshold are fixed below, before any scored interval existed. Steps 2–3 done (2026-11-11: QR and CQR development batches). Step 4 done (2026-11-12, [`reports/m3_intervals.md`](../../reports/m3_intervals.md)): **U1–U4 pass** on the development period. Step 5 done (2026-11-13): the interval recipe is frozen (`bc5337e`), and the AEMO comparison is in [`reports/m3_aemo.md`](../../reports/m3_aemo.md). Step 6's question round done (2026-11-13): the design of the single holdout run and the holdout report's contents are fixed in step 6 below. Branch `m3-prediction-intervals`, from `main` at `a1b26bb` (M1 and M2 merged). The success criteria in §3 were agreed before any interval result existed.
 
 ## 1. Decisions (agreed 2026-11-10)
 
@@ -332,6 +332,40 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
   - It runs from a git worktree, as M2's did.
 - `gridcast report-m3-holdout` writes `reports/m3_holdout.md`: the replication verdicts, everything in step 4, and the holdout part of the AEMO comparison.
 - Rewrite the README's *Uncertainty* section and its status, results, limitations and reproduction sections from the generated reports.
+- *Decisions (question round, 2026-11-13, before any step-6 code and before any holdout interval or quantile existed). The user chose the recommended option each time:*
+  - **Calibration history: one continuous run.**
+    - The frozen recipe runs once over issue times 2022-11-01 → 2026-09-30, as if it had been deployed continuously. Calibration windows, ACI state and selections carry across the boundary.
+    - Its point inputs are run 2's stored forecasts before 2025-10-01 joined to `holdout_main`'s from 2025-10-01. Both batches hold the same models, so the common mask is defined the same way on both sides.
+    - Its QR inputs are step 2's quantiles before 2025-10-01 joined to the holdout QR quantiles from 2025-10-01.
+    - M2's holdout run reproduced run 2's 2025-08-01 fold exactly, and step 6's QR run must do the same. So the joined inputs equal what one continuous walk-forward would have produced.
+    - Only issue times from 2025-10-01 are scored, against `holdout_main`'s stored actuals and common mask.
+  - **Reproduction before anything is scored: everything.** Any mismatch stops the run.
+    - *QR:* the 2025-08-01 retrain's fit records (rows, every candidate's pinball loss and tree count, the selection) and its rearranged Aug–Sep 2025 quantiles must equal step 2's stored ones.
+    - *Point refits:* at every holdout retrain they must equal run 2's forecasts (Aug–Sep 2025) and `holdout_main`'s (from Oct 2025).
+    - *Intervals:* the development part of the continuous run must equal every stored development batch exactly, bounds and selections: step 1's conformal batch (4 runs), step 3's CQR and step 5a's half-hour batch (5 runs). This also checks the new holdout wrapper around the frozen core.
+  - **Two stages** (the plan above had one command):
+    - **6a, `gridcast backtest-qr-holdout`.** QR from the 2025-08-01 retrain through the holdout (5 retrains, step 2's per-quantile selection). The first retrain runs alone and its reproduction check runs before the other four are fitted.
+      - It stores the rearranged quantiles and the per-pair crossing flags, with no metric computed or logged.
+      - It refuses unless the freeze holds (both recipe hashes, a clean tree, frozen code unchanged since `bc5337e`). It also refuses if a QR holdout batch already exists for the QR recipe.
+    - **6b, `gridcast evaluate-holdout-intervals`, the U5 lock.** Everything that scores happens here. *Why two stages:* a bug in the scoring stage then costs minutes, not a rerun of the 4–6 h QR fits. The QR quantiles are forecasts, not scores.
+  - **Lock scope: everything under one lock.** The locked run stores, together and only after checking the lock again:
+    - 5-minute conformal intervals around C and the three baselines;
+    - CQR;
+    - raw QR's holdout metrics;
+    - the half-hour batch (5 runs) that the AEMO holdout part reads.
+    - The *CQR, rearranged* row is computed by the report from the stored CQR bounds, with the frozen `rearrange_bounds`, as in step 4.
+  - **`reports/m3_holdout.md` contents, fixed now (M2's holdout report as the model):**
+    - provenance;
+    - U5;
+    - U1–U4 recomputed on the holdout (*holds* or *does not hold*);
+    - a development-vs-holdout table;
+    - everything step 4 reports, on the holdout;
+    - the AEMO holdout part, with step 5's layout on Oct 2025 → Sep 2026 and the pooled differences shown for development and holdout;
+    - **a pre-registered winter section.** M2's holdout found a winter under-forecast (bias −104 MW, worst in Jun 2026), the known stress test. For target months Jun–Aug 2026 it shows 80% coverage and the share below and above by lead band, for CQR, conformal-around-C, raw QR and the best baseline, with day-block intervals. It also shows the ACI step γ selected per band at the 2026-05-01 retrain.
+    - Anything added after scoring is labelled as such, as M2 did.
+- *Details settled without a question:*
+  - *Best baseline:* the same rule as step 4, the conformal baseline with the lowest pooled IS80, applied to the holdout. That gives the baselines their strongest showing.
+  - *Order:* 6a's code is committed and its run started first. The scoring and report code (6b, 6c) is written and committed while it runs, before any holdout interval is scored. The QR quantiles on disk are not scored outside 6b.
 
 ## 5. New dependencies and compute
 
