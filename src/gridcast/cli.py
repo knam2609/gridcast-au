@@ -790,6 +790,82 @@ def backtest_qr(
     typer.echo(f"{time.perf_counter() - t0:.0f}s")
 
 
+@app.command("backtest-qr-holdout")
+def backtest_qr_holdout(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    check_only: Annotated[
+        bool, typer.Option("--check-only", help="Run the refusal checks only; fit nothing")
+    ] = False,
+) -> None:
+    """M3 step 6a: quantile LightGBM C over the holdout, stored UNSCORED (no metric computed)."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.evaluation.holdout import HoldoutRefused
+    from gridcast.intervals.freeze import freeze_state
+    from gridcast.intervals.qr_holdout import (
+        QrHoldoutRefused,
+        QrHoldoutReproductionFailed,
+        fit_headers,
+        fit_rows,
+        preflight,
+        run_qr_holdout,
+        store_qr_holdout,
+    )
+    from gridcast.intervals.quantile import ReproductionError
+
+    cfg = load_config()
+    engine = get_engine()
+    state = freeze_state(cfg)
+    try:
+        inputs = preflight(engine, cfg, region, state)
+    except QrHoldoutRefused as exc:
+        typer.echo(f"REFUSED: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(
+        f"checks pass: QR recipe {state.qr_config_hash}, interval recipe {state.config_hash}, "
+        f"commit {state.sha}, frozen code unchanged since {state.frozen_commit}, no QR holdout "
+        f"batch yet. Development QR batch {inputs.dev_qr.batch_id}; holdout_main batch "
+        f"{inputs.holdout_point.batch_id}; retrains "
+        + ", ".join(r.strftime("%Y-%m-%d") for r in inputs.window.retrains)
+    )
+    if check_only:
+        return
+    t0 = time.perf_counter()
+    try:
+        run = run_qr_holdout(engine, cfg, region, inputs, cfg.data_path(cfg.ml.model_dir))
+    except (HoldoutRefused, QrHoldoutRefused, QrHoldoutReproductionFailed, ReproductionError) as e:
+        typer.echo(f"STOPPED: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    run_id = store_qr_holdout(engine, cfg, region, run, state.sha)
+    typer.echo(
+        "\nper (retrain, band) and quantile: the chosen form/leaves, trees and early-stopping "
+        "pinball loss (MW, on the training slice before the retrain)"
+    )
+    typer.echo(
+        tabulate(
+            fit_rows(run.result.fits),
+            headers=fit_headers(run.result.taus),
+            floatfmt=".2f",
+            tablefmt="github",
+        )
+    )
+    rep = run.reproduction
+    typer.echo(
+        f"\nreproduction at {rep.retrain}: {rep.fits} fit records and {rep.pairs:,} quantile "
+        f"values of {rep.issue_times:,} development issue times equal step 2's batch "
+        f"{rep.reference_batch}; point forecasts equal run 2's and holdout_main's at every "
+        f"retrain ({run.run_config['point_reproduction']['pairs']:,} pairs)"
+    )
+    typer.echo(
+        f"stored QR holdout batch {run.batch_id} (run {run_id}): "
+        f"{run.run_config['n_origins']:,} issue times, of which "
+        f"{run.run_config['holdout_issue_times']:,} in the holdout. Nothing was scored; "
+        "`gridcast evaluate-holdout-intervals` scores it under the U5 lock"
+    )
+    typer.echo(f"took {(time.perf_counter() - t0) / 3600:.2f} h")
+
+
 @app.command("weather-ablation")
 def weather_ablation(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
     """Weather-feature drop/add test (m2_plan.md §2.5) on the stored ML run; ~30-40 min."""

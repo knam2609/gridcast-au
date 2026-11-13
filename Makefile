@@ -6,7 +6,7 @@ REGIONS ?= VIC1
 DAYS ?= 2026-10-01
 CHECK_MONTH ?= 2026-09
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check report-m3 report-m3-aemo catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout report-m3 report-m3-aemo catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -98,6 +98,9 @@ intervals-halfhour: ## M3 step 5: conformal and CQR intervals for 30-minute mean
 
 intervals-freeze-check: ## M3 step 5: check the interval recipe against its freeze; recomputes the dev bounds (~8 min)
 	$(UV) run gridcast intervals-freeze-check --region $(firstword $(REGIONS))
+
+backtest-qr-holdout: ## M3 step 6a: quantile LightGBM C over the holdout, UNSCORED (reproduces step 2's first retrain first); hours, clean tree only
+	$(UV) run gridcast backtest-qr-holdout --region $(firstword $(REGIONS))
 
 report-m3: ## Generate reports/m3_intervals.md from the stored interval batches (U1-U4, runs the leakage tests)
 	$(UV) run gridcast report-m3 --region $(firstword $(REGIONS))
