@@ -123,19 +123,20 @@ def _git(args: Sequence[str], root: Path) -> str:
     ).stdout.strip()
 
 
-def git_state(frozen_commit: str | None, root: Path = PROJECT_ROOT) -> GitState:
-    """HEAD, whether tracked files are modified, and frozen files changed since the freeze."""
+def git_state(
+    frozen_commit: str | None, root: Path = PROJECT_ROOT, paths: Sequence[str] = FROZEN_PATHS
+) -> GitState:
+    """HEAD, whether tracked files are modified, and frozen files changed since the freeze.
+
+    ``paths`` defaults to M2's frozen code; M3's interval freeze passes its own list.
+    """
     try:
         sha = _git(["rev-parse", "HEAD"], root)
         dirty = bool(_git(["status", "--porcelain", "--untracked-files=no"], root))
         changed: set[str] = set()
         if frozen_commit:
-            changed |= set(
-                _git(["diff", "--name-only", frozen_commit, "--", *FROZEN_PATHS], root).split()
-            )
-            untracked = _git(
-                ["ls-files", "--others", "--exclude-standard", "--", *FROZEN_PATHS], root
-            )
+            changed |= set(_git(["diff", "--name-only", frozen_commit, "--", *paths], root).split())
+            untracked = _git(["ls-files", "--others", "--exclude-standard", "--", *paths], root)
             changed |= set(untracked.split())
     except (OSError, subprocess.CalledProcessError):
         return GitState(None, True, ())

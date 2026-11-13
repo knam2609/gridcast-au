@@ -134,6 +134,40 @@ evaluation:
     - day: 2024-12-09
       label: "Short afternoon demand spike, cause unverified (m2_handoff.md)"
 
+intervals:
+  # Milestone 3: prediction intervals for demand (docs/plans/m3_plan.md). Not part of the
+  # frozen M2 hash (backtest.frozen_ml_config_hash).
+  first_issue: "2023-08-01"     # first scored issue day (a quarterly retrain); dev ends at holdout_start
+  levels: [50, 80, 95]
+  headline_level: 80            # U1-U3 judge CQR on LightGBM C at this level
+  # Development point forecasts: M2 run 2, evaluation set "main".
+  source_batch: "6d783932-5834-4e18-a9e8-0e3567db46e6"
+  # Quantile LightGBM C, development (step 2, run 85): the quantiles CQR corrects (step 3).
+  # An input pointer like output_dir, so not part of the interval config hash.
+  qr_batch: "4bab11d7-4301-4c74-9f32-ddd9644f3921"
+  point_models: [lgbm_C, persistence, daily_naive, weekly_naive]
+  selection_weeks: 8            # selection slice before each retrain (as M2's early stopping)
+  grid:
+    # Candidate streams, re-selected at every retrain per level and lead band (m3_plan.md §2.2).
+    window_weeks: [4, 8, 13, 26]
+    groupings: [lead, lead_tod]
+    # Fixed in step 1 on pre-scoring data (docs/m3_prescoring_spike.md, user 2026-11-10).
+    aci_gammas: [0.0, 0.001, 0.005]
+  # Time-of-day blocks of the target (local hour starts): 8 x 3 h (step 1 spike).
+  tod_block_starts: [0, 3, 6, 9, 12, 15, 18, 21]
+  # Extreme-event groups known at the issue time: GFS forecast daily maximum
+  # (population-weighted) of the target's local day; cold threshold from the step 1 spike.
+  hot_day_max_temp_c: 35.0
+  cold_day_max_temp_c: 12.0
+  output_dir: intervals         # under the data root
+  # Frozen 2026-11-13 (M3 step 5), before AEMO's POE data were loaded for the comparison and
+  # before any holdout interval: the interval and QR recipe hashes, and the commit whose recipe
+  # code (intervals.freeze.FROZEN_PATHS) built the half-hour batch and reproduced the step-1
+  # and step-3 batches exactly (gridcast intervals-freeze-check). Do not edit.
+  frozen_config_hash: "d34273400899af69"
+  frozen_qr_config_hash: "8767a8948966637c"
+  frozen_commit: "bc5337e"
+
 aemo:
   # AEMO's own demand forecasts: every run of 30-minute pre-dispatch and 5-minute
   # pre-dispatch (MMSDM "all runs" archives, ~50 MB a month each, cached under raw/).

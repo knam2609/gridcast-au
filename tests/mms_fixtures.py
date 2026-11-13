@@ -213,3 +213,43 @@ def write_daily_archive(
                 inner.writestr(f"{stem}.CSV", "\r\n".join(lines) + "\r\n")
             outer.writestr(f"{stem}.zip", buf.getvalue())
     return path
+
+
+PDPASA_COLS = [
+    "RUN_DATETIME", "INTERVAL_DATETIME", "REGIONID", "DEMAND10", "DEMAND50", "DEMAND90",
+    "RESERVEREQ", "LASTCHANGED", "RUNTYPE",
+]  # fmt: skip
+
+
+def pdpasa_rows(
+    first_run: dt.datetime,
+    n_runs: int,
+    periods: int = 4,
+    regions: Sequence[str] = ("NSW1", "VIC1"),
+    run_types: Sequence[str] = ("LOR", "OUTAGE_LRC"),
+) -> list[dict[str, str]]:
+    """PDPASA runs every 30 min; ``first_run`` is the first run's RUN_DATETIME (NEM time),
+    the end of its first period. Published 25 min before RUN_DATETIME (5 min after the
+    nominal run time); the band is symmetric, ±(50 + 10k) MW around DEMAND50."""
+    rows = []
+    for r in range(n_runs):
+        run_dt = first_run + dt.timedelta(minutes=30 * r)
+        for k in range(periods):
+            for j, region in enumerate(regions):
+                for t, run_type in enumerate(run_types):
+                    mid = 4000 + 10 * k + 1000 * j + r + 7 * t
+                    half = 50 + 10 * k
+                    rows.append(
+                        {
+                            "RUN_DATETIME": nem(run_dt),
+                            "INTERVAL_DATETIME": nem(run_dt + dt.timedelta(minutes=30 * k)),
+                            "REGIONID": region,
+                            "DEMAND10": f"{mid + half}",
+                            "DEMAND50": f"{mid}",
+                            "DEMAND90": f"{mid - half}",
+                            "RESERVEREQ": "-1500",
+                            "LASTCHANGED": nem(run_dt - dt.timedelta(minutes=25)),
+                            "RUNTYPE": run_type,
+                        }
+                    )
+    return rows

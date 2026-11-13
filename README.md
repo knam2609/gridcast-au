@@ -4,16 +4,20 @@
 
 GridCast-AU is a production-style data-science system for Australia's National Electricity Market (NEM). It ingests official AEMO market data and archived weather forecasts into PostgreSQL, checks data quality, and evaluates 24-hour-ahead forecasts of regional **demand** and **wholesale spot price** with a leakage-safe, walk-forward backtest.
 
-> **Status: milestones 1 and 2 of 7 are complete.**
+> **Status: milestones 1–3 of 7 are complete.**
 > - Milestone 1 delivered a reproducible Victorian data pipeline and correctly evaluated baseline forecasts for demand and price.
 > - Milestone 2 added weather-aware machine-learning forecasts of **demand**. They were judged against success criteria written before any result existed, compared with AEMO's own forecasts, and scored once on a holdout year that was set aside before the model was built.
-> - Price models, prediction intervals, anomaly detection, the API and the dashboard are planned and **not built yet**; the sections below say so explicitly.
+> - Milestone 3 added **prediction intervals** for demand: conformalised quantile regression on the milestone-2 model. They were judged against pre-registered criteria, compared with AEMO's probabilistic forecasts, and scored once on the same holdout year.
+> - Price models, anomaly detection, the API and the dashboard are planned and **not built yet**; the sections below say so explicitly.
 >
 > Every number in this README comes from a generated report:
 > - [`reports/m1_baseline.md`](reports/m1_baseline.md): the M1 baselines.
 > - [`reports/m2_demand.md`](reports/m2_demand.md): the ML development period.
 > - [`reports/m2_aemo.md`](reports/m2_aemo.md): the AEMO benchmark.
 > - [`reports/m2_holdout.md`](reports/m2_holdout.md): the holdout, scored once.
+> - [`reports/m3_intervals.md`](reports/m3_intervals.md): prediction intervals, development period.
+> - [`reports/m3_aemo.md`](reports/m3_aemo.md): intervals against AEMO's probabilistic band (development part).
+> - [`reports/m3_holdout.md`](reports/m3_holdout.md): intervals on the holdout, scored once.
 
 ---
 
@@ -29,7 +33,7 @@ GridCast-AU answers five questions for Victoria (`VIC1`):
 4. When is the market behaving abnormally?
 5. Which factors are associated with unusually high demand or price?
 
-Milestone 1 answers the question that has to come first: **what does a forecast need to beat?** Milestone 2 answers question 1 for demand. It also tests whether the answer holds up on a year the model never saw, and how it compares with the operator's own forecast.
+Milestone 1 answers the question that has to come first: **what does a forecast need to beat?** Milestone 2 answers question 1 for demand. It also tests whether the answer holds up on a year the model never saw, and how it compares with the operator's own forecast. Milestone 3 answers question 3 for demand: how wide the uncertainty is, and whether an interval's stated level can be trusted.
 
 ## Why electricity forecasting matters
 
@@ -81,6 +85,8 @@ flowchart LR
     L -->|model_runs<br/>forecast_metrics| E
     G --> Q[parquet<br/>predictions]
     L --> Q
+    Q --> I[Prediction intervals<br/>conformal, QR, CQR]
+    I -->|model_runs<br/>forecast_metrics| E
     E --> R[Generated reports<br/>reports/*.md]
 ```
 
@@ -92,6 +98,7 @@ flowchart LR
 | Features | `features/`: DST-aware local calendar, demand history known at the issue time, population-weighted weather taken from the latest forecast run published by the issue time (`weather/`). Listed in [`docs/feature_catalogue.md`](docs/feature_catalogue.md) |
 | Forecasting | `forecasting/origins.py` (leakage-safe geometry), `models/baselines.py`, `models/ml.py`, `forecasting/walkforward.py` (quarterly retrains, per-retrain selection) |
 | Evaluation | Metrics by lead time and segment, pre-registered success criteria, AEMO benchmark, the holdout lock (`evaluation/holdout.py`), provenance (git SHA, config hash, batch id) |
+| Intervals | `intervals/`: rolling conformal calibration with exact rolling order statistics, quantile LightGBM, CQR, the half-hour recalibration for the AEMO comparison, the recipe freeze and the holdout lock (`intervals/holdout.py`) |
 | Tooling | uv, Python 3.12, ruff, mypy, pytest + hypothesis, structlog, typer CLI, LightGBM, scikit-learn |
 
 The schema keys every table by `region_id`, so adding another NEM region is a configuration change (`configs/base.yaml`), not a migration.
@@ -201,13 +208,92 @@ Together these baselines form the **baseline envelope**: the lowest error at eac
 
 ## Uncertainty
 
-*Planned for milestone 3. Not implemented.* The plan is quantile regression and conformal prediction intervals, with calibration reported overall and during extreme events. The `forecasts` table already has columns for interval bounds and level.
+**Milestone 3: prediction intervals for demand.** The headline is an **80% interval** (AEMO's POE90–POE10 range); 50% and 95% intervals are also reported. The method, the success criteria U1–U5 and the scoring were fixed in [`docs/plans/m3_plan.md`](docs/plans/m3_plan.md) before any interval existed.
+
+**Methods, compared on identical (issue time, lead) pairs:**
+- **Conformal intervals around a stored point forecast.** The lower and upper bounds come from separate quantiles of past signed errors, so an interval can be asymmetric and absorb a bias. They are built around LightGBM C and, as *interval baselines*, around persistence, daily naive and weekly naive.
+- **Quantile LightGBM C (QR).** The milestone-2 model's features, training rows and retrain schedule, with a pinball-loss objective for six quantiles. Each quantile picks its own target form and leaf count at every retrain.
+- **Conformalised quantile regression (CQR), the pre-registered headline.** The QR bounds corrected by the same rolling conformal calibration, with one score per side (Romano et al. 2019).
+
+**How the intervals are calibrated:**
+- **Past data only.** At each issue time, the calibration set for a lead holds only errors whose target was already known.
+- **Settings re-selected every quarter.** 24 candidate settings run continuously: calibration windows of 4, 8, 13 or 26 weeks; per lead, or per lead and 3-hour block of the day; and adaptive conformal steps γ ∈ {0, 0.001, 0.005} (Gibbs & Candès 2021). At each quarterly retrain, the one with the best interval score over the previous 8 weeks is used for the next quarter.
+- **Leakage tests.** Property tests perturb actual demand after an issue time, and forecasts issued after it, and check that every interval issued at that time is unchanged. Control tests show the checks fail when the rule is broken by one step. The reports run these tests themselves.
+
+**How the evaluation was protected:**
+- **The freeze.** The interval recipe (hash `d34273400899af69`) and its code were frozen at commit `bc5337e`, before AEMO's band was loaded for the comparison and before any holdout interval existed. Before the freeze, the frozen code had to recompute the stored development intervals exactly.
+- **The single holdout run.**
+  - The quantile models were first fitted over the holdout and stored without any score. Their first retrain had to reproduce the development fits exactly.
+  - One locked run then built every interval over one continuous run from November 2022, so calibration windows carry across the boundary.
+  - Before scoring anything, it had to reproduce all 10 stored development interval runs exactly. It did.
+- **Disclosed:** the holdout year is new for intervals, but its point errors, including the winter under-forecast, were seen in milestone 2 before the interval recipe was designed.
+
+**Scores.**
+- *Coverage:* the share of actuals inside the interval.
+- *Interval score* IS₈₀ = width + 10 × the distance by which the actual falls outside. It rewards a narrow interval only if the interval keeps its coverage. Lower is better.
+- *Weighted interval score (WIS):* the same, combined over the three levels and the point forecast.
+
+*Not yet built:* price intervals (they need a price model), and serving intervals through the `forecasts` table and the API (milestone 5).
 
 ## Anomaly detection
 
 *Planned for milestone 4. Not implemented.* The plan is robust z-scores, forecast-residual thresholds and Isolation Forest. Each anomaly will come with observable evidence, and the system will not claim to know causes.
 
 ## Results
+
+### Demand uncertainty: 80% prediction intervals (milestone 3)
+
+From [`reports/m3_intervals.md`](reports/m3_intervals.md) (development, issue times 1 Aug 2023 → 30 Sep 2025) and [`reports/m3_holdout.md`](reports/m3_holdout.md) (holdout, 1 Oct 2025 → 30 Sep 2026, 5,045,760 scored pairs per method).
+
+![80% coverage by lead time, holdout](reports/figures/m3_holdout_coverage_by_lead.png)
+
+| # | Pre-registered criterion (CQR at 80%) | Development | Holdout |
+|---|---|---|---|
+| U1 | Pooled coverage in [78%, 82%] | **PASS**: 79.40% | **holds**: 79.69% (95% CI 78.17–81.08%) |
+| U2 | Coverage in [75%, 85%] at every lead time from 5 min to 24 h | **PASS**: 288 of 288; 78.97% to 80.36% | **holds**: 288 of 288; 79.24% to 80.51% |
+| U3 | Lower IS₈₀ than every baseline interval at every lead time from 2 h, and pooled | **PASS**: 265 of 265; pooled 1,248.1 vs 2,256.1 MW | **holds**: 265 of 265; pooled 1,365.2 vs 2,335.6 MW |
+| U4 | Every interval leakage property test passes | **PASS**: 7 of 7 | **holds**: 11 of 11 (with step 5's half-hour tests) |
+| U5 | The holdout is scored once, by the frozen recipe | n/a | **PASS** |
+
+| Pooled over all lead times (development → holdout) | Coverage at 80% (%) | IS₈₀ (MW) | WIS (MW) |
+|---|---:|---:|---:|
+| **CQR on quantile LightGBM C** (headline) | 79.4 → 79.7 | 1,248.1 → 1,365.2 | 150.5 → 165.9 |
+| Conformal around LightGBM C | 79.1 → 78.6 | 1,267.2 → 1,390.4 | 150.6 → 165.9 |
+| Quantile LightGBM C, raw | 64.7 → 69.5 | 1,382.2 → 1,456.9 | 159.6 → 174.3 |
+| Conformal around daily naive (best baseline interval) | 79.5 → 79.5 | 2,407.3 → 2,499.4 | 281.7 → 291.3 |
+
+- **The intervals keep their stated level in a year they never saw.**
+  - Pooled 80% coverage is 79.69% in the holdout, against 79.40% in development.
+  - Every one of the 288 lead times stays between 79.24% and 80.51%.
+  - The 50% and 95% intervals cover 49.1% and 94.1%.
+- **They are much sharper than baseline intervals with the same coverage.** CQR's IS₈₀ is 45.4% below the best baseline interval's in the holdout (48.2% in development).
+- **The conformal step is what makes them trustworthy.** Raw quantile LightGBM covers only 69.5% at 80% in the holdout (64.7% in development).
+- **CQR's edge over simpler conformal intervals around the point forecast is small.**
+  - Its IS₈₀ is lower by 25.1 MW in the holdout (95% CI 5.3 to 45.1 MW) and by 19.0 MW in development.
+  - Over all three levels the two are indistinguishable: the WIS difference is +0.1 MW in the holdout (−1.2 to +1.4).
+- **Monthly coverage swings more than pooled coverage.** It ranges from 75.0% (Jan 2026) to 84.1% (Nov 2025) in the holdout, and from 67.6% (Dec 2023) to 87.8% (Apr 2025) in development.
+- **The winter under-forecast did not break them (a pre-registered check).**
+  - For targets in Jun–Aug 2026, when milestone 2's point forecast was most biased, CQR covered 79.1% (95% CI 76.1–81.9%).
+  - Its misses were close to balanced: 11.2% below and 9.7% above.
+
+### Demand uncertainty against AEMO's probabilistic forecast (milestone 3)
+
+From [`reports/m3_aemo.md`](reports/m3_aemo.md) (development part, Oct 2024 → Sep 2025) and the holdout report.
+- AEMO's pre-dispatch PASA publishes demand with a 10%, 50% and 90% probability of exceedance (POE). Reading POE90–POE10 as an 80% band is this project's choice.
+- Both are compared on 30-minute mean demand, with the run issued at the same moment. The comparison is a benchmark, not pass/fail.
+
+![IS80 by lead time against AEMO, holdout](reports/figures/m3_holdout_aemo_is80_by_lead.png)
+
+| 80% band, 30-minute demand | Development | Holdout |
+|---|---:|---:|
+| AEMO POE90–POE10: coverage | 70.9% | 69.2% |
+| CQR: coverage | 80.2% | 79.5% |
+| Mean width, AEMO vs CQR (MW) | 433.3 vs 961.0 | 431.4 vs 958.9 |
+| IS₈₀, CQR − AEMO (MW; 95% interval from resampling whole days) | +395.8 (+348.8 to +444.4) | +327.1 (+270.0 to +386.8) |
+
+- **AEMO's band is less than half as wide and misses more often than an 80% interval should.** In the holdout, actual demand fell below it on 15.1% of half-hours and above it on 15.7%.
+- **Its interval score is still lower, because its centre is more accurate.** Milestone 2 found the same for point forecasts. CQR scores better only at the first 4 of 48 half-hour lead times, up to 2 h ahead, in both periods.
+- **These are facts about the band as published, not a judgement of AEMO.** Pre-dispatch PASA assesses reserve adequacy. Its `DEMAND50` also sits above AEMO's own pre-dispatch demand forecast for unexplained reasons (`docs/m3_data_spike.md`). A band re-centred on pre-dispatch gives the same picture.
 
 ### Demand: the holdout year, scored once (milestone 2)
 
@@ -304,6 +390,22 @@ These M1 numbers cover a longer period than M2's development period, which start
 
 ## Failure cases
 
+### Prediction intervals (milestone 3)
+
+- **Hot days.**
+  - On days forecast to reach 35 °C, CQR's 80% coverage was 73.1% in the holdout (95% CI 62.6–82.3%) and 71.5% in development.
+  - Demand exceeded the upper bound on 22.1% and 23.9% of those pairs, against the 10% a calibrated interval allows.
+  - The group is known when the forecast is issued, so this is an honest conditional failure.
+- **Extreme outcomes.** These groups are defined by what happened, so their coverage is biased downwards by construction.
+  - In the top 1% of actual demand intervals, coverage was 53.2% in the holdout (64.3% in development).
+  - When the realised price exceeded $300/MWh, it was 46.2% (69.8%).
+  - Almost all of these misses are above the interval.
+- **Some months.** Holdout coverage fell to 77.7% in December 2025 and 75.0% in January 2026; the worst development month was December 2023, at 67.6%. Pooled calibration hides these swings.
+- **The levels are not always nested.**
+  - Each level is calibrated separately, so on 10.61% of holdout pairs (14.3% in development) a wider level's bound falls inside a narrower one's.
+  - Sorting the bounds removes this at almost no cost: the WIS changes by −0.12 MW in the holdout. A service that publishes intervals should sort them.
+- **Raw quantiles cross.** Before sorting, the quantile LightGBM bounds crossed on 29.2% of scored holdout pairs. Each quantile has its own model and settings.
+
 ### Demand models (milestone 2)
 
 - **The models under-forecast in winter, worst in the holdout winter.**
@@ -355,7 +457,12 @@ These M1 numbers cover a longer period than M2's development period, which start
   - Cloud cover, solar radiation and humidity forecasts improved on temperature alone in both periods.
   - C⁺ was reported, not pre-registered, and trains on a shorter archive. It needs its own pre-registered evaluation before it replaces C.
 - **Weather matters for day-ahead decisions, not the next hour.** Within the first hour, recent demand carries the forecast. At 12–24 h, and on hot days, the temperature forecast is where most of the gain comes from.
-- **Price: good forecasting is mostly a question of *when* the market is risky, not a better average.** Prediction intervals, spike probability and anomaly flags (milestones 3–4) are likely to be worth more to a trader or battery operator than a slightly lower MAE.
+- **The demand intervals can be taken at their word, except on hot days.**
+  - At 80% they covered 79.69% of the holdout, at every lead time and through the winter in which the point forecast was biased.
+  - On days forecast to reach 35 °C they covered 73.1% (holdout) and 71.5% (development). Those days need a wider band or a flag.
+- **AEMO's POE90–POE10 band is not an 80% interval.** Used as one, it would surprise its user more often than stated: in the holdout, actual demand was outside it on 15.1% + 15.7% of half-hours. It is narrower around a better centre, so a combined product (AEMO's centre with calibrated widths) is the obvious next experiment. It is not tested here.
+- **CQR buys little over conformal intervals around the point forecast.** The simpler method has nearly the same weighted interval score and needs no quantile models (6.7 hours of fitting for the holdout alone).
+- **Price: good forecasting is mostly a question of *when* the market is risky, not a better average.** Price intervals, spike probability and anomaly flags (after a price model, and milestone 4) are likely to be worth more to a trader or battery operator than a slightly lower MAE.
 - **Holdout comparisons need context.**
   - Price errors are lower in the holdout year for every baseline: the median profile's MAE is $40.4/MWh versus $62.9/MWh in development. The market was calmer; no model improved.
   - For demand it went the other way: every baseline did worse in the holdout. Model comparisons must always be made against baselines evaluated on the same period.
@@ -375,7 +482,8 @@ These M1 numbers cover a longer period than M2's development period, which start
   - Open-Meteo's free tier is for non-commercial use.
 - **One holdout year** is one draw of weather and demand conditions. The 2026 winter shows how much a single season can move the error.
 - **Development numbers are slightly optimistic.** Two development runs looked at the same period. The holdout numbers are not optimistic in this way.
-- **Point forecasts only** until milestone 3; demand only until a price model is built.
+- **Intervals for demand only**, at fixed 50%, 80% and 95% levels. Price intervals need a price model. Intervals are stored with each run but not yet served: the `forecasts` table and the API come in milestone 5.
+- **The interval design was not blind.** Its candidate grid, including the adaptive steps, was designed after milestone 2's development and holdout point errors had been seen. Settings are re-selected from past data only, and the holdout was scored once, but the holdout is new for intervals only.
 - **Market cap values** for some financial years come from secondary sources. They are used only as data-quality bounds.
 
 ## Reproduction
@@ -405,6 +513,17 @@ make report-aemo    # M2: regenerates reports/m2_aemo.md (development part)
 make ingest-daily   # M2: 1 Oct 2026 from NEMWeb's daily reports, after a match check on Sep 2026
 make evaluate-holdout  # M2: the single holdout run (took 10 h); refuses to run twice
 make report-holdout # M2: regenerates reports/m2_holdout.md and figures
+make intervals-conformal   # M3: conformal intervals around the stored development forecasts (minutes)
+make backtest-qr           # M3: quantile LightGBM C walk-forward, development (took 7.8 h)
+make intervals-cqr         # M3: CQR on the stored quantiles (minutes)
+make report-m3             # M3: regenerates reports/m3_intervals.md (U1–U4; runs the leakage tests)
+make intervals-halfhour    # M3: the same recipe on 30-minute means, for the AEMO comparison
+make intervals-freeze-check  # M3: checks the frozen recipe recomputes the stored development intervals (~8 min)
+make ingest-aemo-poe       # M3: AEMO pre-dispatch PASA POE bands (benchmark only)
+make report-m3-aemo        # M3: regenerates reports/m3_aemo.md (development part)
+make backtest-qr-holdout   # M3: quantile LightGBM C over the holdout, stored unscored (took 6.7 h)
+make evaluate-holdout-intervals  # M3: the single holdout interval run (15 min); refuses to run twice
+make report-m3-holdout     # M3: regenerates reports/m3_holdout.md and figures
 ```
 
 `make evaluate-holdout` checks before it starts, and refuses to run unless all of these hold:
@@ -415,6 +534,13 @@ make report-holdout # M2: regenerates reports/m2_holdout.md and figures
 
 On a fresh database it would score the holdout once; on this one it refuses, because the holdout has been scored.
 
+`make evaluate-holdout-intervals` refuses on the same terms, for the frozen interval recipe:
+- the recipe hashes must match the freeze;
+- the working tree must be clean;
+- the code must be unchanged since the frozen commit;
+- step 6a's unscored QR batch must exist;
+- no holdout interval result may exist yet.
+
 Quality gates:
 
 ```bash
@@ -422,7 +548,11 @@ make lint typecheck test   # ruff, mypy, unit tests (incl. leakage property test
 make test-integration      # against a dedicated *_test database
 ```
 
-The backtests are deterministic: re-running them reproduces every metric exactly. The holdout run checked this. Before scoring anything, it reproduced the development run's stored forecasts and model fits for Aug–Sep 2025 exactly. Each run records its git commit, configuration and batch id in `model_runs`.
+The backtests are deterministic: re-running them reproduces every metric exactly. Both holdout runs checked this. Before scoring anything:
+- milestone 2's run reproduced the development run's stored forecasts and model fits for Aug–Sep 2025 exactly;
+- milestone 3's run reproduced every stored development interval exactly.
+
+Each run records its git commit, configuration and batch id in `model_runs`.
 
 ### Repository layout
 
@@ -430,8 +560,8 @@ The backtests are deterministic: re-running them reproduces every metric exactly
 configs/            base.yaml (regions, windows, forecast and ML setup, frozen config hash), market_limits.yaml
 sql/schema/         migration bodies (plain SQL)     sql/migrations/  Alembic env + revisions
 sql/checks/         data-quality queries
-src/gridcast/       ingestion/ validation/ database/ features/ weather/ forecasting/ models/ evaluation/
+src/gridcast/       ingestion/ validation/ database/ features/ weather/ forecasting/ models/ evaluation/ intervals/
 tests/              unit/ (no DB) and integration/ (PostgreSQL)
-docs/               data_sources.md, feature_catalogue.md, m2_data_spike.md, plans/ (milestone plans)
+docs/               data_sources.md, feature_catalogue.md, m2_data_spike.md, m3_data_spike.md, m3_prescoring_spike.md, plans/ (milestone plans)
 reports/            generated milestone reports + figures
 ```

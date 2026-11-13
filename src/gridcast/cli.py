@@ -229,6 +229,26 @@ def ingest_aemo(
         raise typer.Exit(code=1)
 
 
+@app.command("ingest-aemo-poe")
+def ingest_aemo_poe(start: StartOpt = None, end: EndOpt = None, regions: RegionsOpt = None) -> None:
+    """Download, validate and load AEMO's PDPASA POE demand forecasts (M3 benchmark only)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.ingestion.aemo_poe import ingest_poe_range
+    from gridcast.ingestion.pipeline import parse_month_arg
+
+    cfg = load_config()
+    first = parse_month_arg(start or cfg.aemo.ingest_start_month)
+    last = parse_month_arg(end or cfg.aemo.ingest_end_month)
+    results = ingest_poe_range(get_engine(), cfg, first, last, _regions(regions))
+    rows = [[f"{r.period:%Y-%m}", r.status, r.rows_parsed, r.rows_loaded] for r in results]
+    typer.echo(tabulate(rows, headers=["month", "status", "parsed", "loaded"], tablefmt="github"))
+    failed = [r for r in results if r.status != "success"]
+    for r in failed:
+        typer.echo(f"FAILED {r.period:%Y-%m}: {r.error}", err=True)
+    if failed:
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def dq(start: StartOpt = None, end: EndOpt = None, regions: RegionsOpt = None) -> None:
     """Run market and weather data-quality checks over the window and store results."""
@@ -499,6 +519,427 @@ def backtest_ml(
     typer.echo(f"{time.perf_counter() - t0:.0f}s")
 
 
+@app.command("intervals-conformal")
+def intervals_conformal(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    workers: Annotated[int, typer.Option(help="Point models run in parallel")] = 4,
+) -> None:
+    """M3 step 1: conformal intervals around run 2's development forecasts (C and baselines)."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.intervals.batch import run_intervals_conformal, run_name
+
+    cfg = load_config()
+    t0 = time.perf_counter()
+    batch, metrics = run_intervals_conformal(get_engine(), cfg, region, workers=workers)
+    levels = cfg.intervals.levels
+    rows = []
+    for model, m in metrics.items():
+        pooled = m[m["horizon"] == 0].set_index("metric")["value"]
+        rows.append(
+            [
+                run_name(model),
+                *(100 * pooled[f"coverage_{lv}"] for lv in levels),
+                *(pooled[f"interval_score_{lv}"] for lv in levels),
+                pooled["wis"],
+            ]
+        )
+    headers = [
+        "run",
+        *(f"cov{lv} %" for lv in levels),
+        *(f"IS{lv}" for lv in levels),
+        "WIS",
+    ]
+    typer.echo(f"\nstored interval batch {batch}: development issue times, pooled over leads")
+    typer.echo(tabulate(rows, headers=headers, floatfmt=".1f", tablefmt="github"))
+    typer.echo(f"{time.perf_counter() - t0:.0f}s")
+
+
+@app.command("intervals-cqr")
+def intervals_cqr(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    workers: Annotated[int, typer.Option(help="Levels run in parallel")] = 3,
+) -> None:
+    """M3 step 3: CQR on the stored quantile LightGBM C batch (development); clean tree only."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.intervals.cqr_batch import RUN_NAME, run_intervals_cqr
+    from gridcast.provenance import git_sha
+
+    cfg = load_config()
+    sha = git_sha()
+    if sha is None or sha.endswith("-dirty"):
+        typer.echo("refused: the CQR batch must be built from a clean commit (git status)")
+        raise typer.Exit(code=1)
+    t0 = time.perf_counter()
+    run = run_intervals_cqr(get_engine(), cfg, region, workers=workers, sha=sha)
+    levels = cfg.intervals.levels
+    pooled = run.metrics[run.metrics["horizon"] == 0].set_index("metric")["value"]
+    row = [
+        RUN_NAME,
+        *(100 * pooled[f"coverage_{lv}"] for lv in levels),
+        *(pooled[f"interval_score_{lv}"] for lv in levels),
+        pooled["wis"],
+        100 * pooled["non_nested"],
+    ]
+    headers = [
+        "run",
+        *(f"cov{lv} %" for lv in levels),
+        *(f"IS{lv}" for lv in levels),
+        "WIS",
+        "non-nested %",
+    ]
+    config = run.run_config
+    typer.echo(
+        f"\nstored CQR batch {run.batch_id} (run {run.run_id}) from QR batch {config['qr_batch']}: "
+        f"development from {config['first_issue']}, {config['scored_pairs']:,} pairs, pooled"
+    )
+    typer.echo(tabulate([row], headers=headers, floatfmt=".1f", tablefmt="github"))
+    crossed = ", ".join(f"{lv}%: {n:,}" for lv, n in run.result.crossed.items())
+    typer.echo(f"crossed intervals output at their midpoint: {crossed}")
+    typer.echo(f"{time.perf_counter() - t0:.0f}s")
+
+
+@app.command("intervals-halfhour")
+def intervals_halfhour(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    workers: Annotated[int, typer.Option(help="Runs in parallel")] = 4,
+) -> None:
+    """M3 step 5: conformal and CQR intervals for 30-minute means (dev); clean tree only."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.intervals.halfhour import run_intervals_halfhour
+    from gridcast.provenance import git_sha
+
+    cfg = load_config()
+    sha = git_sha()
+    if sha is None or sha.endswith("-dirty"):
+        typer.echo("refused: the half-hour batch must be built from a clean commit (git status)")
+        raise typer.Exit(code=1)
+    t0 = time.perf_counter()
+    run = run_intervals_halfhour(get_engine(), cfg, region, workers=workers, sha=sha)
+    levels = cfg.intervals.levels
+    rows = []
+    for name, m in run.metrics.items():
+        pooled = m[m["horizon"] == 0].set_index("metric")["value"]
+        rows.append(
+            [
+                f"{name} (run {run.run_ids[name]})",
+                *(100 * pooled[f"coverage_{lv}"] for lv in levels),
+                *(pooled[f"interval_score_{lv}"] for lv in levels),
+                pooled["wis"],
+            ]
+        )
+    headers = ["run", *(f"cov{lv} %" for lv in levels), *(f"IS{lv}" for lv in levels), "WIS"]
+    config = run.run_config
+    typer.echo(
+        f"\nstored half-hour interval batch {run.batch_id}: 30-minute means, development from "
+        f"{config['first_issue']}, {config['scored_pairs']:,} periods, pooled"
+    )
+    typer.echo(tabulate(rows, headers=headers, floatfmt=".1f", tablefmt="github"))
+    crossed = "; ".join(
+        f"{name}: " + ", ".join(f"{lv}%: {n:,}" for lv, n in res.crossed.items())
+        for name, res in run.results.items()
+    )
+    typer.echo(f"crossed intervals output at their midpoint: {crossed}")
+    typer.echo(f"{time.perf_counter() - t0:.0f}s")
+
+
+@app.command("intervals-freeze-check")
+def intervals_freeze_check(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    reproduce: Annotated[
+        bool, typer.Option(help="Recompute the stored dev conformal and CQR bounds (~8 min)")
+    ] = True,
+    workers: Annotated[int, typer.Option(help="Runs in parallel")] = 4,
+) -> None:
+    """M3 step 5: the interval recipe against its freeze record; exit 1 on any difference."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.intervals.freeze import freeze_state, reproduce_development
+
+    cfg = load_config()
+    t0 = time.perf_counter()
+    state = freeze_state(cfg)
+    typer.echo(
+        f"interval config hash {state.config_hash} (frozen {state.frozen_config_hash}); "
+        f"QR config hash {state.qr_config_hash} (frozen {state.frozen_qr_config_hash}); "
+        f"HEAD {state.sha}, frozen commit {state.frozen_commit}"
+    )
+    failed = False
+    for problem in state.problems:
+        typer.echo(f"problem: {problem}")
+        failed = True
+    if reproduce:
+        for r in reproduce_development(get_engine(), cfg, region, workers=workers):
+            verdict = "reproduced exactly" if r.passed else "DIFFERS"
+            detail = "" if r.passed else f" (bounds: {', '.join(r.differing_bounds) or 'equal'}; "
+            if not r.passed:
+                detail += f"selections {'equal' if r.selections_equal else 'differ'})"
+            typer.echo(
+                f"{r.run} (run {r.run_id}, batch {r.batch_id}, built at {r.git_sha}): "
+                f"{r.issue_times:,} issue times, {verdict}{detail}"
+            )
+            failed |= not r.passed
+    typer.echo(f"{time.perf_counter() - t0:.0f}s")
+    if failed:
+        raise typer.Exit(code=1)
+
+
+@app.command("backtest-qr")
+def backtest_qr(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    until: Annotated[
+        str | None,
+        typer.Option(help="Smoke run: stop before this NEM date (YYYY-MM-DD); nothing is stored"),
+    ] = None,
+) -> None:
+    """M3 step 2: quantile LightGBM C walk-forward (development), reusing run 2's settings."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.forecasting.origins import nem_midnight_utc
+    from gridcast.intervals.qr_batch import (
+        RUN_NAME,
+        cost_estimate,
+        run_backtest_qr,
+        score_development,
+        smoke_metrics,
+        store_qr,
+    )
+    from gridcast.intervals.quantile import quantile_key
+    from gridcast.provenance import git_sha
+
+    cfg = load_config()
+    smoke = until is not None
+    sha = git_sha()
+    if not smoke and (sha is None or sha.endswith("-dirty")):
+        typer.echo("refused: the full QR run must start from a clean commit (git status)")
+        raise typer.Exit(code=1)
+    engine = get_engine()
+    t0 = time.perf_counter()
+    run = run_backtest_qr(
+        engine,
+        cfg,
+        region,
+        until=nem_midnight_utc(until) if until is not None else None,
+        model_root=None if smoke else cfg.data_path(cfg.ml.model_dir),
+    )
+    short = {"residual": "res", "direct": "dir", "anchored": "anc", "latest": "lat"}
+    rows = []
+    for rec in run.result.fits:
+        fit_seconds = sum(q.score_seconds + q.refit_seconds for q in rec.quantiles)
+        rows.append(
+            [
+                rec.retrain,
+                rec.band,
+                rec.rows,
+                *(
+                    f"{short[q.chosen['target_form']]}/{q.chosen['num_leaves']} "
+                    f"{q.n_trees} {q.es_pinball:.1f}"
+                    for q in rec.quantiles
+                ),
+                100 * rec.crossing_share,
+                rec.point_refit_seconds + fit_seconds,
+            ]
+        )
+    keys = [quantile_key(t) for t in run.result.taus]
+    headers = ["retrain", "band", "rows", *keys, "crossed %", "fit s"]
+    typer.echo(
+        f"\n{RUN_NAME}: per (retrain, band) and quantile, the chosen form/leaves, trees and "
+        "early-stopping pinball loss (MW); point forecasts reproduced run 2 exactly"
+    )
+    typer.echo(tabulate(rows, headers=headers, floatfmt=".2f", tablefmt="github"))
+
+    levels = cfg.intervals.levels
+    if smoke:
+        m = smoke_metrics(run, cfg).set_index("metric")["value"]
+        label = "smoke run, every scorable pair (pre-scoring issue times)"
+    else:
+        metrics, summary = score_development(run, cfg)
+        m = metrics[metrics["horizon"] == 0].set_index("metric")["value"]
+        label = f"development from {summary['first_issue']}, {summary['scored_pairs']:,} pairs"
+    typer.echo(f"\nraw QR, pooled over leads ({label})")
+    table = [
+        [
+            *(100 * m[f"coverage_{lv}"] for lv in levels),
+            *(m[f"interval_score_{lv}"] for lv in levels),
+            m["wis"],
+            100 * m["crossing"],
+        ]
+    ]
+    headers = [*(f"cov{lv} %" for lv in levels), *(f"IS{lv}" for lv in levels), "WIS"]
+    typer.echo(tabulate(table, headers=[*headers, "crossed %"], floatfmt=".1f", tablefmt="github"))
+
+    if smoke:
+        est = cost_estimate(run)
+        typer.echo(
+            f"\nsmoke run (--until {until}): nothing stored. {est['smoke_hours']:.2f} h, of "
+            f"which fits {est['smoke_fit_hours']:.2f} h. Full development run "
+            f"({est['retrains']:.0f} retrains), estimated: {est['full_hours_by_rows']:.1f} h "
+            f"scaled by training rows, {est['full_hours_by_run2']:.1f} h scaled by run 2's "
+            "own fit-time growth"
+        )
+    else:
+        run_id = store_qr(engine, cfg, region, run, metrics, summary, sha)
+        typer.echo(f"\nstored QR batch {run.batch_id} (run {run_id})")
+    typer.echo(f"{time.perf_counter() - t0:.0f}s")
+
+
+@app.command("backtest-qr-holdout")
+def backtest_qr_holdout(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    check_only: Annotated[
+        bool, typer.Option("--check-only", help="Run the refusal checks only; fit nothing")
+    ] = False,
+) -> None:
+    """M3 step 6a: quantile LightGBM C over the holdout, stored UNSCORED (no metric computed)."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.evaluation.holdout import HoldoutRefused
+    from gridcast.intervals.freeze import freeze_state
+    from gridcast.intervals.qr_holdout import (
+        QrHoldoutRefused,
+        QrHoldoutReproductionFailed,
+        fit_headers,
+        fit_rows,
+        preflight,
+        run_qr_holdout,
+        store_qr_holdout,
+    )
+    from gridcast.intervals.quantile import ReproductionError
+    from gridcast.timeutils import NEM_TZ
+
+    cfg = load_config()
+    engine = get_engine()
+    state = freeze_state(cfg)
+    try:
+        inputs = preflight(engine, cfg, region, state)
+    except QrHoldoutRefused as exc:
+        typer.echo(f"REFUSED: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(
+        f"checks pass: QR recipe {state.qr_config_hash}, interval recipe {state.config_hash}, "
+        f"commit {state.sha}, frozen code unchanged since {state.frozen_commit}, no QR holdout "
+        f"batch yet. Development QR batch {inputs.dev_qr.batch_id}; holdout_main batch "
+        f"{inputs.holdout_point.batch_id}; retrains "
+        + ", ".join(r.tz_convert(NEM_TZ).strftime("%Y-%m-%d") for r in inputs.window.retrains)
+    )
+    if check_only:
+        return
+    t0 = time.perf_counter()
+    try:
+        run = run_qr_holdout(engine, cfg, region, inputs, cfg.data_path(cfg.ml.model_dir))
+    except (HoldoutRefused, QrHoldoutRefused, QrHoldoutReproductionFailed, ReproductionError) as e:
+        typer.echo(f"STOPPED: {e}", err=True)
+        raise typer.Exit(code=1) from e
+    run_id = store_qr_holdout(engine, cfg, region, run, state.sha)
+    typer.echo(
+        "\nper (retrain, band) and quantile: the chosen form/leaves, trees and early-stopping "
+        "pinball loss (MW, on the training slice before the retrain)"
+    )
+    typer.echo(
+        tabulate(
+            fit_rows(run.result.fits),
+            headers=fit_headers(run.result.taus),
+            floatfmt=".2f",
+            tablefmt="github",
+        )
+    )
+    rep = run.reproduction
+    typer.echo(
+        f"\nreproduction at {rep.retrain}: {rep.fits} fit records and {rep.pairs:,} quantile "
+        f"values of {rep.issue_times:,} development issue times equal step 2's batch "
+        f"{rep.reference_batch}; point forecasts equal run 2's and holdout_main's at every "
+        f"retrain ({run.run_config['point_reproduction']['pairs']:,} pairs)"
+    )
+    typer.echo(
+        f"stored QR holdout batch {run.batch_id} (run {run_id}): "
+        f"{run.run_config['n_origins']:,} issue times, of which "
+        f"{run.run_config['holdout_issue_times']:,} in the holdout. Nothing was scored; "
+        "`gridcast evaluate-holdout-intervals` scores it under the U5 lock"
+    )
+    typer.echo(f"took {(time.perf_counter() - t0) / 3600:.2f} h")
+
+
+@app.command("evaluate-holdout-intervals")
+def evaluate_holdout_intervals(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    check_only: Annotated[
+        bool, typer.Option("--check-only", help="Run the refusal checks only; build nothing")
+    ] = False,
+    workers: Annotated[int, typer.Option(help="Runs in parallel")] = 3,
+) -> None:
+    """M3 step 6b: the holdout intervals, scored ONCE (U5): reproduce development, then score."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.intervals.freeze import freeze_state
+    from gridcast.intervals.holdout import (
+        HoldoutIntervalsRefused,
+        HoldoutIntervalsReproductionFailed,
+        preflight,
+        run_holdout_intervals,
+        store_holdout_intervals,
+    )
+
+    cfg = load_config()
+    engine = get_engine()
+    state = freeze_state(cfg)
+    try:
+        inputs = preflight(engine, cfg, region, state)
+    except HoldoutIntervalsRefused as exc:
+        typer.echo(f"REFUSED: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(
+        f"checks pass: interval recipe {state.config_hash}, QR recipe {state.qr_config_hash}, "
+        f"commit {state.sha}, frozen code unchanged since {state.frozen_commit}, holdout "
+        "intervals not yet scored"
+    )
+    typer.echo(
+        f"  run 2 {cfg.intervals.source_batch}; holdout_main {inputs.holdout_point.batch_id}; "
+        f"QR {inputs.dev_qr.batch_id} + holdout QR {inputs.qr_holdout.batch_id}; development "
+        f"interval batches {sorted({r.batch_id for r in inputs.dev_runs.values()})} and "
+        f"{sorted({r.batch_id for r in inputs.dev_halfhour.values()})}"
+    )
+    if check_only:
+        return
+    t0 = time.perf_counter()
+    try:
+        run = run_holdout_intervals(engine, cfg, region, inputs, workers=workers)
+    except (HoldoutIntervalsRefused, HoldoutIntervalsReproductionFailed) as exc:
+        typer.echo(f"STOPPED: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    batch, run_ids = store_holdout_intervals(engine, cfg, region, run, state.sha)
+    rows = [
+        [r.run, r.batch_id, f"{r.issue_times:,}", r.selections, "exact" if r.passed else "DIFFERS"]
+        for r in run.reproductions
+    ]
+    typer.echo("\ndevelopment part of the continuous run against the stored development batches")
+    typer.echo(
+        tabulate(
+            rows,
+            headers=["run", "development batch", "issue times", "selections", "reproduction"],
+            tablefmt="github",
+        )
+    )
+    typer.echo(
+        f"step 6a's quantiles equal step 2's on {run.qr_overlap_issue_times:,} development "
+        "issue times"
+    )
+    typer.echo(
+        f"stored holdout interval batch {batch}: {len(run_ids)} runs, {len(run.times):,} "
+        f"holdout issue times ({run.times[0]} → {run.times[-1]}). Scores are in the database; "
+        "`gridcast report-m3-holdout` writes the report"
+    )
+    typer.echo(f"took {(time.perf_counter() - t0) / 60:.1f} min")
+
+
 @app.command("weather-ablation")
 def weather_ablation(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
     """Weather-feature drop/add test (m2_plan.md §2.5) on the stored ML run; ~30-40 min."""
@@ -563,6 +1004,36 @@ def report_holdout(region: Annotated[str, typer.Option(help="Region id")] = "VIC
     from gridcast.evaluation.holdout_report import write_report
 
     path = write_report(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
+@app.command("report-m3")
+def report_m3(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+    """Write reports/m3_intervals.md and figures from the stored interval batches (U1-U4)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.intervals.report import write_report as write_m3
+
+    path = write_m3(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
+@app.command("report-m3-aemo")
+def report_m3_aemo(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+    """Write reports/m3_aemo.md: our half-hour intervals against AEMO's POE band (dev part)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.intervals.aemo_report import write_report as write_m3_aemo
+
+    path = write_m3_aemo(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
+@app.command("report-m3-holdout")
+def report_m3_holdout(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+    """Write reports/m3_holdout.md from the stored holdout interval run (U5, replication, AEMO)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.intervals.holdout_report import write_report as write_m3_holdout
+
+    path = write_m3_holdout(get_engine(), load_config(), region)
     typer.echo(f"wrote {path}")
 
 
