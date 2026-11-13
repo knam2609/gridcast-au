@@ -82,7 +82,7 @@ from gridcast.intervals.evaluation import (
     success_criteria,
     week_blocks,
 )
-from gridcast.intervals.inputs import read_stored_batch, read_wide
+from gridcast.intervals.inputs import StoredBatch, read_stored_batch, read_wide
 from gridcast.intervals.quantile import interval_quantiles, quantile_key, quantile_levels
 from gridcast.intervals.scores import rearrange_bounds
 from gridcast.provenance import git_sha
@@ -167,7 +167,9 @@ class IntervalRun:
     config: dict[str, Any]
 
 
-def _interval_runs(engine: Engine, region_id: str) -> list[IntervalRun]:
+def _interval_runs(
+    engine: Engine, region_id: str, evaluation_set: str = EVALUATION_SET
+) -> list[IntervalRun]:
     with engine.connect() as conn:
         rows = conn.execute(
             text(
@@ -179,7 +181,7 @@ def _interval_runs(engine: Engine, region_id: str) -> list[IntervalRun]:
                 ORDER BY run_id
                 """
             ),
-            {"target": TARGET, "region": region_id, "set": EVALUATION_SET},
+            {"target": TARGET, "region": region_id, "set": evaluation_set},
         ).all()
     return [
         IntervalRun(
@@ -228,17 +230,17 @@ def find_runs(engine: Engine, cfg: AppConfig, region_id: str) -> dict[str, Inter
     return out
 
 
-def stored_metrics(engine: Engine, run_id: int) -> pd.DataFrame:
+def stored_metrics(engine: Engine, run_id: int, split: str = "dev") -> pd.DataFrame:
     with engine.connect() as conn:
         return pd.read_sql(
             text(
                 """
                 SELECT metric, horizon, value, n FROM forecast_metrics
-                WHERE run_id = :r AND split = 'dev' AND segment = 'all'
+                WHERE run_id = :r AND split = :s AND segment = 'all'
                 """
             ),
             conn,
-            params={"r": run_id},
+            params={"r": run_id, "s": split},
         )
 
 
@@ -295,15 +297,25 @@ def _month_labels(target_dates: np.ndarray) -> tuple[np.ndarray, list[tuple[int,
     return labels, [(y, m + 1) for y, m in months]
 
 
-def load_pairs(engine: Engine, cfg: AppConfig, region_id: str, times: pd.DatetimeIndex) -> Pairs:
-    """Run 2's actuals, mask and point forecasts on ``times`` plus every label and group."""
-    end = nem_midnight_utc(str(cfg.backtest.holdout_start))
-    source = read_stored_batch(
-        cfg.data_path(cfg.paths.backtest_dir), cfg.intervals.source_batch, TARGET
-    ).restrict(end=end)
+def load_pairs(
+    engine: Engine,
+    cfg: AppConfig,
+    region_id: str,
+    times: pd.DatetimeIndex,
+    source: StoredBatch | None = None,
+) -> Pairs:
+    """Stored actuals, mask and point forecasts on ``times`` plus every label and group.
+
+    ``source`` is the stored point batch scored (default: run 2's development batch).
+    """
+    if source is None:
+        end = nem_midnight_utc(str(cfg.backtest.holdout_start))
+        source = read_stored_batch(
+            cfg.data_path(cfg.paths.backtest_dir), cfg.intervals.source_batch, TARGET
+        ).restrict(end=end)
     rows = np.asarray(source.origin_times >= times[0])
     if not source.origin_times[rows].equals(times):
-        raise ValueError("the interval batches' issue times differ from run 2's")
+        raise ValueError("the interval batches' issue times differ from the point batch's")
     actual, mask = source.actual[rows], source.common_mask()[rows]
     points = {m: source.forecasts[m][rows] for m in sorted(set(POINT_OF.values()))}
     n_leads = actual.shape[1]
@@ -514,13 +526,23 @@ class Results:
 
 
 def score_all(
-    engine: Engine, cfg: AppConfig, region_id: str, runs: Mapping[str, IntervalRun]
+    engine: Engine,
+    cfg: AppConfig,
+    region_id: str,
+    runs: Mapping[str, IntervalRun],
+    split: str = "dev",
+    pairs: Pairs | None = None,
 ) -> Results:
+    """Score every method on ``pairs`` (default: run 2's, on the headline's issue times) and
+    check the pooled values against the metrics stored with ``split``."""
     levels = sorted(cfg.intervals.levels)
     data_root = cfg.data_root()
     first = data_root / runs[HEADLINE].directory / f"{HEADLINE}__lo{levels[0]}.parquet"
     times, _ = read_wide(first)
-    pairs = load_pairs(engine, cfg, region_id, times)
+    if pairs is None:
+        pairs = load_pairs(engine, cfg, region_id, times)
+    elif not pairs.times.equals(times):
+        raise ValueError("the pairs' issue times differ from the headline's")
     agg = Aggregator(pairs.mask, pairs.day_code, pairs.labels, pairs.groups)
     stats: dict[str, dict[str, StatSums]] = {}
     checked: dict[str, int] = {}
@@ -530,7 +552,7 @@ def score_all(
         point = pairs.points[POINT_OF[method]]
         stats[method] = score_method(agg, lower, upper, pairs, point)
         checked[method] = check_against_stored(
-            method, stats[method], agg.counts, stored_metrics(engine, run.run_id)
+            method, stats[method], agg.counts, stored_metrics(engine, run.run_id, split)
         )
         if method == HEADLINE:
             lo_r, hi_r = rearrange_bounds(lower, upper)
@@ -642,7 +664,9 @@ def _new_figure(right: float = 0.78) -> tuple[Figure, Axes]:
     return fig, ax
 
 
-def plot_coverage_by_lead(res: Results, path: Path) -> None:
+def plot_coverage_by_lead(
+    res: Results, path: Path, period: str = "development, Aug 2023 → Sep 2025"
+) -> None:
     order = [*BASELINES, RAW_QR, CONFORMAL_C, HEADLINE]  # headline drawn last, on top
     series = {m: 100 * res.per_lead(m, "cov_80") for m in order}
     hours = _hours(len(series[HEADLINE]))
@@ -681,7 +705,7 @@ def plot_coverage_by_lead(res: Results, path: Path) -> None:
         ax,
         "Forecast lead time (hours after issue time)",
         "Share of actuals inside (%)",
-        "80% intervals: coverage by lead time (development, Aug 2023 → Sep 2025)",
+        f"80% intervals: coverage by lead time ({period})",
     )
     _legend(ax, len(order))
     _save(fig, path)
@@ -1296,10 +1320,19 @@ def _band_text(band: str) -> str:
     return f"{horizon_label(lo)}–{horizon_label(hi)}"
 
 
-def crossing_facts(engine: Engine, run: IntervalRun) -> list[str]:
-    stored = stored_metrics(engine, run.run_id)
+def crossing_facts(
+    engine: Engine,
+    run: IntervalRun,
+    split: str = "dev",
+    config: Mapping[str, Any] | None = None,
+    forecast_from: str = "2022-11-01",
+) -> list[str]:
+    """Raw QR's crossing shares: scored pairs (stored metric of ``split``) and every (retrain,
+    band) from the QR batch's fit records (``config``, default the run's own)."""
+    config = config if config is not None else run.config
+    stored = stored_metrics(engine, run.run_id, split)
     cross = stored.loc[stored["metric"] == "crossing"].set_index("horizon")["value"]
-    fits = run.config["fits"]
+    fits = config["fits"]
     by_band: dict[str, list[float]] = {}
     for f in fits:
         by_band.setdefault(f["band"], []).append(float(f["crossing_share"]))
@@ -1309,8 +1342,8 @@ def crossing_facts(engine: Engine, run: IntervalRun) -> list[str]:
     ]
     return [
         f"Quantile pairs that crossed before sorting: {100 * float(cross.loc[0]):.1f}% of scored "
-        f"pairs ({100 * float(run.config['crossing_share_all_pairs']):.1f}% of all pairs "
-        "forecast from 2022-11-01).",
+        f"pairs ({100 * float(config['crossing_share_all_pairs']):.1f}% of all pairs "
+        f"forecast from {forecast_from}).",
         "Per (retrain, band), the range of the crossing share over the retrains: "
         + "; ".join(parts)
         + ".",

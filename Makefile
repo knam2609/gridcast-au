@@ -6,7 +6,7 @@ REGIONS ?= VIC1
 DAYS ?= 2026-10-01
 CHECK_MONTH ?= 2026-09
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -110,6 +110,9 @@ report-m3: ## Generate reports/m3_intervals.md from the stored interval batches 
 
 report-m3-aemo: ## Generate reports/m3_aemo.md: frozen half-hour intervals vs AEMO's POE band (development part)
 	$(UV) run gridcast report-m3-aemo --region $(firstword $(REGIONS))
+
+report-m3-holdout: ## Generate reports/m3_holdout.md from the stored holdout interval run (U5, replication, winter, AEMO holdout part)
+	$(UV) run gridcast report-m3-holdout --region $(firstword $(REGIONS))
 
 report-holdout: ## Generate reports/m2_holdout.md from the stored holdout run (S5, replication, AEMO holdout part)
 	$(UV) run gridcast report-holdout --region $(firstword $(REGIONS))

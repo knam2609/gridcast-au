@@ -176,11 +176,12 @@ def check_against_stored(
     bounds: dict[str, tuple[np.ndarray, np.ndarray]],
     actual: np.ndarray,
     mask: np.ndarray,
+    split: str = "dev",
 ) -> list[str]:
     """Recompute each run's pooled 80% statistics over its whole period; they must match."""
     checked = []
     for name, run in runs.items():
-        stored = stored_metrics(engine, run.run_id)
+        stored = stored_metrics(engine, run.run_id, split)
         pooled_stored = stored[stored["horizon"] == 0].set_index("metric")["value"]
         stats = pair_stats(*bounds[name], actual)
         for stat, values in stats.items():
@@ -249,21 +250,36 @@ def _read_level(
     return read_wide(data_root / run.directory / f"{run.name}__{side}{LEVEL}.parquet")
 
 
-def load_comparison(engine: Engine, cfg: AppConfig, region_id: str) -> Comparison:
-    """Our stored half-hour intervals and AEMO's bands, lined up on the development window."""
-    first, end = window(cfg, "development")
-    runs = find_halfhour_runs(engine, cfg, region_id)
+def load_comparison(
+    engine: Engine,
+    cfg: AppConfig,
+    region_id: str,
+    holdout_runs: dict[str, IntervalRun] | None = None,
+) -> Comparison:
+    """Our stored half-hour intervals and AEMO's bands, lined up on the development window,
+    or, given the stored holdout half-hour runs (step 6), on the holdout window."""
+    period = "development" if holdout_runs is None else "holdout"
+    first, end = window(cfg, period)
+    runs = holdout_runs if holdout_runs is not None else find_halfhour_runs(engine, cfg, region_id)
     data_root = cfg.data_root()
     directory = data_root / runs[HEADLINE].directory
     times_all, y_all = read_wide(directory / "actual.parquet")
 
-    # Our scored periods over the batch's whole period, from run 2's common mask.
-    holdout = nem_midnight_utc(str(cfg.backtest.holdout_start))
-    source = read_stored_batch(
-        cfg.data_path(cfg.paths.backtest_dir), cfg.intervals.source_batch, TARGET
-    ).restrict(start=times_all[0], end=holdout)
+    # Our scored periods over the batch's whole period, from the point batch's common mask:
+    # run 2's in development, holdout_main's in the holdout.
+    if holdout_runs is None:
+        batch, stop, split = (
+            cfg.intervals.source_batch,
+            nem_midnight_utc(str(cfg.backtest.holdout_start)),
+            "dev",
+        )
+    else:
+        batch, stop, split = str(runs[HEADLINE].config["holdout_point_batch"]), end, "holdout"
+    source = read_stored_batch(cfg.data_path(cfg.paths.backtest_dir), batch, TARGET).restrict(
+        start=times_all[0], end=stop
+    )
     if not source.origin_times.equals(times_all):
-        raise ValueError("the half-hour batch's issue times differ from run 2's")
+        raise ValueError("the half-hour batch's issue times differ from its point batch's")
     mask_all = period_mask(source.common_mask())
     bounds_all: dict[str, tuple[np.ndarray, np.ndarray]] = {}
     for name, run in runs.items():
@@ -272,7 +288,7 @@ def load_comparison(engine: Engine, cfg: AppConfig, region_id: str) -> Compariso
         if not (t_lo.equals(times_all) and t_hi.equals(times_all)):
             raise ValueError(f"{name}: issue times differ from the batch's actuals")
         bounds_all[name] = (lo, hi)
-    checked = check_against_stored(engine, runs, bounds_all, y_all, mask_all)
+    checked = check_against_stored(engine, runs, bounds_all, y_all, mask_all, split)
 
     keep = np.asarray((times_all >= first) & (times_all < end))
     issue_times = times_all[keep]

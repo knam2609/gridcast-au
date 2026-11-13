@@ -1027,6 +1027,16 @@ def report_m3_aemo(region: Annotated[str, typer.Option(help="Region id")] = "VIC
     typer.echo(f"wrote {path}")
 
 
+@app.command("report-m3-holdout")
+def report_m3_holdout(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+    """Write reports/m3_holdout.md from the stored holdout interval run (U5, replication, AEMO)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.intervals.holdout_report import write_report as write_m3_holdout
+
+    path = write_m3_holdout(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
 @app.command("feature-catalogue")
 def feature_catalogue() -> None:
     """Write docs/feature_catalogue.md from the feature catalogue in code (no database)."""

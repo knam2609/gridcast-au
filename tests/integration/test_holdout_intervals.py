@@ -19,7 +19,14 @@ import pytest
 from sqlalchemy import Engine, text
 
 from gridcast.config import AppConfig, load_config
-from gridcast.database.load import ensure_regions, start_ingestion_run, upsert_market_intervals
+from gridcast.database.load import (
+    ensure_regions,
+    start_ingestion_run,
+    upsert_aemo_forecasts,
+    upsert_aemo_poe,
+    upsert_market_intervals,
+)
+from gridcast.evaluation.m2_report import LeakageOutcome
 from gridcast.features.calendar import build_calendar_days, upsert_calendar_days
 from gridcast.features.inputs import load_context
 from gridcast.forecasting.ml_backtest import ml_config_hash
@@ -38,6 +45,8 @@ from gridcast.intervals.holdout import (
     run_holdout_intervals,
     store_holdout_intervals,
 )
+from gridcast.intervals.holdout_report import FIGURES as HOLDOUT_FIGURES
+from gridcast.intervals.holdout_report import build_report as build_holdout_report
 from gridcast.intervals.inputs import read_wide
 from gridcast.intervals.qr_batch import RUN_NAME as QR_RUN_NAME
 from gridcast.intervals.qr_batch import qr_config_hash
@@ -186,8 +195,24 @@ def _store_qr_holdout(db: Engine, cfg: AppConfig, holdout: str) -> str:
         "evaluation_set": QR_HOLDOUT_SET,
         "complete_window": True,
         "scored": False,
-        "qr_reproduction": {"passed": True},
-        "point_reproduction": {"passed": True},
+        "qr_reproduction": {
+            "passed": True,
+            "retrain": "2022-01-01",
+            "reference_batch": cfg.intervals.qr_batch,
+            "issue_times": 9 * 48,
+            "pairs": 9 * 48 * point.shape[1] * len(keys),
+            "fits": len(cfg.ml.lead_bands),
+        },
+        "point_reproduction": {"passed": True, "pairs": int(np.isfinite(point).sum())},
+        "retrains": ["2022-01-01", "2022-02-01"],
+        "forecast_first_issue": str(first),
+        "seconds": 3600.0,
+        "crossing_share_all_pairs": 0.0,
+        "fits": [
+            {"retrain": r, "band": f"h{lo:03d}-{hi:03d}", "crossing_share": 0.0}
+            for r in ("2022-01-01", "2022-02-01")
+            for lo, hi in cfg.ml.lead_bands
+        ],
         "development_qr_batch": cfg.intervals.qr_batch,
         "source_batch": cfg.intervals.source_batch,
         "holdout_point_batch": holdout,
@@ -362,3 +387,92 @@ def test_a_changed_qr_overlap_stops_the_run(hworld: Engine, hstored: AppConfig) 
     with pytest.raises(HoldoutIntervalsReproductionFailed, match="q100 quantiles"):
         run_holdout_intervals(hworld, cfg, "VIC1", inputs, workers=2)
     assert _holdout_runs(hworld) == 0
+
+
+# --------------------------------------------------------------------------- the report (6c)
+
+AEMO_FIRST = dt.date(2021, 12, 15)
+
+
+def _actual_30(cfg: AppConfig, directories: list[Path]) -> pd.Series:
+    """Actual 30-minute means by period end, from half-hour batches' actuals."""
+    parts = []
+    for d in directories:
+        times, y = read_wide(d / "actual.parquet")
+        naive = times.tz_localize(None).to_numpy()
+        ends = naive[:, None] + (np.arange(1, y.shape[1] + 1) * 30).astype("timedelta64[m]")
+        parts.append(pd.Series(y.ravel(), index=pd.DatetimeIndex(ends.ravel(), tz="UTC")))
+    s = pd.concat(parts)
+    return s[~s.index.duplicated()].dropna()
+
+
+def _store_aemo(db: Engine, cfg: AppConfig, actual: pd.Series) -> None:
+    """PDPASA bands and pre-dispatch runs every 30 min from a day before AEMO_FIRST to HEND."""
+    rng = np.random.default_rng(3)
+    runs = pd.date_range(
+        nem_midnight_utc(str(AEMO_FIRST)) - pd.Timedelta(days=1),
+        nem_midnight_utc(str(HEND)),
+        freq="30min",
+        inclusive="left",
+    )
+    k = np.arange(1, 51)
+    run_time = np.repeat(runs, len(k))
+    target = run_time + pd.to_timedelta(np.tile(k, len(runs)) * 30, unit="min")
+    y = actual.reindex(target).fillna(5000.0).to_numpy()
+    mid = y + 40 + rng.normal(0, 120, len(y))
+    half = 120 + 2 * np.tile(k, len(runs))
+    poe = pd.DataFrame(
+        {
+            "region_id": "VIC1",
+            "run_time": run_time,
+            "target_end": target,
+            "available_at": run_time + pd.Timedelta(minutes=5),
+            "demand10_mw": mid + half,
+            "demand50_mw": mid,
+            "demand90_mw": mid - half,
+        }
+    )
+    pre = pd.DataFrame(
+        {
+            "source": "predispatch",
+            "region_id": "VIC1",
+            "run_time": run_time,
+            "target_end": target,
+            "resolution_minutes": 30,
+            "available_at": run_time + pd.Timedelta(minutes=2),
+            "total_demand_mw": mid - 40,
+        }
+    )
+    with db.begin() as conn:
+        run = start_ingestion_run(conn, "mmsdm", "aemo_pdpasa", AEMO_FIRST.replace(day=1))
+        upsert_aemo_poe(conn, poe, run)
+        upsert_aemo_forecasts(conn, pre, run)
+
+
+def test_holdout_report(hworld: Engine, hstored: AppConfig) -> None:
+    cfg = hstored
+    inputs = preflight(hworld, cfg, "VIC1", freeze_of(cfg))
+    run = run_holdout_intervals(hworld, cfg, "VIC1", inputs, workers=2)
+    batch, _ = store_holdout_intervals(hworld, cfg, "VIC1", run, SHA)
+    dev_30 = cfg.data_root() / inputs.dev_halfhour["cqr30_lgbm_C"].directory
+    hold_30 = cfg.data_path(cfg.intervals.output_dir) / str(batch) / "30min"
+    _store_aemo(hworld, cfg, _actual_30(cfg, [dev_30, hold_30]))
+    cfg.aemo = cfg.aemo.model_copy(update={"first_issue": AEMO_FIRST})
+
+    winter = ((2022, 1), (2022, 2))
+    report = build_holdout_report(hworld, cfg, "VIC1", LeakageOutcome(3, 0, 0), winter)
+    assert "| U5 |" in report and "**PASS**" in report
+    assert "U5 passes" in report
+    assert report.count("**holds**") + report.count("**does not hold**") == 4
+    assert report.count("| exact |") == 10  # every development run reproduced
+    assert "(all equal)" in report  # every pooled number matched the stored holdout metric
+    assert "## Winter, Jan 2022, Feb 2022 (pre-registered)" in report
+    assert "Settings selected at the 2022-01-01 retrain" in report
+    assert "## Development vs holdout" in report and " → " in report
+    assert "## AEMO's POE band, holdout part" in report
+    assert "| **Holdout** |" in report and "| Development |" in report
+    figures = cfg.resolve(cfg.paths.reports_dir) / "figures"
+    for name in HOLDOUT_FIGURES.values():
+        assert (figures / name).stat().st_size > 0
+    # The development report's figures are not overwritten.
+    assert not (figures / "m3_coverage_by_lead.png").exists()

@@ -31,7 +31,10 @@ def test_frozen_interval_code_is_unchanged() -> None:
 # Modules that do not build bounds: reporting (the AEMO comparison included, written after the
 # freeze), and the freeze check itself. The holdout stages (step 6, written after the freeze)
 # only call the frozen code, and must reproduce the stored development outputs exactly first.
-UNFROZEN = {"__init__", "evaluation", "report", "aemo_report", "freeze", "qr_holdout", "holdout"}
+UNFROZEN = {
+    *("__init__", "evaluation", "report", "aemo_report", "freeze"),
+    *("qr_holdout", "holdout", "holdout_report"),
+}
 
 
 def test_every_intervals_module_is_frozen_or_deliberately_not() -> None:
