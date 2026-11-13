@@ -384,7 +384,9 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
     - The 2025-08-01 retrain reproduced step 2 exactly: 4 fit records and 5,059,584 quantile values of 2,928 development issue times.
     - The point refits equalled run 2's and `holdout_main`'s forecasts at all 5 retrains (5,889,024 pairs).
     - It stored QR holdout batch **`b226706b-0bed-476c-b4fc-6c283786a8cc`** (run 92) unscored: 209 MB of quantiles and 219 MB of models. The worktree was removed.
-    - Several 2026-08-01 fits used the full 5,000-round cap, and the crossing share before sorting rose to 37–48% in the longer bands at the last two retrains. Both are facts about the forecasts, recorded before scoring.
+    - Facts about the forecasts, recorded before scoring:
+      - At the 2026-08-01 retrain, four quantile fits early-stopped at or within 7 rounds of the 5,000-round cap (4,993, 4,993, 4,998 and 5,000 trees) (`ml.lightgbm.max_rounds`).
+      - The crossing share before sorting was 38–48% in the two longest bands at the last two retrains, against 17–32% at the first three.
   - **6b, the one look:** `evaluate-holdout-intervals` ran from `074e900` in 14.9 min (log `<data root>/logs/m3/evaluate-holdout-intervals-20261113.log`).
     - All 10 development interval runs reproduced exactly: 38,016 issue times and 108 selections each. Step 6a's quantiles equalled step 2's on the overlap.
     - It stored holdout batch **`2744fd09-4e6d-41c5-9579-a13c8fe9a5b0`** (runs 93–103).
