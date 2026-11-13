@@ -2,6 +2,22 @@
 
 Read this, then [`m3_plan.md`](m3_plan.md). For the M2 history, see [`m2_handoff.md`](m2_handoff.md) and [`m2_plan.md`](m2_plan.md).
 
+> **Update, 2026-11-13 (thirteenth session, evening: step 6 done, M3 complete):**
+> - **6a:** QR holdout batch `b226706b-0bed-476c-b4fc-6c283786a8cc` (run 92), 6.7 h, first retrain reproduced exactly, stored unscored. The worktree was removed.
+> - **6b, the one look:** `evaluate-holdout-intervals` from `074e900`, 14.9 min. All 10 development interval runs reproduced exactly. It stored holdout batch `2744fd09-4e6d-41c5-9579-a13c8fe9a5b0` (runs 93–103), so the command now refuses (U5 lock).
+> - **6c:** [`reports/m3_holdout.md`](../../reports/m3_holdout.md) (`7607853`). **U5 passes and U1–U4 hold:** coverage 79.69%, every lead 79.24–80.51%, IS80 below the envelope at 265/265 leads.
+>   - Reported only: winter coverage 79.1%; hot days 73.1%.
+>   - AEMO's band covers 69.2% but still scores better (CQR +327.1 MW), except up to 2 h.
+> - **README** rewritten (`aca5b66`). Every number comes from the three M3 reports.
+> - Nothing is pushed. The branch `m3-prediction-intervals` is ready for a PR into `main` when the user asks.
+>
+> **Next:** M3 is complete. Possible follow-ups, none pre-registered:
+> - AEMO's centre with calibrated widths;
+> - a hot-day treatment;
+> - sorted (nested) intervals for the M5 API;
+> - C⁺.
+> - Then M4 (anomaly detection). Run a question round first.
+>
 > **Update, 2026-11-13 (thirteenth session, later: step 6 planned and coded; the QR holdout run started):**
 > - **Question round (user chose every recommendation; `m3_plan.md` step 6, committed `5770f22` before any code):**
 >   - one continuous run of the frozen recipe across the boundary;

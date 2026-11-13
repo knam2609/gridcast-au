@@ -2,7 +2,7 @@
 
 **Goal:** give the M2 demand forecast honest uncertainty: prediction intervals whose coverage matches their stated level overall, at every lead time and during extreme events, that are sharper than intervals built around the baselines, and that are compared with AEMO's own probabilistic demand forecasts where that comparison is valid.
 
-**Status:** planned 2026-11-10 after a question round with the user. Step 0 done (2026-11-10, [`docs/m3_data_spike.md`](../m3_data_spike.md)): AEMO's POE forecasts are usable, with a disclosed caveat. Step 1's pre-scoring spike done (2026-11-10, [`docs/m3_prescoring_spike.md`](../m3_prescoring_spike.md)): the candidate grid and the cold threshold are fixed below, before any scored interval existed. Steps 2–3 done (2026-11-11: QR and CQR development batches). Step 4 done (2026-11-12, [`reports/m3_intervals.md`](../../reports/m3_intervals.md)): **U1–U4 pass** on the development period. Step 5 done (2026-11-13): the interval recipe is frozen (`bc5337e`), and the AEMO comparison is in [`reports/m3_aemo.md`](../../reports/m3_aemo.md). Step 6's question round done (2026-11-13): the design of the single holdout run and the holdout report's contents are fixed in step 6 below. Branch `m3-prediction-intervals`, from `main` at `a1b26bb` (M1 and M2 merged). The success criteria in §3 were agreed before any interval result existed.
+**Status:** planned 2026-11-10 after a question round with the user. Step 0 done (2026-11-10, [`docs/m3_data_spike.md`](../m3_data_spike.md)): AEMO's POE forecasts are usable, with a disclosed caveat. Step 1's pre-scoring spike done (2026-11-10, [`docs/m3_prescoring_spike.md`](../m3_prescoring_spike.md)): the candidate grid and the cold threshold are fixed below, before any scored interval existed. Steps 2–3 done (2026-11-11: QR and CQR development batches). Step 4 done (2026-11-12, [`reports/m3_intervals.md`](../../reports/m3_intervals.md)): **U1–U4 pass** on the development period. Step 5 done (2026-11-13): the interval recipe is frozen (`bc5337e`), and the AEMO comparison is in [`reports/m3_aemo.md`](../../reports/m3_aemo.md). Step 6 done (2026-11-13): the holdout was scored once ([`reports/m3_holdout.md`](../../reports/m3_holdout.md)); **U5 passes and U1–U4 hold on the holdout**. M3 is complete. Branch `m3-prediction-intervals`, from `main` at `a1b26bb` (M1 and M2 merged). The success criteria in §3 were agreed before any interval result existed.
 
 ## 1. Decisions (agreed 2026-11-10)
 
@@ -379,6 +379,26 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
     - `report.py` and `aemo_report.py` now take the evaluation set, split, pairs and holdout runs as parameters. Regenerating both development reports from the changed code gave identical numbers and byte-identical figures. Only the leakage-test count changed (7 → 11, from step 5a's half-hour tests), and the generated date and commit lines.
     - The *retrain whose quarter holds June* is derived: the latest selection retrain on or before 1 June 2026, which is 2026-05-01.
   - Both CLIs refuse a dirty tree. On the real database, `evaluate-holdout-intervals --check-only` refused only because step 6a's batch did not exist yet.
+- *Outcome (2026-11-13):*
+  - **6a run:** `backtest-qr-holdout` ran from a worktree at `3cc2528` in 6.7 h (log `<data root>/logs/m3/backtest-qr-holdout-20261113-1201.log`).
+    - The 2025-08-01 retrain reproduced step 2 exactly: 4 fit records and 5,059,584 quantile values of 2,928 development issue times.
+    - The point refits equalled run 2's and `holdout_main`'s forecasts at all 5 retrains (5,889,024 pairs).
+    - It stored QR holdout batch **`b226706b-0bed-476c-b4fc-6c283786a8cc`** (run 92) unscored: 209 MB of quantiles and 219 MB of models. The worktree was removed.
+    - Several 2026-08-01 fits used the full 5,000-round cap, and the crossing share before sorting rose to 37–48% in the longer bands at the last two retrains. Both are facts about the forecasts, recorded before scoring.
+  - **6b, the one look:** `evaluate-holdout-intervals` ran from `074e900` in 14.9 min (log `<data root>/logs/m3/evaluate-holdout-intervals-20261113.log`).
+    - All 10 development interval runs reproduced exactly: 38,016 issue times and 108 selections each. Step 6a's quantiles equalled step 2's on the overlap.
+    - It stored holdout batch **`2744fd09-4e6d-41c5-9579-a13c8fe9a5b0`** (runs 93–103).
+  - **6c:** `make report-m3-holdout` ran from `074e900` (about 1 min) and wrote [`reports/m3_holdout.md`](../../reports/m3_holdout.md) and six figures (`7607853`). **U5 passes, and U1–U4 hold on the holdout:**
+    - U1: 79.69% (95% CI 78.17–81.08%).
+    - U2: 288 of 288 leads, 79.24–80.51%.
+    - U3: 265 of 265 leads; pooled 1,365.2 vs 2,335.6 MW.
+    - U4: 11 tests passed.
+  - Reported only:
+    - CQR beats conformal-around-C on IS80 by 25.1 MW (CI 5.3–45.1), but not on WIS (+0.1, −1.2 to +1.4).
+    - Winter (Jun–Aug 2026): 79.1% (76.1–81.9%), misses 11.2% below and 9.7% above.
+    - Hot days (forecast ≥ 35 °C): 73.1%, missing above on 22.1%.
+    - Against AEMO's band, which covers 69.2%: CQR's IS80 is +327.1 MW (+270.0 to +386.8). CQR is better only up to 2 h.
+  - **README** rewritten from the three M3 reports (`aca5b66`).
 
 ## 5. New dependencies and compute
 
