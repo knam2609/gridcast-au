@@ -2,7 +2,7 @@
 
 **Goal:** give the M2 demand forecast honest uncertainty: prediction intervals whose coverage matches their stated level overall, at every lead time and during extreme events, that are sharper than intervals built around the baselines, and that are compared with AEMO's own probabilistic demand forecasts where that comparison is valid.
 
-**Status:** planned 2026-11-10 after a question round with the user. Step 0 done (2026-11-10, [`docs/m3_data_spike.md`](../m3_data_spike.md)): AEMO's POE forecasts are usable, with a disclosed caveat. Step 1's pre-scoring spike done (2026-11-10, [`docs/m3_prescoring_spike.md`](../m3_prescoring_spike.md)): the candidate grid and the cold threshold are fixed below, before any scored interval existed. Steps 2–3 done (2026-11-11: QR and CQR development batches). Step 4 done (2026-11-12, [`reports/m3_intervals.md`](../../reports/m3_intervals.md)): **U1–U4 pass** on the development period. Branch `m3-prediction-intervals`, from `main` at `a1b26bb` (M1 and M2 merged). The success criteria in §3 were agreed before any interval result existed.
+**Status:** planned 2026-11-10 after a question round with the user. Step 0 done (2026-11-10, [`docs/m3_data_spike.md`](../m3_data_spike.md)): AEMO's POE forecasts are usable, with a disclosed caveat. Step 1's pre-scoring spike done (2026-11-10, [`docs/m3_prescoring_spike.md`](../m3_prescoring_spike.md)): the candidate grid and the cold threshold are fixed below, before any scored interval existed. Steps 2–3 done (2026-11-11: QR and CQR development batches). Step 4 done (2026-11-12, [`reports/m3_intervals.md`](../../reports/m3_intervals.md)): **U1–U4 pass** on the development period. Step 5 done (2026-11-13): the interval recipe is frozen (`bc5337e`), and the AEMO comparison is in [`reports/m3_aemo.md`](../../reports/m3_aemo.md). Branch `m3-prediction-intervals`, from `main` at `a1b26bb` (M1 and M2 merged). The success criteria in §3 were agreed before any interval result existed.
 
 ## 1. Decisions (agreed 2026-11-10)
 
@@ -305,6 +305,19 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
 
   - **Reproduction check**, run from a worktree at `bc5337e` (458 s; log `<data root>/logs/m3/intervals-freeze-check-20261113.log`): the step-1 conformal batch (4 runs) and the step-3 CQR batch, 38,016 issue times each, **reproduced exactly**, bounds and selections.
   - **5b, the freeze:** `intervals.frozen_config_hash` = `d34273400899af69`, `intervals.frozen_qr_config_hash` = `8767a8948966637c`, `intervals.frozen_commit` = `bc5337e` (`configs/base.yaml`, excluded from the hash). Unit tests pin both hashes and check that no frozen path has changed since `bc5337e`. Only after this commit is `PDPASA_REGIONSOLUTION` downloaded.
+- *Outcome (2026-11-13, steps 5c and 5d):*
+  - **5c, `526f048`:** migration 0006 (`aemo_demand_poe`), [`src/gridcast/ingestion/aemo_poe.py`](../../src/gridcast/ingestion/aemo_poe.py) (`gridcast ingest-aemo-poe`) and [`src/gridcast/intervals/aemo_report.py`](../../src/gridcast/intervals/aemo_report.py) (`gridcast report-m3-aemo`).
+    - Both were written after the freeze and before the data were loaded, and neither is frozen.
+    - The report refuses to run without the freeze record, or on runs from another recipe or commit. It stops unless every pooled 80% statistic recomputed from the stored bounds equals the stored metric.
+  - **Load:** Sep 2024 → Sep 2026 (25 months, table version 7 throughout, `LOR` runs only) in under 2 minutes; 1.1 GB cached under `<data root>/raw/mmsdm/PDPASA_REGIONSOLUTION/`. Log: `<data root>/logs/m3/ingest-aemo-poe-20261113.log`.
+  - **5d:** `make report-m3-aemo` ran from `526f048` and wrote [`reports/m3_aemo.md`](../../reports/m3_aemo.md) and two figures.
+    - The window has 17,519 of 17,520 runs and 785,067 compared pairs on 365 days.
+    - Reported only:
+      - **Coverage:** AEMO's band (matched) contains 70.9% of actual demand, CQR's 80% interval 80.2%.
+      - **Width:** CQR's interval is wider (961.0 against 433.3 MW).
+      - **IS80:** CQR's is higher (1,321.5 against 925.7 MW, +395.8 MW, 95% CI +348.8 to +444.4 with day blocks). CQR scores better only at the first 4 of 48 half-hour leads, up to 2 h.
+    - This matches M2's finding that AEMO's pre-dispatch centre is far more accurate beyond 1 h. The re-centred band and the strict alignment do not change the picture.
+    - `DEMAND50` averages +46.4 MW above the matched pre-dispatch `TOTALDEMAND`; the band is symmetric on every row.
 
 **Step 6. Holdout, scored once.**
 - `gridcast evaluate-holdout-intervals` refuses to start unless:
