@@ -2,6 +2,21 @@
 
 Read this, then [`m3_plan.md`](m3_plan.md). For the M2 history, see [`m2_handoff.md`](m2_handoff.md) and [`m2_plan.md`](m2_plan.md).
 
+> **Update, 2026-11-13 (thirteenth session, later: step 6 planned and coded; the QR holdout run started):**
+> - **Question round (user chose every recommendation; `m3_plan.md` step 6, committed `5770f22` before any code):**
+>   - one continuous run of the frozen recipe across the boundary;
+>   - exact reproduction of QR and of every development interval batch before scoring;
+>   - two stages: 6a stores the QR holdout quantiles unscored, 6b scores everything under one lock;
+>   - the holdout report's contents fixed, with a pre-registered winter section (Jun–Aug 2026).
+> - **Code:** `3cc2528` (6a, `gridcast backtest-qr-holdout`), `d19778d` (6b, `gridcast evaluate-holdout-intervals`), `89b8165` (6c, `gridcast report-m3-holdout`). Tests pass (unit, and the integration files for 6a–6c and the step-4/5 reports).
+> - **Running:** `backtest-qr-holdout` from a worktree `../gridcast-au-qrh` at `3cc2528`, started 12:01 AEDT; log `<data root>/logs/m3/backtest-qr-holdout-20261113-1201.log`. Projected 5–7 h (5 retrains; the first is checked against step 2 before the others are fitted).
+>
+> **Next:**
+> 1. When the QR run ends, check its log: reproduction exact and a stored batch. Then remove the worktree.
+> 2. From a clean checkout: `make evaluate-holdout-intervals` (about 15 min; this is **the one look**, U5).
+> 3. Then `make report-m3-holdout`, commit the report, and rewrite the README from it.
+> - If the QR run stops on a reproduction mismatch, nothing is stored. Investigate before any rerun, and tell the user.
+>
 > **Update, 2026-11-13 (thirteenth session, step 5: half-hour intervals, the freeze, the AEMO comparison):**
 > - **Question round (user chose every recommendation; `m3_plan.md` step 5):** build the 30-minute recalibration first, then freeze both resolutions, then load PDPASA; freeze the rearranged row; CQR, conformal-around-C and the best baseline against AEMO; M2's report layout.
 > - **`bc5337e` (5a):** `gridcast intervals-halfhour` and `gridcast intervals-freeze-check`. Half-hour batch **`27aa78d6-8ab8-4509-aa40-d8b08cda68ea`** (runs 87–91; CQR 80% coverage 79.4%, reported only). The freeze check rebuilt the step-1 and step-3 batches exactly from `bc5337e`.

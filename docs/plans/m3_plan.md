@@ -366,6 +366,19 @@ These apply to the **headline CQR (LightGBM C) at 80%, demand, on the interval d
 - *Details settled without a question:*
   - *Best baseline:* the same rule as step 4, the conformal baseline with the lowest pooled IS80, applied to the holdout. That gives the baselines their strongest showing.
   - *Order:* 6a's code is committed and its run started first. The scoring and report code (6b, 6c) is written and committed while it runs, before any holdout interval is scored. The QR quantiles on disk are not scored outside 6b.
+- *Implementation (2026-11-13, before any holdout interval was scored):*
+  - **6a, `3cc2528`:** [`src/gridcast/intervals/qr_holdout.py`](../../src/gridcast/intervals/qr_holdout.py), `gridcast backtest-qr-holdout`.
+    - It fits the first retrain alone and checks it against step 2's batch before the other four retrains: the fit records (rows, every candidate's pinball loss and tree count, the selection) and the rearranged quantiles of Aug–Sep 2025. Then it fits the other four.
+    - It stores the quantiles and per-pair crossing flags with a `model_runs` row (`intervals_holdout_qr`, `scored: false`) and no `forecast_metrics`.
+    - Tests: `tests/integration/test_qr_holdout.py`, which builds M2's development and holdout runs and step 2's batch on synthetic data. Its control changes one stored development quantile, and the run must stop before the second retrain.
+  - **6b, `d19778d`:** [`src/gridcast/intervals/holdout.py`](../../src/gridcast/intervals/holdout.py), `gridcast evaluate-holdout-intervals`, the U5 lock.
+    - The workers mirror `conformal_for`, `cqr_for` and `period_run` on the joined inputs and call the frozen functions unchanged.
+    - The reproduction compares every development result's bounds and its selections at the development retrains. Holdout metrics are stored with split `holdout`, the bounds under `<batch>/5min/` and `<batch>/30min/`.
+    - Tests: `tests/integration/test_holdout_intervals.py`, with development batches built by the real commands. Its controls change one stored development bound or one overlapping QR quantile, and nothing may be stored.
+  - **6c, `89b8165`:** [`src/gridcast/intervals/holdout_report.py`](../../src/gridcast/intervals/holdout_report.py), `gridcast report-m3-holdout`.
+    - `report.py` and `aemo_report.py` now take the evaluation set, split, pairs and holdout runs as parameters. Regenerating both development reports from the changed code gave identical numbers and byte-identical figures. Only the leakage-test count changed (7 → 11, from step 5a's half-hour tests), and the generated date and commit lines.
+    - The *retrain whose quarter holds June* is derived: the latest selection retrain on or before 1 June 2026, which is 2026-05-01.
+  - Both CLIs refuse a dirty tree. On the real database, `evaluate-holdout-intervals --check-only` refused only because step 6a's batch did not exist yet.
 
 ## 5. New dependencies and compute
 
