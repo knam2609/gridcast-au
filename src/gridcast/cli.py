@@ -813,6 +813,7 @@ def backtest_qr_holdout(
         store_qr_holdout,
     )
     from gridcast.intervals.quantile import ReproductionError
+    from gridcast.timeutils import NEM_TZ
 
     cfg = load_config()
     engine = get_engine()
@@ -827,7 +828,7 @@ def backtest_qr_holdout(
         f"commit {state.sha}, frozen code unchanged since {state.frozen_commit}, no QR holdout "
         f"batch yet. Development QR batch {inputs.dev_qr.batch_id}; holdout_main batch "
         f"{inputs.holdout_point.batch_id}; retrains "
-        + ", ".join(r.strftime("%Y-%m-%d") for r in inputs.window.retrains)
+        + ", ".join(r.tz_convert(NEM_TZ).strftime("%Y-%m-%d") for r in inputs.window.retrains)
     )
     if check_only:
         return
@@ -864,6 +865,79 @@ def backtest_qr_holdout(
         "`gridcast evaluate-holdout-intervals` scores it under the U5 lock"
     )
     typer.echo(f"took {(time.perf_counter() - t0) / 3600:.2f} h")
+
+
+@app.command("evaluate-holdout-intervals")
+def evaluate_holdout_intervals(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    check_only: Annotated[
+        bool, typer.Option("--check-only", help="Run the refusal checks only; build nothing")
+    ] = False,
+    workers: Annotated[int, typer.Option(help="Runs in parallel")] = 3,
+) -> None:
+    """M3 step 6b: the holdout intervals, scored ONCE (U5): reproduce development, then score."""
+    import time
+
+    from gridcast.database.engine import get_engine
+    from gridcast.intervals.freeze import freeze_state
+    from gridcast.intervals.holdout import (
+        HoldoutIntervalsRefused,
+        HoldoutIntervalsReproductionFailed,
+        preflight,
+        run_holdout_intervals,
+        store_holdout_intervals,
+    )
+
+    cfg = load_config()
+    engine = get_engine()
+    state = freeze_state(cfg)
+    try:
+        inputs = preflight(engine, cfg, region, state)
+    except HoldoutIntervalsRefused as exc:
+        typer.echo(f"REFUSED: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(
+        f"checks pass: interval recipe {state.config_hash}, QR recipe {state.qr_config_hash}, "
+        f"commit {state.sha}, frozen code unchanged since {state.frozen_commit}, holdout "
+        "intervals not yet scored"
+    )
+    typer.echo(
+        f"  run 2 {cfg.intervals.source_batch}; holdout_main {inputs.holdout_point.batch_id}; "
+        f"QR {inputs.dev_qr.batch_id} + holdout QR {inputs.qr_holdout.batch_id}; development "
+        f"interval batches {sorted({r.batch_id for r in inputs.dev_runs.values()})} and "
+        f"{sorted({r.batch_id for r in inputs.dev_halfhour.values()})}"
+    )
+    if check_only:
+        return
+    t0 = time.perf_counter()
+    try:
+        run = run_holdout_intervals(engine, cfg, region, inputs, workers=workers)
+    except (HoldoutIntervalsRefused, HoldoutIntervalsReproductionFailed) as exc:
+        typer.echo(f"STOPPED: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    batch, run_ids = store_holdout_intervals(engine, cfg, region, run, state.sha)
+    rows = [
+        [r.run, r.batch_id, f"{r.issue_times:,}", r.selections, "exact" if r.passed else "DIFFERS"]
+        for r in run.reproductions
+    ]
+    typer.echo("\ndevelopment part of the continuous run against the stored development batches")
+    typer.echo(
+        tabulate(
+            rows,
+            headers=["run", "development batch", "issue times", "selections", "reproduction"],
+            tablefmt="github",
+        )
+    )
+    typer.echo(
+        f"step 6a's quantiles equal step 2's on {run.qr_overlap_issue_times:,} development "
+        "issue times"
+    )
+    typer.echo(
+        f"stored holdout interval batch {batch}: {len(run_ids)} runs, {len(run.times):,} "
+        f"holdout issue times ({run.times[0]} → {run.times[-1]}). Scores are in the database; "
+        "`gridcast report-m3-holdout` writes the report"
+    )
+    typer.echo(f"took {(time.perf_counter() - t0) / 60:.1f} min")
 
 
 @app.command("weather-ablation")
