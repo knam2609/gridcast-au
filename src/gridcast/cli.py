@@ -249,6 +249,85 @@ def ingest_aemo_poe(start: StartOpt = None, end: EndOpt = None, regions: Regions
         raise typer.Exit(code=1)
 
 
+@app.command("ingest-generation")
+def ingest_generation(
+    start: StartOpt = None,
+    end: EndOpt = None,
+    regions: RegionsOpt = None,
+    day: Annotated[
+        list[str] | None,
+        typer.Option("--day", help="NEM-time day YYYY-MM-DD from the daily reports (repeatable)"),
+    ] = None,
+    check_month: Annotated[
+        str | None,
+        typer.Option("--check-month", help="Month YYYY-MM compared with the daily reports"),
+    ] = None,
+) -> None:
+    """Load regional supply totals (wind, solar, dispatchable, battery) from the cached
+    DISPATCHREGIONSUM months, then any --day from the daily reports after an exact match with
+    MMSDM over --check-month (M4 step 1b; evidence only, never a model input)."""
+    import datetime as dt
+
+    from gridcast.database.engine import get_engine
+    from gridcast.ingestion.generation import (
+        GenerationCheckFailed,
+        ingest_generation_daily,
+        ingest_generation_range,
+    )
+    from gridcast.ingestion.pipeline import parse_month_arg
+
+    if day and not check_month:
+        raise typer.BadParameter("--day needs --check-month")
+    try:
+        days = [dt.date.fromisoformat(d) for d in day or []]
+    except ValueError as exc:
+        raise typer.BadParameter(f"--day must be YYYY-MM-DD: {exc}") from exc
+    cfg = load_config()
+    engine = get_engine()
+    region_list = _regions(regions)
+    first = parse_month_arg(start or cfg.ingestion.start_month)
+    last = parse_month_arg(end or cfg.ingestion.end_month)
+    results = ingest_generation_range(engine, cfg, first, last, region_list)
+    rows = [
+        [f"{r.period:%Y-%m}", r.status, r.rows_parsed, r.duplicates_dropped, r.rows_loaded]
+        for r in results
+    ]
+    typer.echo(
+        tabulate(
+            rows, headers=["month", "status", "parsed", "duplicates", "loaded"], tablefmt="github"
+        )
+    )
+    failed = [r for r in results if r.status != "success"]
+    for r in failed:
+        typer.echo(f"FAILED {r.period:%Y-%m}: {r.error}", err=True)
+    if failed:
+        raise typer.Exit(code=1)
+    if not days:
+        return
+    assert check_month is not None
+    try:
+        daily = ingest_generation_daily(
+            engine, cfg, days, parse_month_arg(check_month), region_list
+        )
+    except GenerationCheckFailed as exc:
+        typer.echo(f"FAILED: {exc}\n{exc.check.as_dict()}", err=True)
+        raise typer.Exit(code=1) from exc
+    c = daily.check
+    typer.echo(
+        f"match check {c.month} ({c.days} days; loaded from {', '.join(c.loaded_sources)}): "
+        f"{c.compared} rows compared, only daily {c.only_daily}, only loaded {c.only_loaded}, "
+        f"differing {c.differing}; passed: {c.passed}"
+    )
+    typer.echo(
+        tabulate(
+            [[d, n] for d, n in daily.loaded.items()],
+            headers=["day (NEM)", "rows loaded"],
+            tablefmt="github",
+        )
+    )
+    typer.echo(f"check written to {daily.report_path}")
+
+
 @app.command()
 def dq(start: StartOpt = None, end: EndOpt = None, regions: RegionsOpt = None) -> None:
     """Run market and weather data-quality checks over the window and store results."""

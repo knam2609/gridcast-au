@@ -182,6 +182,7 @@ def write_daily_archive(
     regionsum: Sequence[dict[str, str]],
     price: Sequence[dict[str, str]],
     chunks: int = 2,
+    regionsum_cols: Sequence[str] = REGIONSUM_COLS,
 ) -> Path:
     """A NEMWeb daily dispatch-report archive: a zip of ``chunks`` report zips, one CSV each.
 
@@ -202,7 +203,7 @@ def write_daily_archive(
                         "DISPATCH",
                         "REGIONSUM",
                         "9",
-                        REGIONSUM_COLS,
+                        regionsum_cols,
                         regionsum[k * step_r : (k + 1) * step_r],
                     ),
                 ]
@@ -252,4 +253,51 @@ def pdpasa_rows(
                             "RUNTYPE": run_type,
                         }
                     )
+    return rows
+
+
+# DISPATCHREGIONSUM supply columns (M4 step 1b). Version 5 lacks the LATER columns.
+GENERATION_V5_COLS = [
+    "SETTLEMENTDATE", "RUNNO", "REGIONID", "DISPATCHINTERVAL", "INTERVENTION", "TOTALDEMAND",
+    "DISPATCHABLEGENERATION", "LASTCHANGED", "TOTALINTERMITTENTGENERATION", "SS_SOLAR_UIGF",
+    "SS_WIND_UIGF", "SS_SOLAR_CLEAREDMW", "SS_WIND_CLEAREDMW",
+]  # fmt: skip
+GENERATION_V9_COLS = [
+    *GENERATION_V5_COLS, "SS_SOLAR_AVAILABILITY", "SS_WIND_AVAILABILITY", "BDU_CLEAREDMW_GEN",
+    "BDU_CLEAREDMW_LOAD",
+]  # fmt: skip
+
+
+def generation_rows(
+    start_end: dt.datetime,
+    n: int,
+    regions: Sequence[str] = ("NSW1", "VIC1"),
+    battery: bool = True,
+) -> list[dict[str, str]]:
+    """Supply rows: wind 800 + i, UIGF 900 + i, availability 890 + i; solar a tenth of that."""
+    rows = []
+    for i in range(n):
+        end = start_end + dt.timedelta(minutes=5 * i)
+        for j, region in enumerate(regions):
+            rows.append(
+                {
+                    "SETTLEMENTDATE": nem(end),
+                    "RUNNO": "1",
+                    "REGIONID": region,
+                    "DISPATCHINTERVAL": "1",
+                    "INTERVENTION": "0",
+                    "TOTALDEMAND": f"{4000 + i + 1000 * j}",
+                    "DISPATCHABLEGENERATION": f"{3000 + i + 1000 * j}",
+                    "LASTCHANGED": nem(end - dt.timedelta(seconds=5)),
+                    "TOTALINTERMITTENTGENERATION": "150",
+                    "SS_WIND_CLEAREDMW": f"{800 + i}",
+                    "SS_WIND_UIGF": f"{900 + i}",
+                    "SS_WIND_AVAILABILITY": f"{890 + i}",
+                    "SS_SOLAR_CLEAREDMW": f"{80 + i}",
+                    "SS_SOLAR_UIGF": f"{90 + i}",
+                    "SS_SOLAR_AVAILABILITY": f"{89 + i}",
+                    "BDU_CLEAREDMW_GEN": f"{10 * i}" if battery else "",
+                    "BDU_CLEAREDMW_LOAD": "0" if battery else "",
+                }
+            )
     return rows

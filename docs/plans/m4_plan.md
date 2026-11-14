@@ -13,7 +13,7 @@
 | Scope | **Anomalies + demand SHAP.** The detectors cover unusual demand, unexpected demand-forecast residuals, price spikes, unusual prices, volatility changes, and a multivariate Isolation Forest. SHAP explains LightGBM C and feeds each demand event's evidence. Price-residual detection waits for the price model (M2b) |
 | Timing | **Causal.** Every score at interval *t* uses only data known at *t*'s end, so the same code can run live behind the M5 API and M7 monitoring. Alerts are merged into events by a rule that also works live |
 | Evaluation | **Pre-registered three-part check** (§3): (1) each detector's alert rate on unseen data stays near its stated budget; (2) recall on AEMO-flagged reference events, fixed by flag type before any detector runs (the flags are never inputs); (3) synthetic injection for detection power by size |
-| Evidence data | **Cached region totals.** Victorian semi-scheduled wind and solar output and availability (Oct 2021 on), dispatchable generation, and battery output (from May 2024), re-parsed from the cached `DISPATCHREGIONSUM` files. No new downloads. Also used: demand, price, net interchange, available generation, weather forecasts and ERA5, AEMO's own demand forecasts (loaded Sep 2024 → Sep 2026), and the operator flags |
+| Evidence data | **Cached region totals.** Victorian semi-scheduled wind and solar output and availability (Oct 2021 on; availability means UIGF, see the step-1b clarification below), dispatchable generation, and battery output (from May 2024), re-parsed from the cached `DISPATCHREGIONSUM` files. No new downloads. Also used: demand, price, net interchange, available generation, weather forecasts and ERA5, AEMO's own demand forecasts (loaded Sep 2024 → Sep 2026), and the operator flags |
 | Thresholds | **Calibrated tiers + price lines.** Each detector turns its score into a p-value against its own trailing 26 weeks: *notable* p ≤ 0.001 (about 2 flagged 5-minute intervals a week per detector), *severe* p ≤ 0.0001 (about 1 a month). Fixed market lines also flag price ≥ $300/MWh (notable) and ≥ $5,000/MWh (severe), whatever the recent past |
 | SHAP | **LightGBM's built-in TreeSHAP** (`pred_contrib`) on the stored M2 models, no new dependency, over a seeded sample. Global summaries by feature and feature family; local explanations for every demand event |
 | Price drivers (question 5) | **Descriptive associations:** the rate of prices above $300/MWh and below $0 by observed conditions in the same interval, with day-block bootstrap CIs, labelled as association only |
@@ -24,6 +24,10 @@
 **Added by this plan, then accepted by the user on review (2026-11-15):**
 - **No tuning spike.** Every detector setting below is fixed now, before any code exists, so development results are also blind to tuning. A smoke run may use only the warm-up periods (before 2022-05-01; before 2023-06-01 for the residual detectors) and synthetic data, and only to find bugs. Any later change to a setting in §2 is recorded here with its reason and disclosed in the reports.
 - **The recipe is frozen before the development run**, not only before the holdout as in M2/M3. With no tuning step, nothing is lost by freezing early, and the development verdicts become a clean pre-registered test.
+
+**Clarified in step 1b, before any detector code (2026-11-15; the user chose both recommendations):**
+- **Curtailment is measured against UIGF.** AEMO's `SS_*_AVAILABILITY` columns exist only from table version 8 (May 2024); October 2021 → April 2024 has only `SS_*_UIGF`, AEMO's unconstrained intermittent generation forecast. D6's curtailment share is therefore 1 − cleared / UIGF throughout (§2.3), so the feature keeps one definition across development and holdout. Where both columns exist, availability was never above UIGF in the 60 months loaded. Availability is still loaded and shown in the evidence from May 2024.
+- **Battery evidence starts at the first non-zero interval.** The bidirectional-unit (battery) columns appear on 22 May 2024 but are 0 MW at every Victorian interval until 6 Aug 2024. Batteries outside that unit category sit inside the dispatchable totals, so a 0 MW there does not mean the batteries were idle. The evidence marks battery output as unavailable, with that reason, before the first non-zero interval (computed from the data), and labels later values "bidirectional units only".
 
 ## 2. Design
 
@@ -58,7 +62,7 @@ Local time is Australia/Melbourne, as in M2's calendar features. *Profile* means
 | D3 | `demand_residual_dayahead`: unexpected vs the day-ahead forecast | The same score at lead 283–288 (23.5–24 h) | As D2 |
 | D4 | `price_level`: unusual price for the time of day | \|z\| of x = asinh(price / $10) against x's profile | All day types. Floor 0.25 (asinh units). Two-sided, so extreme negative prices count too |
 | D5 | `price_volatility`: rapid volatility change | v(t) = root-mean-square of the 5-minute changes in x over the 12 intervals ending at *t* (1 h). b(t) = median of v over the 7 days ending 1 h before *t*. Score \|ln((v + 0.01) / (b + 0.01))\| | Two-sided: a sudden calm (e.g. prices held at an administered cap) also scores |
-| D6 | `isolation_forest`: multivariate | −`score_samples` of scikit-learn's `IsolationForest` (200 trees, 256 samples per tree, fixed seed), refitted at each NEM-month start on the previous 26 weeks. Its p-value is against the training window's scores | Nine causal, signed features: D1's z; D4's z; D5's log ratio; the 5-minute demand change scaled by the robust scale of all 5-minute changes in the previous 28 days (floor 10 MW); net interchange, dispatchable generation, and available generation minus demand, each as a z against its profile (floor 50 MW); wind and solar curtailment shares, 1 − cleared / availability when availability ≥ 100 MW, otherwise 0. No forecasts, flags, ERA5 or battery data |
+| D6 | `isolation_forest`: multivariate | −`score_samples` of scikit-learn's `IsolationForest` (200 trees, 256 samples per tree, fixed seed), refitted at each NEM-month start on the previous 26 weeks. Its p-value is against the training window's scores | Nine causal, signed features: D1's z; D4's z; D5's log ratio; the 5-minute demand change scaled by the robust scale of all 5-minute changes in the previous 28 days (floor 10 MW); net interchange, dispatchable generation, and available generation minus demand, each as a z against its profile (floor 50 MW); wind and solar curtailment shares, 1 − cleared / UIGF when UIGF ≥ 100 MW, otherwise 0 (UIGF, not availability: clarified in step 1b, §1). No forecasts, flags, ERA5 or battery data |
 | L1 | `price_line_300` | price ≥ $300/MWh | Notable |
 | L2 | `price_line_5000` | price ≥ $5,000/MWh | Severe |
 
@@ -78,7 +82,7 @@ Each event's evidence is facts with times and sources. Every field is labelled *
 2. **Values at the peak:** demand and price; their profile median and 10th–90th percentile range; their percentile in the trailing 26 weeks.
 3. **Forecasts:** LightGBM C's latest and day-ahead forecasts for the peak interval, the QR 2.5–97.5% band and the residual. AEMO's matched forecasts (P5MIN and pre-dispatch) and their errors, where loaded (Sep 2024 on).
 4. **Changes:** demand and price over the previous 5 min, 30 min and 1 h.
-5. **Supply:** wind and solar output, their availability and curtailment, and their 1-hour change; dispatchable generation; battery (from May 2024); net interchange (import or export); available generation and its margin over demand.
+5. **Supply:** wind and solar output, their UIGF (and availability, from May 2024), curtailment against UIGF, and their 1-hour change; dispatchable generation; battery (bidirectional units only; unavailable before the first non-zero interval, §1); net interchange (import or export); available generation and its margin over demand.
 6. **Weather:** the GFS temperature forecast the model used; ERA5 temperature (retrospective).
 7. **Operator flags in the event's span:** APC bits and market suspension, as evidence only.
 8. **Demand events (D1–D3 fired):** the SHAP breakdown of LightGBM C's forecast for the peak interval at both leads (§2.6), i.e. how the model arrived at what it expected.
@@ -232,6 +236,15 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
     - `model_runs` accepts `model_kind = 'anomaly'` and `target = 'market'`.
   - `gridcast ingest-generation` re-parses the cached `DISPATCHREGIONSUM` months (and the daily reports for 1 Oct 2026), with lineage in `ingestion_runs`.
   - Data-quality checks: missing intervals, cleared ≤ available + tolerance, no negative output.
+- *Outcome (2026-11-15, step 1b):*
+  - **Question round** (both recommendations chosen; see §1, "Clarified in step 1b"): curtailment against UIGF, because `SS_*_AVAILABILITY` exists only from May 2024; battery evidence unavailable before the first non-zero bidirectional-unit interval.
+  - **Migration 0007:**
+    - `generation_intervals` keyed by (region, interval end, kind) holds `cleared_mw`, `uigf_mw` and `available_mw` (wind and solar), and `load_mw` (battery). A check constraint ties the columns to the kind.
+    - `anomalies` stores times as interval ends (first, last, peak), `detectors` and `categories` as arrays checked against the §2.3 and §2.4 names, a generated `lines_only` flag (§2.4's separate reporting), `split` (dev or holdout), and the events cascade with their run.
+    - `model_runs` accepts kind `anomaly` and target `market`.
+  - **`gridcast ingest-generation`** loaded all 60 cached months with no download, then 1 Oct 2026 from the daily reports. September 2026 matched MMSDM exactly in every column first. The loader requires each table version's own columns (v5 → Apr 2024; v8/v9 add availability and battery). The MMS reader gained optional columns for this.
+  - **Data-quality checks** (`generation_missing`, `generation_negative` pass; `generation_above_uigf` warns: 655 wind and 33 solar intervals above UIGF, kept as published). Figures and limits: `docs/data_sources.md` §8.
+  - Pre-existing, not from this step: `implausible_timestamps` fails on the 288 market intervals of 1 Oct 2026, which M2 step 6 loaded on purpose but which lie outside `ingestion.end_month` (it already failed on 2026-11-14). The generation checks keep to the same window.
 
 **Step 2. Detector core.**
 - Package `src/gridcast/anomalies/` (window p-values on M3's Fenwick structure, D1–D6, the lines, the event merge rule, the injection harness), with the §2.8 property tests and control.

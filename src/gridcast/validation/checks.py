@@ -104,7 +104,24 @@ AEMO_CHECKS: tuple[DQCheck, ...] = (
     DQCheck("aemo_out_of_range", "fail", "AEMO forecast demand outside plausible bounds"),
 )
 
-ALL_CHECKS: tuple[DQCheck, ...] = MARKET_CHECKS + WEATHER_CHECKS + AEMO_CHECKS
+GENERATION_CHECKS: tuple[DQCheck, ...] = (
+    DQCheck(
+        "generation_missing",
+        "fail",
+        "Missing supply rows: wind, solar, dispatchable; battery after its first row",
+        "n_missing",
+    ),
+    DQCheck("generation_negative", "fail", "Negative supply values", "n"),
+    DQCheck(
+        "generation_above_uigf",
+        "warn",
+        "Wind or solar cleared above UIGF or availability by more than 1 MW",
+        "n_intervals",
+        params={"tolerance_mw": 1.0},
+    ),
+)
+
+ALL_CHECKS: tuple[DQCheck, ...] = MARKET_CHECKS + WEATHER_CHECKS + AEMO_CHECKS + GENERATION_CHECKS
 
 
 @dataclass(slots=True)

@@ -311,3 +311,25 @@ def upsert_aemo_poe(conn: Connection, df: pd.DataFrame, ingestion_run_id: int) -
         ("region_id", "run_time", "target_end"),
         ingestion_run_id,
     )
+
+
+GENERATION_COLUMNS: tuple[str, ...] = (
+    "region_id",
+    "interval_end",
+    "kind",
+    "cleared_mw",
+    "uigf_mw",
+    "available_mw",
+    "load_mw",
+)
+
+
+def upsert_generation(conn: Connection, df: pd.DataFrame, ingestion_run_id: int) -> int:
+    return _copy_upsert(
+        conn,
+        "generation_intervals",
+        df,
+        GENERATION_COLUMNS,
+        ("region_id", "interval_end", "kind"),
+        ingestion_run_id,
+    )
