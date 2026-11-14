@@ -280,6 +280,42 @@ WEATHER_VARIABLES: tuple[str, ...] = (
 )
 
 
+class ReferenceEventsConfig(BaseModel):
+    """AEMO-flagged reference events for criterion A2 (m4_plan.md §3.1).
+
+    Class P: intervals with any of ``class_p_apc_bits`` set in DISPATCHPRICE.APCFLAG (the
+    price was at a cap, floor or administered limit). Class O: other flagged intervals
+    (``class_o_apc_bits``, or the market suspended). The flags are never detector inputs.
+    """
+
+    class_p_apc_bits: list[int]
+    class_o_apc_bits: list[int]
+    merge_gap_hours: float = Field(24.0, gt=0)
+    alert_margin_minutes: int = Field(30, ge=0)
+
+    @model_validator(mode="after")
+    def _bits(self) -> ReferenceEventsConfig:
+        bits = self.class_p_apc_bits + self.class_o_apc_bits
+        if any(b not in (1, 2, 4, 8, 16) for b in bits):
+            raise ValueError("APCFLAG bits must be among 1, 2, 4, 8, 16")
+        if set(self.class_p_apc_bits) & set(self.class_o_apc_bits):
+            raise ValueError("a bit cannot be in both class P and class O")
+        if not self.class_p_apc_bits:
+            raise ValueError("class P needs at least one bit")
+        return self
+
+
+class AnomaliesConfig(BaseModel):
+    """Milestone 4: market anomalies and demand-model explanations (docs/plans/m4_plan.md).
+
+    Not part of the M2 or M3 hashes. Development ends at ``backtest.holdout_start``.
+    """
+
+    market_first_day: dt.date  # first scored NEM day for D1, D4, D5, D6 and the price lines
+    residual_first_day: dt.date  # first scored NEM day for D2 and D3
+    reference_events: ReferenceEventsConfig
+
+
 class WeatherVariableConfig(BaseModel):
     unit: str  # unit string Open-Meteo must report (checked on every response)
     kind: Literal["instant", "preceding_hour_mean"]
@@ -406,6 +442,7 @@ class AppConfig(BaseModel):
     ml: MlConfig
     aemo: AemoBenchmarkConfig
     intervals: IntervalsConfig
+    anomalies: AnomaliesConfig
 
     @model_validator(mode="after")
     def _weather_regions_known(self) -> AppConfig:
@@ -428,6 +465,14 @@ class AppConfig(BaseModel):
             raise ValueError("ml.lead_bands must end at forecast.horizon_steps")
         if not self.ml.first_issue < self.intervals.first_issue < self.backtest.holdout_start:
             raise ValueError("expected ml.first_issue < intervals.first_issue < holdout_start")
+        an = self.anomalies
+        if not an.market_first_day < an.residual_first_day < self.backtest.holdout_start:
+            raise ValueError(
+                "expected anomalies.market_first_day < anomalies.residual_first_day "
+                "< backtest.holdout_start"
+            )
+        if an.residual_first_day <= self.ml.first_issue:
+            raise ValueError("anomalies.residual_first_day must follow ml.first_issue (QR warm-up)")
         return self
 
     def resolve(self, path: Path) -> Path:

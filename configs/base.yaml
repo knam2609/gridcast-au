@@ -168,6 +168,21 @@ intervals:
   frozen_qr_config_hash: "8767a8948966637c"
   frozen_commit: "bc5337e"
 
+anomalies:
+  # Milestone 4: market anomalies and demand-model explanations (docs/plans/m4_plan.md).
+  # Not part of the M2 or M3 hashes. Development ends at backtest.holdout_start; the holdout
+  # runs to backtest.holdout_end.
+  market_first_day: "2022-05-01"    # first scored NEM day: D1, D4, D5, D6 and the price lines
+  residual_first_day: "2023-06-01"  # first scored NEM day: D2, D3 (QR quantiles from 2022-11-01)
+  reference_events:
+    # Criterion A2 (m4_plan.md §3.1): AEMO's own DISPATCHPRICE flags, never detector inputs.
+    # APCFLAG bits (MMS Data Model): 1 APC/APF binding, 2 VoLL override, 4 MPC/MPF binding,
+    # 8 price manually overwritten, 16 price scaling via the inter-regional loss factor.
+    class_p_apc_bits: [1, 2, 4]     # price at a cap, floor or administered limit
+    class_o_apc_bits: [8, 16]       # with market suspension: may leave no visible trace
+    merge_gap_hours: 24             # flagged intervals of a class closer than this: one event
+    alert_margin_minutes: 30        # A2 counts alerts from 30 min before start to 30 min after end
+
 aemo:
   # AEMO's own demand forecasts: every run of 30-minute pre-dispatch and 5-minute
   # pre-dispatch (MMSDM "all runs" archives, ~50 MB a month each, cached under raw/).

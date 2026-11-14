@@ -1037,6 +1037,23 @@ def report_m3_holdout(region: Annotated[str, typer.Option(help="Region id")] = "
     typer.echo(f"wrote {path}")
 
 
+@app.command("anomaly-reference-events")
+def anomaly_reference_events(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+) -> None:
+    """Write docs/m4_reference_events.md: AEMO-flagged reference events for A2 (M4 step 1a)."""
+    from gridcast.anomalies.reference import CLASS_P, DOC_PATH, write_reference_events
+    from gridcast.database.engine import get_engine
+
+    events = write_reference_events(get_engine(), load_config(), region)
+    judged = [e.event_id for e in events if e.judged_by_a2]
+    n_p = sum(e.cls == CLASS_P for e in events)
+    typer.echo(
+        f"{len(events)} events ({n_p} class P); A2 judges {len(judged)}: " + ", ".join(judged)
+    )
+    typer.echo(f"wrote {DOC_PATH}")
+
+
 @app.command("feature-catalogue")
 def feature_catalogue() -> None:
     """Write docs/feature_catalogue.md from the feature catalogue in code (no database)."""

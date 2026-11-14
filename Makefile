@@ -6,7 +6,7 @@ REGIONS ?= VIC1
 DAYS ?= 2026-10-01
 CHECK_MONTH ?= 2026-09
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout anomaly-reference-events catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -116,6 +116,9 @@ report-m3-holdout: ## Generate reports/m3_holdout.md from the stored holdout int
 
 report-holdout: ## Generate reports/m2_holdout.md from the stored holdout run (S5, replication, AEMO holdout part)
 	$(UV) run gridcast report-holdout --region $(firstword $(REGIONS))
+
+anomaly-reference-events: ## M4 step 1a: write docs/m4_reference_events.md (AEMO-flagged events for A2) from the stored flags
+	$(UV) run gridcast anomaly-reference-events --region $(firstword $(REGIONS))
 
 catalogue: ## Regenerate docs/feature_catalogue.md from the feature catalogue in code
 	$(UV) run gridcast feature-catalogue
