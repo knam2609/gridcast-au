@@ -21,7 +21,7 @@
 | Criterion bars | Alert rate within a **factor of 2** of nominal; **all class-P reference events caught** (class O reported); synthetic power **≥ 90% at each detector's largest pre-registered size**, with the full power curves reported |
 | Residual detectors | **The M3 quantile band plus the detector's own p-value:** the distance of the actual outside the raw quantile-LightGBM C 2.5–97.5% band, scaled by the band's width, as a conformal p-value. This is CQR at any level; the frozen M3 recipe is untouched |
 
-**Added by this plan (no question asked; open to the user's review of this commit):**
+**Added by this plan, then accepted by the user on review (2026-11-15):**
 - **No tuning spike.** Every detector setting below is fixed now, before any code exists, so development results are also blind to tuning. A smoke run may use only the warm-up periods (before 2022-05-01; before 2023-06-01 for the residual detectors) and synthetic data, and only to find bugs. Any later change to a setting in §2 is recorded here with its reason and disclosed in the reports.
 - **The recipe is frozen before the development run**, not only before the holdout as in M2/M3. With no tuning step, nothing is lost by freezing early, and the development verdicts become a clean pre-registered test.
 

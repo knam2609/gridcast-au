@@ -15,7 +15,7 @@ Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff
 >   - freeze, then score the holdout once;
 >   - bars: factor 2 on alert rates, every class-P event caught, ≥ 90% power at each detector's largest injection;
 >   - residual detectors on M3's raw QR band with their own p-value.
-> - **Added by the plan for the user's review:** every detector setting is fixed in §2 now, with no tuning spike. The recipe is frozen before the development run, so the development verdicts are also blind.
+> - **Added by the plan, accepted by the user on review:** every detector setting is fixed in §2 now, with no tuning spike. The recipe is frozen before the development run, so the development verdicts are also blind.
 > - **Disclosed in §3.3:** holdout facts seen during the question rounds (the price calm, 8 Jul 2026 above $5,000, the 6 and 10 Nov 2025 demand jumps, the flagged 23 Mar 2026).
 >
 > **Next: step 1a.**
