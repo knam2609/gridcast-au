@@ -111,6 +111,41 @@ def test_implausible_timestamps_flagged(loaded: Engine) -> None:
     assert sorted(e["reason"] for e in r.details["examples"]) == ["in_future", "off_grid"]
 
 
+def _load_after_window(engine: Engine, source: str, status: str) -> None:
+    """Three intervals of NEM day 1 Nov 2021 (after the Oct 2021 window) from one run."""
+    nov = clean_month(2021, 11).iloc[:3]
+    with engine.begin() as conn:
+        run = start_ingestion_run(conn, source, "market_intervals", dt.date(2021, 11, 1))
+        upsert_market_intervals(conn, nov, run)
+        conn.execute(
+            text("UPDATE ingestion_runs SET status = :s WHERE run_id = :r"),
+            {"s": status, "r": run},
+        )
+
+
+def test_daily_report_days_exempt_from_window(loaded: Engine) -> None:
+    _load_after_window(loaded, "nemweb_daily", "success")
+    r = _run(loaded)
+    assert r["implausible_timestamps"].status == "pass"
+    days = r["daily_report_days"]
+    assert (days.status, days.n_violations, days.details["n_result_rows"]) == ("warn", 3, 1)
+    assert days.details["examples"][0]["nem_day"] == "2021-11-01"
+
+
+@pytest.mark.parametrize(("source", "status"), [("mmsdm", "success"), ("nemweb_daily", "failed")])
+def test_after_window_flagged_unless_daily_success(
+    loaded: Engine, source: str, status: str
+) -> None:
+    _load_after_window(loaded, source, status)
+    r = _run(loaded)
+    assert r["implausible_timestamps"].status == "fail"
+    assert {e["reason"] for e in r["implausible_timestamps"].details["examples"]} == {
+        "outside_window"
+    }
+    assert r["implausible_timestamps"].n_violations == 3
+    assert r["daily_report_days"].status == "pass"
+
+
 def test_stale_feed(loaded: Engine) -> None:
     assert _run(loaded, stale_after_days=30)["stale_feed"].status == "fail"
     assert _run(loaded, stale_after_days=100_000)["stale_feed"].status == "pass"

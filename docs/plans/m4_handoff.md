@@ -2,6 +2,11 @@
 
 Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff.md`](m3_handoff.md) and [`m3_plan.md`](m3_plan.md).
 
+> **Update, 2026-11-16 (sixteenth session: `make dq` fixed):**
+> - `implausible_timestamps` no longer flags days after `ingestion.end_month` that a successful `nemweb_daily` run loaded. Grid, duration and future checks still apply to them.
+> - A new warning, `daily_report_days`, lists those days, one row per NEM day (now 1 Oct 2026, 288 intervals), so they stay visible.
+> - `make dq` exits 0 again. Tests: `tests/integration/test_dq_checks.py` (exempt when daily and successful; flagged when from MMSDM or from a failed daily run).
+>
 > **Update, 2026-11-15 (fifteenth session: step 1b done):**
 > - **Question round, both recommendations chosen** (recorded in [`m4_plan.md`](m4_plan.md) §1, "Clarified in step 1b"):
 >   - D6's curtailment share is 1 − cleared / **UIGF**, because `SS_*_AVAILABILITY` exists only from May 2024 (table v8);
@@ -13,7 +18,7 @@ Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff
 >   - September 2026 from the daily reports matched MMSDM exactly first.
 >   - The log is `<data root>/logs/m4_ingest_generation.log`.
 > - **Data-quality checks:** `generation_missing` and `generation_negative` pass. `generation_above_uigf` warns: 707 wind/solar intervals, most in Dec 2022, max 293.7 MW. Details are in [`docs/data_sources.md`](../data_sources.md) §8.
-> - **`make dq` exits 1, but not because of this step.** `implausible_timestamps` flags the 288 market intervals of 1 Oct 2026, which M2 step 6 loaded on purpose but which lie outside `ingestion.end_month`. It already failed on 2026-11-14. A possible fix is to exempt intervals whose ingestion source is `nemweb_daily`; not done yet.
+> - **`make dq` exited 1, but not because of this step.** `implausible_timestamps` flagged the 288 market intervals of 1 Oct 2026, which M2 step 6 loaded on purpose but which lie outside `ingestion.end_month`. It already failed on 2026-11-14. Fixed on 2026-11-16 (see the update above).
 > - New code:
 >   - `src/gridcast/ingestion/generation.py`;
 >   - the reader's `optional` columns in `mms_csv.py`;

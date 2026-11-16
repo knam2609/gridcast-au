@@ -244,7 +244,8 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
     - `model_runs` accepts kind `anomaly` and target `market`.
   - **`gridcast ingest-generation`** loaded all 60 cached months with no download, then 1 Oct 2026 from the daily reports. September 2026 matched MMSDM exactly in every column first. The loader requires each table version's own columns (v5 → Apr 2024; v8/v9 add availability and battery). The MMS reader gained optional columns for this.
   - **Data-quality checks** (`generation_missing`, `generation_negative` pass; `generation_above_uigf` warns: 655 wind and 33 solar intervals above UIGF, kept as published). Figures and limits: `docs/data_sources.md` §8.
-  - Pre-existing, not from this step: `implausible_timestamps` fails on the 288 market intervals of 1 Oct 2026, which M2 step 6 loaded on purpose but which lie outside `ingestion.end_month` (it already failed on 2026-11-14). The generation checks keep to the same window.
+  - Pre-existing, not from this step: `implausible_timestamps` failed on the 288 market intervals of 1 Oct 2026, which M2 step 6 loaded on purpose but which lie outside `ingestion.end_month` (it already failed on 2026-11-14). The generation checks keep to the same window.
+  - **Fixed after step 1b (2026-11-16):** `implausible_timestamps` no longer flags days after the window that a successful `nemweb_daily` run loaded; the new `daily_report_days` warning lists them (1 Oct 2026, 288 intervals). `make dq` exits 0. Details: `docs/data_sources.md` §7.
 
 **Step 2. Detector core.**
 - Package `src/gridcast/anomalies/` (window p-values on M3's Fenwick structure, D1–D6, the lines, the event merge rule, the injection harness), with the §2.8 property tests and control.

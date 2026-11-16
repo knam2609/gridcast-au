@@ -50,6 +50,12 @@ MARKET_CHECKS: tuple[DQCheck, ...] = (
     DQCheck("rows_per_month", "fail", "Months with row count != 288 x days"),
     DQCheck("duplicate_intervals", "fail", "Duplicate intervals in the database", "n"),
     DQCheck("implausible_timestamps", "fail", "Off-grid / future / out-of-window timestamps"),
+    DQCheck(
+        "daily_report_days",
+        "warn",
+        "Days after the window loaded from NEMWeb daily reports",
+        "n_intervals",
+    ),
     DQCheck("null_values", "fail", "Intervals missing demand or price"),
     DQCheck("demand_out_of_range", "fail", "Demand outside plausible bounds"),
     DQCheck("price_out_of_bounds", "fail", "Price below floor / above FY market price cap"),
