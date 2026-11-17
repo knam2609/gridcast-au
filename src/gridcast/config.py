@@ -305,15 +305,152 @@ class ReferenceEventsConfig(BaseModel):
         return self
 
 
+class AnomalyPValueConfig(BaseModel):
+    """Conformal p-values against a trailing window of the detector's own scores (§2.2)."""
+
+    window_weeks: int = Field(gt=0)
+    notable: float = Field(gt=0, lt=1)
+    severe: float = Field(gt=0, lt=1)
+
+    @model_validator(mode="after")
+    def _order(self) -> AnomalyPValueConfig:
+        if self.severe >= self.notable:
+            raise ValueError("anomalies.pvalues: severe must be below notable")
+        return self
+
+
+class AnomalyProfileConfig(BaseModel):
+    """Same-local-half-hour median and MAD over the previous days (§2.3)."""
+
+    days: int = Field(gt=0)
+    slot_minutes: int = Field(gt=0)
+    mad_consistency: float = Field(gt=0)
+
+    @field_validator("slot_minutes")
+    @classmethod
+    def _divides_day(cls, v: int) -> int:
+        if v % 5 or (24 * 60) % v:
+            raise ValueError("profile.slot_minutes must be a multiple of 5 dividing a day")
+        return v
+
+
+class DemandLevelConfig(BaseModel):
+    floor_mw: float = Field(gt=0)
+
+
+class ResidualDetectorConfig(BaseModel):
+    """D2/D3: the actual outside M3's raw quantile LightGBM C band, over its width."""
+
+    width_floor_mw: float = Field(gt=0)
+    short_leads: tuple[int, int]
+    dayahead_leads: tuple[int, int]
+    lower_quantile: str
+    upper_quantile: str
+    dev_qr_batch: str
+    holdout_qr_batch: str
+
+    @field_validator("short_leads", "dayahead_leads")
+    @classmethod
+    def _one_issue_period(cls, v: tuple[int, int]) -> tuple[int, int]:
+        # Issue times are 30 min apart: six consecutive leads give each target exactly one.
+        if v[0] < 1 or v[1] - v[0] != 5:
+            raise ValueError("residual leads must be six consecutive leads from 1 up")
+        return v
+
+
+class PriceLevelConfig(BaseModel):
+    scale_aud: float = Field(gt=0)
+    floor: float = Field(gt=0)
+
+
+class PriceVolatilityConfig(BaseModel):
+    window_intervals: int = Field(gt=0)
+    baseline_days: int = Field(gt=0)
+    baseline_lag_intervals: int = Field(ge=0)
+    epsilon: float = Field(gt=0)
+
+
+class IsolationForestConfig(BaseModel):
+    n_estimators: int = Field(gt=0)
+    max_samples: int = Field(gt=0)
+    train_weeks: int = Field(gt=0)
+    z_floor_mw: float = Field(gt=0)
+    change_floor_mw: float = Field(gt=0)
+    curtailment_min_uigf_mw: float = Field(gt=0)
+
+
+class PriceLinesConfig(BaseModel):
+    notable_aud: float
+    severe_aud: float
+
+    @model_validator(mode="after")
+    def _order(self) -> PriceLinesConfig:
+        if self.severe_aud <= self.notable_aud:
+            raise ValueError("price_lines: severe_aud must be above notable_aud")
+        return self
+
+
+class AnomalyEventsConfig(BaseModel):
+    merge_gap_minutes: int = Field(ge=0)
+
+
+class InjectionSetting(BaseModel):
+    """One detector's injections: span length and signed sizes (§2.9)."""
+
+    minutes: int = Field(gt=0)
+    sizes: list[float] = Field(min_length=1)
+
+    @field_validator("minutes")
+    @classmethod
+    def _whole_intervals(cls, v: int) -> int:
+        if v % 5:
+            raise ValueError("injection minutes must be a multiple of 5")
+        return v
+
+
+class InjectionConfig(BaseModel):
+    """Synthetic injection for detection power (A3, m4_plan.md §2.9)."""
+
+    n_starts: int = Field(gt=0)
+    guard_minutes: int = Field(ge=0)
+    demand_level: InjectionSetting
+    demand_residual_short: InjectionSetting
+    demand_residual_dayahead: InjectionSetting
+    price_level: InjectionSetting
+    price_volatility: InjectionSetting
+    isolation_forest: InjectionSetting
+    flat_price_minutes: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _shapes(self) -> InjectionConfig:
+        if self.demand_residual_short.minutes != 30:
+            raise ValueError("demand_residual_short injections span one issue period (30 min)")
+        if any(a <= 0 for a in self.price_volatility.sizes):
+            raise ValueError("price_volatility sizes are positive amplitudes")
+        return self
+
+
 class AnomaliesConfig(BaseModel):
     """Milestone 4: market anomalies and demand-model explanations (docs/plans/m4_plan.md).
 
     Not part of the M2 or M3 hashes. Development ends at ``backtest.holdout_start``.
+    Every detector setting is fixed in the plan's §2 (no tuning spike).
     """
 
     market_first_day: dt.date  # first scored NEM day for D1, D4, D5, D6 and the price lines
     residual_first_day: dt.date  # first scored NEM day for D2 and D3
     reference_events: ReferenceEventsConfig
+    seed: int
+    pvalues: AnomalyPValueConfig
+    profile: AnomalyProfileConfig
+    demand_level: DemandLevelConfig
+    residual: ResidualDetectorConfig
+    price_level: PriceLevelConfig
+    price_volatility: PriceVolatilityConfig
+    isolation_forest: IsolationForestConfig
+    price_lines: PriceLinesConfig
+    events: AnomalyEventsConfig
+    injection: InjectionConfig
 
 
 class WeatherVariableConfig(BaseModel):

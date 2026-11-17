@@ -182,6 +182,71 @@ anomalies:
     class_o_apc_bits: [8, 16]       # with market suspension: may leave no visible trace
     merge_gap_hours: 24             # flagged intervals of a class closer than this: one event
     alert_margin_minutes: 30        # A2 counts alerts from 30 min before start to 30 min after end
+  # Detector settings, all fixed in m4_plan.md §2 before any detector code or score existed
+  # (no tuning spike). A change needs a recorded reason, a new hash and a disclosed rerun.
+  seed: 2609                        # Isolation Forest trees and injection placement
+  pvalues:
+    # §2.2: conformal p-value of each score against the detector's valid scores of the
+    # intervals ending in [t - window, t); ties count against the alert.
+    window_weeks: 26
+    notable: 0.001
+    severe: 0.0001
+  profile:
+    # §2.3: median and MAD of the same local half-hour over the previous `days` local days
+    # (ending before t's own local day). Robust scale = max(mad_consistency * MAD, floor).
+    days: 28
+    slot_minutes: 30
+    mad_consistency: 1.4826
+  demand_level:                     # D1: profile split by day type (business vs weekend/holiday)
+    floor_mw: 50
+  residual:
+    # D2/D3: distance outside M3's raw quantile LightGBM C 2.5-97.5% band, over its width.
+    width_floor_mw: 50
+    short_leads: [1, 6]             # D2: the latest issue time (5-30 min ahead)
+    dayahead_leads: [283, 288]      # D3: 23.5-24 h ahead
+    lower_quantile: q025
+    upper_quantile: q975
+    dev_qr_batch: "4bab11d7-4301-4c74-9f32-ddd9644f3921"      # M3 step 2 (run 85)
+    holdout_qr_batch: "b226706b-0bed-476c-b4fc-6c283786a8cc"  # M3 step 6a (run 92)
+  price_level:                      # D4: x = asinh(price / scale_aud), all day types
+    scale_aud: 10
+    floor: 0.25
+  price_volatility:
+    # D5: v = RMS of the 5-minute changes in x over window_intervals; b = median of v over
+    # baseline_days ending baseline_lag_intervals before t; score |ln((v + eps)/(b + eps))|.
+    window_intervals: 12
+    baseline_days: 7
+    baseline_lag_intervals: 12
+    epsilon: 0.01
+  isolation_forest:
+    # D6: refitted at each NEM-month start on the previous train_weeks; p-value against the
+    # training window's own scores. Features: D1 z, D4 z, D5 log ratio, the 5-minute demand
+    # change over the robust scale of the previous `profile.days` days' changes, z of net
+    # interchange, dispatchable generation and available generation minus demand (plain
+    # profiles: all day types, user 2026-11-17), wind and solar curtailment against UIGF.
+    n_estimators: 200
+    max_samples: 256
+    train_weeks: 26
+    z_floor_mw: 50
+    change_floor_mw: 10
+    curtailment_min_uigf_mw: 100
+  price_lines:                      # L1/L2: fixed lines, not calibrated (A1 does not apply)
+    notable_aud: 300
+    severe_aud: 5000
+  events:
+    merge_gap_minutes: 30           # alerts at most this far apart form one event
+  injection:
+    # §2.9 (A3): 1,000 seeded starts per detector, shared by every size and sign (user
+    # 2026-11-17), where the unmodified detector raised no alert within the span +- guard.
+    n_starts: 1000
+    guard_minutes: 60
+    demand_level: {minutes: 60, sizes: [-2000, -1000, -500, -250, 250, 500, 1000, 2000]}
+    demand_residual_short: {minutes: 30, sizes: [-1000, -500, -250, -100, 100, 250, 500, 1000]}
+    demand_residual_dayahead: {minutes: 120, sizes: [-2000, -1000, -500, -250, 250, 500, 1000, 2000]}
+    price_level: {minutes: 30, sizes: [-1000, -300, -100, 300, 1000, 5000, 15000]}  # set to $
+    price_volatility: {minutes: 60, sizes: [50, 200, 1000, 5000]}  # alternate +- A $/MWh
+    isolation_forest: {minutes: 60, sizes: [-2000, -1000, -500, -250, 250, 500, 1000, 2000]}
+    flat_price_minutes: 180         # reported only: price held at its value at the start
 
 aemo:
   # AEMO's own demand forecasts: every run of 30-minute pre-dispatch and 5-minute

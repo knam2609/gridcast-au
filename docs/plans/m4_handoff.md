@@ -2,6 +2,22 @@
 
 Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff.md`](m3_handoff.md) and [`m3_plan.md`](m3_plan.md).
 
+> **Update, 2026-11-17 (seventeenth session: step 2a, the detector core):**
+> - **Question round, both recommendations chosen** (in [`m4_plan.md`](m4_plan.md) §1, "Clarified in step 2"):
+>   - the injection starts are shared: 1,000 per detector, reused for every size and sign;
+>   - D6's three z-features use plain profiles (all day types), as §2.3's generic definition.
+> - The same §1 block records the readings fixed while coding: the window is [t − 26 weeks, t), events never cross the split boundary, the peak tie rule, and others.
+> - Every §2 setting is in `configs/base.yaml` → `anomalies` (typed in `AnomaliesConfig`).
+> - New in `src/gridcast/anomalies/`: `pvalues.py`, `series.py`, `profiles.py`, `detectors.py`, `isolation.py`, `events.py` and `run.py`. `run.detect(series, band, split, cfg)` returns scores, p-values, tiers and events.
+> - Tests are synthetic, with no real data scored: `tests/anomaly_fixtures.py` and `tests/unit/test_anomaly_{pvalues,profiles,detectors,events,causality}.py`. A5's property tests and the leaky control pass, about 16 s. The full unit suite has 370 tests.
+> - A full synthetic pass over 13k intervals takes about 0.9 s. The Fenwick sweep costs about 25 µs per interval, so a 525k-interval run should take minutes.
+>
+> **Next: step 2b.**
+> - `anomalies/inputs.py`: load `MarketSeries` from `market_intervals`, `generation_intervals` and `calendar_days` (business day = not a weekend or VIC public holiday, by the local date of interval start).
+> - The `QuantileBand` from the QR batch's `q025`/`q975`, with run 2's common mask. Check that the stored actuals equal market demand.
+> - `anomalies/injection.py` (§2.9; shared starts).
+> - The warm-up smoke run: market data truncated at 2022-04-30, residual at 2023-05-31. Bugs only.
+
 > **Update, 2026-11-16 (sixteenth session: `make dq` fixed):**
 > - `implausible_timestamps` no longer flags days after `ingestion.end_month` that a successful `nemweb_daily` run loaded. Grid, duration and future checks still apply to them.
 > - A new warning, `daily_report_days`, lists those days, one row per NEM day (now 1 Oct 2026, 288 intervals), so they stay visible.

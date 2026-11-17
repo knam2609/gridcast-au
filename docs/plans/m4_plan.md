@@ -29,6 +29,18 @@
 - **Curtailment is measured against UIGF.** AEMO's `SS_*_AVAILABILITY` columns exist only from table version 8 (May 2024); October 2021 → April 2024 has only `SS_*_UIGF`, AEMO's unconstrained intermittent generation forecast. D6's curtailment share is therefore 1 − cleared / UIGF throughout (§2.3), so the feature keeps one definition across development and holdout. Where both columns exist, availability was never above UIGF in the 60 months loaded. Availability is still loaded and shown in the evidence from May 2024.
 - **Battery evidence starts at the first non-zero interval.** The bidirectional-unit (battery) columns appear on 22 May 2024 but are 0 MW at every Victorian interval until 6 Aug 2024. Batteries outside that unit category sit inside the dispatchable totals, so a 0 MW there does not mean the batteries were idle. The evidence marks battery output as unavailable, with that reason, before the first non-zero interval (computed from the data), and labels later values "bidirectional units only".
 
+**Clarified in step 2, before any detector score on real data (2026-11-17; the user chose both recommendations):**
+- **Injection starts are shared.** One seeded draw of 1,000 eligible starts per detector is reused for every size and sign, so the power curves differ only by size (§2.9).
+- **D6's z-features use plain profiles.** Net interchange, dispatchable generation and available generation minus demand are z-scored against the generic profile (all day types, as D4). Only D1 splits by day type, as §2.3 says.
+- **Readings fixed while coding (no setting changed):**
+  - the p-value window holds the intervals ending in [t − 26 weeks, t), the 52,416 that §2.2 counts;
+  - a profile is missing until its 28 local days of history exist, which affects only the warm-up;
+  - a D6 month is scored only if its training window holds at least 256 complete rows (one tree's sample); every month after the warm-up has a full window;
+  - curtailment shares are not clipped, so cleared output above UIGF (§1, step 1b) gives a small negative share;
+  - events are merged within a split, so none crosses the development/holdout boundary, and the holdout run's development part can reproduce the development batch exactly;
+  - an event's peak is the alert with the lowest p, then the largest score, then the earliest. Scores of different detectors are not on one scale, so a cross-detector tie is settled by this fixed but arbitrary rule. A lines-only event's peak is its highest price;
+  - the reported-only flat-price injection holds the price at its value at the injection start for 3 h.
+
 ## 2. Design
 
 ### 2.1 Periods
@@ -143,7 +155,7 @@ Each event's evidence is facts with times and sources. Every field is labelled *
 
 ### 2.9 Synthetic injection (A3)
 
-- **Placement:** 1,000 seeded start times per (detector, size, sign), uniform over the detector's scored intervals in the period. Starts are placed only where the unmodified detector raised no alert within the injection span ± 1 h, so a detection must come from the injection.
+- **Placement:** 1,000 seeded start times per (detector, size, sign), uniform over the detector's scored intervals in the period. The same 1,000 starts serve every size and sign of a detector (clarified in step 2, §1). Starts are placed only where the unmodified detector raised no alert within the injection span ± 1 h, so a detection must come from the injection.
 - **One at a time:** each injection is scored alone. Trailing windows, profiles and Isolation Forest models are the unmodified ones; an injection only changes data from its start onwards.
 - **Detected:** at least one notable alert from that detector inside the injection span.
 - **Sizes (largest in bold; both signs where ±):**
@@ -250,6 +262,18 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
 **Step 2. Detector core.**
 - Package `src/gridcast/anomalies/` (window p-values on M3's Fenwick structure, D1–D6, the lines, the event merge rule, the injection harness), with the §2.8 property tests and control.
 - **Smoke run:** warm-up periods and synthetic data only, for bugs.
+- *Outcome (2026-11-17, step 2a: the core on synthetic data):*
+  - **Question round,** both recommendations chosen (§1, "Clarified in step 2"): shared injection starts; plain profiles for D6's z-features.
+  - Every §2 setting is now in `configs/base.yaml` (`anomalies`), typed in `AnomaliesConfig`, so step 4 can hash it.
+  - New modules under `src/gridcast/anomalies/`:
+    - `pvalues.py`: `RollingCounts` subclasses M3's `RollingOrderStats` with a count query. M3's frozen `rolling.py` is unchanged. The sweep also answers extra (interval, detector, value) queries against the unmodified windows, for the injections;
+    - `series.py`: inputs on one complete 5-minute grid, and each interval's local day, half-hour slot and NEM month;
+    - `profiles.py`, `detectors.py` (D1–D6), `isolation.py` (monthly forests), `events.py`, and `run.py` (scored periods, tiers, lines, events per split).
+  - **Tests,** all synthetic:
+    - brute-force checks of the window counts, profiles (including Melbourne's DST fall-back half-hour, which holds 12 values), volatility and band look-up;
+    - the event rule;
+    - **A5's property tests** in `tests/unit/test_anomaly_causality.py`: truncation and randomising the future leave every score, p-value, window size, tier and event opening at or before the cut unchanged, and every forest was fitted before its month. A centred, leaky profile fails both property tests, and perturbing data known at the cut changes the outputs.
+  - Still to come in step 2b: loading the real inputs, the injection harness, and the warm-up smoke run.
 
 **Step 3. Evidence, summaries and the SHAP core.**
 - `src/gridcast/explainability/`: TreeSHAP via `pred_contrib`, the E1 gate and families.
