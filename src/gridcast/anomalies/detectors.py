@@ -214,12 +214,63 @@ def margin_z(margin: np.ndarray, state: DetectorState, cfg: AnomaliesConfig) -> 
     return state.margin_profile.z(margin, cfg.profile.mad_consistency, floor)
 
 
-def compute_scores(
+def _band_scores(
     series: MarketSeries, band: QuantileBand | None, cfg: AnomaliesConfig
+) -> tuple[dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]], dict[str, np.ndarray]]:
+    """D2 and D3: the band at each target, and the scores where M2's mask allows."""
+    n = len(series)
+    bands: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    residual: dict[str, np.ndarray] = {}
+    for name, leads in (
+        (RESIDUAL_SHORT, cfg.residual.short_leads),
+        (RESIDUAL_DAYAHEAD, cfg.residual.dayahead_leads),
+    ):
+        lo, hi, ok = (
+            band_at_targets(band, series.ends, leads)
+            if band is not None
+            else (np.full(n, np.nan), np.full(n, np.nan), np.zeros(n, dtype=bool))
+        )
+        ok = ok & np.isfinite(series.demand)
+        bands[name] = (lo, hi, ok)
+        s = residual_score(series.demand, lo, hi, cfg.residual.width_floor_mw)
+        residual[name] = np.where(ok, s, np.nan)
+    return bands, residual
+
+
+def compute_scores(
+    series: MarketSeries,
+    band: QuantileBand | None,
+    cfg: AnomaliesConfig,
+    market: bool = True,
 ) -> tuple[dict[str, np.ndarray], DetectorState]:
-    """Every calibrated detector's score per interval (NaN where not valid)."""
+    """Every calibrated detector's score per interval (NaN where not valid).
+
+    ``market=False`` computes only D2 and D3: the market detectors' scores, profiles and
+    models are never computed (their scores are NaN). The warm-up smoke run uses this to
+    score D2/D3 over data that lies in the market detectors' development period.
+    """
     lay = layout(series, cfg.profile.slot_minutes)
+    n = len(series)
     days, k = cfg.profile.days, cfg.profile.mad_consistency
+    bands, residual = _band_scores(series, band, cfg)
+    nan = np.full(n, np.nan)
+    if not market:
+        empty = Profile(nan, nan)
+        state = DetectorState(
+            lay=lay,
+            demand_profile=empty,
+            x=nan,
+            price_profile=empty,
+            v=nan,
+            b=nan,
+            bands=bands,
+            change_scale=nan,
+            margin_profile=empty,
+            features=np.full((n, len(D6_FEATURES)), np.nan),
+            models={},
+        )
+        scores = {d: nan for d in DETECTORS} | residual
+        return scores, state
 
     # D1
     demand_profile = slot_profile(series.demand, lay, days, by_day_type=True)
@@ -233,23 +284,6 @@ def compute_scores(
     v = volatility(x, vol.window_intervals)
     b = volatility_baseline(v, vol.baseline_days * INTERVALS_PER_DAY, vol.baseline_lag_intervals)
     r5 = log_ratio(v, b, vol.epsilon)
-    # D2, D3
-    bands: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
-    residual: dict[str, np.ndarray] = {}
-    for name, leads in (
-        (RESIDUAL_SHORT, cfg.residual.short_leads),
-        (RESIDUAL_DAYAHEAD, cfg.residual.dayahead_leads),
-    ):
-        n = len(series)
-        lo, hi, ok = (
-            band_at_targets(band, series.ends, leads)
-            if band is not None
-            else (np.full(n, np.nan), np.full(n, np.nan), np.zeros(n, dtype=bool))
-        )
-        ok = ok & np.isfinite(series.demand)
-        bands[name] = (lo, hi, ok)
-        s = residual_score(series.demand, lo, hi, cfg.residual.width_floor_mw)
-        residual[name] = np.where(ok, s, np.nan)
     # D6
     iso = cfg.isolation_forest
     change = first_difference(series.demand)

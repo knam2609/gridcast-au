@@ -91,6 +91,7 @@ class DetectorRun:
     n_window: dict[str, np.ndarray]  # window (D6: training) size; -1 where no p-value
     state: DetectorState
     window: WindowPValues  # the rolling detectors' sweep (columns in ROLLING order)
+    market: bool = True  # False: D2/D3 only (market detectors and lines never computed)
 
 
 def run_detectors(
@@ -98,12 +99,14 @@ def run_detectors(
     band: QuantileBand | None,
     cfg: AnomaliesConfig,
     extra: Queries | None = None,
+    market: bool = True,
 ) -> DetectorRun:
     """Scores and p-values of every calibrated detector over the whole series.
 
     ``extra`` queries (rows, ROLLING column, value) are answered against the same windows.
+    ``market=False`` runs D2 and D3 only (:func:`~gridcast.anomalies.detectors.compute_scores`).
     """
-    scores, state = compute_scores(series, band, cfg)
+    scores, state = compute_scores(series, band, cfg, market)
     matrix = np.column_stack([scores[d] for d in ROLLING])
     wp = window_pvalues(matrix, np.isfinite(matrix), window_intervals(cfg), extra)
     pvalues = {d: wp.p[:, k] for k, d in enumerate(ROLLING)}
@@ -111,7 +114,7 @@ def run_detectors(
     p6, n6 = month_pvalues(scores[ISOLATION_FOREST], state.lay, state.models)
     pvalues[ISOLATION_FOREST] = p6
     n_window[ISOLATION_FOREST] = n6
-    return DetectorRun(series.ends, scores, pvalues, n_window, state, wp)
+    return DetectorRun(series.ends, scores, pvalues, n_window, state, wp, market)
 
 
 def alert_tiers(
@@ -119,6 +122,9 @@ def alert_tiers(
 ) -> dict[str, np.ndarray]:
     """Per detector (lines included): 0, 1 notable, 2 severe, inside the scored periods."""
     masks = split.masks(run.ends)
+    if not run.market:
+        off = np.zeros(len(run.ends), dtype=bool)
+        masks = {d: (m if d in RESIDUAL else off) for d, m in masks.items()}
     out: dict[str, np.ndarray] = {}
     for d in DETECTORS:
         t = tiers(run.pvalues[d], cfg.pvalues.notable, cfg.pvalues.severe)
@@ -154,9 +160,13 @@ class Detection:
 
 
 def detect(
-    series: MarketSeries, band: QuantileBand | None, split: Split, cfg: AnomaliesConfig
+    series: MarketSeries,
+    band: QuantileBand | None,
+    split: Split,
+    cfg: AnomaliesConfig,
+    market: bool = True,
 ) -> Detection:
-    """Scores, p-values, alerts and events of one split."""
-    run = run_detectors(series, band, cfg)
+    """Scores, p-values, alerts and events of one split (``market=False``: D2/D3 only)."""
+    run = run_detectors(series, band, cfg, market=market)
     alert = alert_tiers(run, series.price, split, cfg)
     return Detection(run, alert, split_events(run, alert, series.price, split, cfg))

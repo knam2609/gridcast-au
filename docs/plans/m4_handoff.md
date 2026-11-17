@@ -2,6 +2,20 @@
 
 Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff.md`](m3_handoff.md) and [`m3_plan.md`](m3_plan.md).
 
+> **Update, 2026-11-17 (seventeenth session, later: step 2b and the warm-up smoke run):**
+> - **New:**
+>   - `anomalies/inputs.py`: the database series and the QR band with run 2's common mask, checked against run 2's issue times and actuals;
+>   - `anomalies/injection.py`: §2.9's harness, with shared starts;
+>   - `anomalies/smoke.py` and `make anomalies-smoke`.
+>   - Tests: the harness equals a full recompute where §2.9's unmodified context applies; eligibility; an integration test of the loader. The unit suite has 384 tests.
+> - **Smoke run** (warm-up only, 18 s; details and numbers in [`m4_plan.md`](m4_plan.md), step 2 outcome).
+>   - **No coding bug was found.** The top D1 and D4 scores are real data (New Year's Eve 2021 evening demand; negative prices at Sunday dawn).
+>   - D6's weakness is a property of Isolation Forests: a value beyond the training range behaves like the training maximum.
+> - **It previews likely pre-registered failures.** Power at the largest sizes: D1 55–58%, D3 76–86%, D4 28% ($15,000) and 52% (−$1,000), D6 1–2%. D2 and D5 reached 100%. D1 alerted at p ≤ 0.01 on 0.14% of intervals.
+> - **Open question for the user (asked 2026-11-17):** keep the pre-registered recipe and publish any failures, or revise the weak detectors before the freeze? Ask again if not answered.
+>
+> **Next:** the user's answer, then step 3 (evidence, summaries and the SHAP core).
+
 > **Update, 2026-11-17 (seventeenth session: step 2a, the detector core):**
 > - **Question round, both recommendations chosen** (in [`m4_plan.md`](m4_plan.md) §1, "Clarified in step 2"):
 >   - the injection starts are shared: 1,000 per detector, reused for every size and sign;

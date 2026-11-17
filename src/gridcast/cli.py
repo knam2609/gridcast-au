@@ -1133,6 +1133,23 @@ def anomaly_reference_events(
     typer.echo(f"wrote {DOC_PATH}")
 
 
+@app.command("anomalies-smoke")
+def anomalies_smoke(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    weeks: Annotated[int, typer.Option(help="Pseudo-scored weeks at each warm-up's end")] = 8,
+    starts: Annotated[int, typer.Option(help="Injection starts per detector")] = 200,
+) -> None:
+    """M4 step 2 smoke run on the warm-up periods only (bugs, never tuning; no writes)."""
+    from gridcast.anomalies.smoke import market_pass, residual_pass, summarise
+    from gridcast.database.engine import get_engine
+
+    cfg = load_config()
+    engine = get_engine()
+    for run_pass in (market_pass, residual_pass):
+        for line in summarise(run_pass(engine, cfg, region, weeks, starts), cfg):
+            typer.echo(line)
+
+
 @app.command("feature-catalogue")
 def feature_catalogue() -> None:
     """Write docs/feature_catalogue.md from the feature catalogue in code (no database)."""

@@ -163,3 +163,24 @@ def test_price_lines_and_scored_periods() -> None:
         assert not t[d][~masks[d]].any()
     residual_first = int(np.flatnonzero(masks[RESIDUAL_SHORT])[0])
     assert residual_first > first_scored
+
+
+def test_check_band_actuals() -> None:
+    from gridcast.anomalies.inputs import check_band_actuals
+    from gridcast.anomalies.series import epoch_minutes
+
+    series, band = base_inputs()
+    minutes = epoch_minutes(series.ends)
+    idx = (
+        epoch_minutes(band.issue_times)[:, None]
+        + 5 * np.arange(1, band.n_leads + 1)[None, :]
+        - minutes[0]
+    ) // 5
+    inside = (idx >= 0) & (idx < len(series))
+    actual = np.full(idx.shape, np.nan)
+    actual[inside] = series.demand[idx[inside]]
+    n = check_band_actuals(band, actual, series)
+    assert n == int((band.valid & inside).sum()) > 0
+    actual[np.argwhere(band.valid & inside)[0][0], np.argwhere(band.valid & inside)[0][1]] += 1
+    with pytest.raises(ValueError, match="differ from market demand"):
+        check_band_actuals(band, actual, series)

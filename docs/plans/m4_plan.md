@@ -274,6 +274,28 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
     - the event rule;
     - **A5's property tests** in `tests/unit/test_anomaly_causality.py`: truncation and randomising the future leave every score, p-value, window size, tier and event opening at or before the cut unchanged, and every forest was fitted before its month. A centred, leaky profile fails both property tests, and perturbing data known at the cut changes the outputs.
   - Still to come in step 2b: loading the real inputs, the injection harness, and the warm-up smoke run.
+- *Outcome (2026-11-17, step 2b: inputs, injection, warm-up smoke run):*
+  - **New modules:**
+    - `anomalies/inputs.py` loads the series from `market_intervals`, `generation_intervals` and `calendar_days`. It reads the QR band with run 2's common mask, after checking that the issue times and actuals agree, and checks the stored actuals against market demand;
+    - `anomalies/injection.py` is §2.9's harness, with shared starts. Injected values are scored against the unmodified profiles, baselines, bands, forests and windows: one extra window sweep for D1–D5, the month's forest for D6;
+    - `anomalies/smoke.py` and `gridcast anomalies-smoke` (`make anomalies-smoke`).
+  - **Tests:**
+    - the harness equals a full recompute wherever §2.9 says the context stays unmodified;
+    - eligibility (scored, valid, no alert within ±1 h, D2 aligned) and seeded shared starts;
+    - an integration test of the loader.
+  - **Smoke run (warm-up data only, bugs only; 18 s).**
+    - The market pass read data ending 2022-04-30 and treated 6 Mar → 30 Apr 2022 as pseudo-scored.
+    - The residual pass read demand to 2023-05-31 and computed D2/D3 only; the market detectors and lines were never computed on that data.
+    - Stored QR actuals equal market demand on all 2,923,920 pairs checked.
+    - **No coding bug was found.** Three checks were run:
+      - D1's largest |z| are New Year's Eve 2021 evening demand;
+      - D4's largest are negative prices at Sunday dawn;
+      - D6's forest scores a row at 100× one feature's 99th percentile near the training median, because split thresholds come from the training data. That is a known property of Isolation Forests, not a code fault.
+    - **But the run previews likely pre-registered failures** (immature windows, one season):
+      - power at the largest sizes, 200 starts: D1 ±2,000 MW 55–58%; D3 ±2,000 MW 76–86%; D4 $15,000 28% and −$1,000 52%; D6 ±2,000 MW 1–2%. D2 (±1,000 MW) and D5 ($5,000) reached 100%;
+      - D1's p ≤ 0.01 rate was 0.14%, against A1's band of 0.5–2%;
+      - in asinh(price/$10) units, a −$43 dawn price is as far from a typical $74 as a $15,000 spike, so frequent negative prices fill D4's top 0.1%.
+    - How to respond is a question for the user (see the handoff).
 
 **Step 3. Evidence, summaries and the SHAP core.**
 - `src/gridcast/explainability/`: TreeSHAP via `pred_contrib`, the E1 gate and families.
