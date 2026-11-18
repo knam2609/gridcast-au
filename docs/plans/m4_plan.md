@@ -295,7 +295,7 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
       - power at the largest sizes, 200 starts: D1 ±2,000 MW 55–58%; D3 ±2,000 MW 76–86%; D4 $15,000 28% and −$1,000 52%; D6 ±2,000 MW 1–2%. D2 (±1,000 MW) and D5 ($5,000) reached 100%;
       - D1's p ≤ 0.01 rate was 0.14%, against A1's band of 0.5–2%;
       - in asinh(price/$10) units, a −$43 dawn price is as far from a typical $74 as a $15,000 spike, so frequent negative prices fill D4's top 0.1%.
-    - How to respond is a question for the user (see the handoff).
+    - **User decision (2026-11-19): keep the recipe as pre-registered.** Nothing in §2 changes. Development runs blind after the freeze, and any A1/A3 failure is published. If failures occur, a v2 may follow the development verdicts with a recorded reason, a new hash and a disclosed rerun (§6), as M2's second development run did. The smoke run stays bugs-only.
 
 **Step 3. Evidence, summaries and the SHAP core.**
 - `src/gridcast/explainability/`: TreeSHAP via `pred_contrib`, the E1 gate and families.
