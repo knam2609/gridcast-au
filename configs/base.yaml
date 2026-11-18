@@ -280,9 +280,10 @@ anomalies:
     # cut times in its scored period; everything at or before each cut must be identical.
     real_cuts: 3
   output_dir: anomalies             # under the data root; not hashed
-  # The freeze (step 4), recorded after the recipe commit; not hashed.
-  frozen_config_hash: null
-  frozen_commit: null
+  # The freeze (step 4, 2026-11-19), recorded after the recipe commit and before the
+  # development run; not hashed. Every scored run must match both (anomalies-freeze-check).
+  frozen_config_hash: "2ce8b3fc523ae81c"
+  frozen_commit: "2dc58fa"
 
 aemo:
   # AEMO's own demand forecasts: every run of 30-minute pre-dispatch and 5-minute

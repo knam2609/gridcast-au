@@ -9,7 +9,11 @@ Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff
 > - **A5:** the synthetic suite plus 3 seeded real-data cuts in the development run.
 > - **Storage:** one `model_runs` row per run, parquet under `<data root>/anomalies/<batch>/`, events in `anomalies`.
 >
-> **Next:** the step-4 code (freeze, combined band, case rule, cuts, `gridcast anomalies-dev`), then the freeze record, then the development run from the clean freeze commit, then `report-m4`.
+> **Step 4a done `2dc58fa`:** `anomalies/recipe.py` (frozen: hash, splits, case rule, cuts, forest check), `anomalies/freeze.py`, `inputs.split_band` (with `check_qr_overlap` and `concat_bands`), `anomalies/dev.py`, and `gridcast anomalies-freeze-check` / `anomalies-dev` (Make targets of the same names). It adds 13 unit tests (429 in the suite) and 3 integration tests. Before the freeze, the warm-up smoke runs reproduced step 3's results (33 + 7 events, all complete, E1 passes).
+>
+> **Step 4b, the freeze:** `anomalies.frozen_config_hash` = `2ce8b3fc523ae81c`, `anomalies.frozen_commit` = `2dc58fa`, pinned by `tests/unit/test_anomaly_freeze.py`. No development score existed when it was recorded.
+>
+> **Next:** `make anomalies-dev` from the clean freeze-record commit (it refuses on a dirty tree), then `report-m4`.
 
 > **Update, 2026-11-19 (eighteenth session: step 3, evidence, summaries and the SHAP core):** in the question round the user chose every recommendation. Recorded in [`m4_plan.md`](m4_plan.md) §1, "Clarified in step 3", before any evidence or SHAP code:
 > - a demand event's SHAP explains its demand peak (the lowest-p D1–D3 alert);

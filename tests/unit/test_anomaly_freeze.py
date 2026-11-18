@@ -2,9 +2,36 @@
 
 from dataclasses import replace
 
-from gridcast.anomalies.freeze import EXPLAIN_MODULES, FROZEN_PATHS, RECIPE_MODULES, FreezeState
-from gridcast.config import PROJECT_ROOT
+import pytest
+
+from gridcast.anomalies.freeze import (
+    EXPLAIN_MODULES,
+    FROZEN_PATHS,
+    RECIPE_MODULES,
+    FreezeState,
+    freeze_state,
+)
+from gridcast.anomalies.recipe import anomaly_config_hash
+from gridcast.config import PROJECT_ROOT, load_config
 from gridcast.intervals.freeze import FROZEN_PATHS as M3_FROZEN_PATHS
+
+
+def test_anomaly_recipe_is_frozen() -> None:
+    """The recipe was frozen in step 4, before the development run (m4_plan.md §1): a setting
+    change that alters any anomaly run fails here."""
+    cfg = load_config()
+    assert cfg.anomalies.frozen_commit == "2dc58fa"
+    assert anomaly_config_hash(cfg) == cfg.anomalies.frozen_config_hash == "2ce8b3fc523ae81c"
+
+
+def test_frozen_anomaly_code_is_unchanged() -> None:
+    """No file under the frozen paths differs from the frozen commit."""
+    state = freeze_state(load_config())
+    if state.sha is None:
+        pytest.skip("not a git checkout with the frozen commit")
+    assert state.frozen_changed == ()
+    assert state.problems == []
+
 
 # Modules that only call the frozen code and store or read its outputs, the smoke runs, and
 # the freeze check itself. Later stages (report, holdout) must be added here when written.
