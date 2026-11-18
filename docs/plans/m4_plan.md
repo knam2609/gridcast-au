@@ -318,6 +318,21 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
 - `src/gridcast/explainability/`: TreeSHAP via `pred_contrib`, the E1 gate and families.
 - `anomalies/evidence.py`: the §2.5 fields and templates, plus the banned-phrase test.
 - **SHAP smoke run** on one retrain, to measure cost.
+- *Outcome (2026-11-19, step 3a: the SHAP core):*
+  - **Question round,** every recommendation chosen (§1, "Clarified in step 3").
+  - **Config:** `anomalies.explain` pins both M2 batches (run 2 and `holdout_main`), the sample size, the SHAP-sum tolerance and the output directory. It sits inside the `anomalies` section, so step 4's hash covers it.
+  - **New package `src/gridcast/explainability/`:**
+    - `families.py`: the six families are the feature catalogue's groups of variant C;
+    - `stored.py`: the fits from M2's retrain records, each with its fold and band. It refuses a batch that is not a complete run of the frozen M2 recipe, or a model file whose columns or tree count differ from the record. A loaded booster sits inside M2's own `LightGBMModel`, so every forecast follows M2's code path;
+    - `treeshap.py`: `pred_contrib`, the decomposition anchor + base value + Σ contributions, and E1's gate (`GateError` withholds the explanations);
+    - `sample.py`: the seeded per-fit draw, and feature rows rebuilt one lead at a time with M2's builder and its float32 conversion;
+    - `pairs.py`: explains any set of stored pairs, which step 3b reuses for event peaks;
+    - `smoke.py` and `gridcast explain-smoke` (`make explain-smoke`).
+  - **Tests** (`tests/unit/test_explainability.py`, 13): a synthetic M2 walk-forward stores one booster per target form. The explainer reloads them and reproduces the stored float32 forecasts bit for bit, and each forecast decomposes within 10⁻⁶. A one-ulp change in a stored value fails the gate, and so do a SHAP sum that no longer adds up and stored values that are not float32. The unit suite has 397 tests.
+  - **SHAP smoke run** (retrain 2022-11-01, 4 fits × 20,000 pairs, 37 s; E1 results and timings only):
+    - **E1 passes on all 80,000 pairs.** No recomputed forecast differs from the stored float32 value, and the largest SHAP-sum error is 2.5 × 10⁻¹¹.
+    - The largest float64-vs-stored gap, 4.8 × 10⁻⁴ MW, is float32 rounding: 45 of the fold's lead 1–6 forecasts lie above 8,192 MW, where one float32 step is 9.8 × 10⁻⁴ MW.
+    - **Cost:** predict + SHAP took 1.4–2.7 s per 31-leaf fit and 24.4 s for the 127-leaf fit. Scaled by tree count, the full global samples need about 11 min (development, 48 fits) and 5 min (holdout, 20 fits), well under §5's hour. Feature building is negligible.
 
 **Step 4. Freeze, the development run, and the report.**
 - Freeze record and unit test (§2.8).

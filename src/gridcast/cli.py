@@ -1150,6 +1150,22 @@ def anomalies_smoke(
             typer.echo(line)
 
 
+@app.command("explain-smoke")
+def explain_smoke(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    retrain: Annotated[
+        str, typer.Option(help="Run 2 retrain (its issue times must lie in D2/D3's warm-up)")
+    ] = "2022-11-01",
+) -> None:
+    """M4 step 3 SHAP smoke run on one retrain: E1 results and timings only (no writes)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.explainability.smoke import run_explain_smoke, summarise
+
+    cfg = load_config()
+    for line in summarise(run_explain_smoke(get_engine(), cfg, region, retrain)):
+        typer.echo(line)
+
+
 @app.command("feature-catalogue")
 def feature_catalogue() -> None:
     """Write docs/feature_catalogue.md from the feature catalogue in code (no database)."""

@@ -247,6 +247,18 @@ anomalies:
     price_volatility: {minutes: 60, sizes: [50, 200, 1000, 5000]}  # alternate +- A $/MWh
     isolation_forest: {minutes: 60, sizes: [-2000, -1000, -500, -250, 250, 500, 1000, 2000]}
     flat_price_minutes: 180         # reported only: price held at its value at the start
+  explain:
+    # §2.6: TreeSHAP (LightGBM pred_contrib) of the stored M2 LightGBM C boosters; no refit.
+    # E1 (user 2026-11-19): the recomputed forecast, cast to float32 as M2 stored it, equals
+    # the stored one exactly; base value + sum of contributions equals the raw prediction
+    # within sum_tolerance (float64).
+    model: lgbm_C
+    variant: C
+    dev_batch: "6d783932-5834-4e18-a9e8-0e3567db46e6"      # M2 run 2 (main)
+    holdout_batch: "fcb6abb6-49a3-4923-9d79-64e05a44d75f"  # M2 step 6 (holdout_main)
+    sample_pairs: 20000             # global sample per (retrain, lead band), seeded
+    sum_tolerance: 1.0e-6
+    output_dir: explain             # under the data root
 
 aemo:
   # AEMO's own demand forecasts: every run of 30-minute pre-dispatch and 5-minute

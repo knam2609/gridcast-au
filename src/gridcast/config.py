@@ -430,6 +430,18 @@ class InjectionConfig(BaseModel):
         return self
 
 
+class ExplainConfig(BaseModel):
+    """SHAP of the stored M2 LightGBM C boosters and the E1 gate (m4_plan.md §2.6)."""
+
+    model: str
+    variant: str
+    dev_batch: str
+    holdout_batch: str
+    sample_pairs: int = Field(gt=0)
+    sum_tolerance: float = Field(gt=0)
+    output_dir: str
+
+
 class AnomaliesConfig(BaseModel):
     """Milestone 4: market anomalies and demand-model explanations (docs/plans/m4_plan.md).
 
@@ -451,6 +463,7 @@ class AnomaliesConfig(BaseModel):
     price_lines: PriceLinesConfig
     events: AnomalyEventsConfig
     injection: InjectionConfig
+    explain: ExplainConfig
 
 
 class WeatherVariableConfig(BaseModel):

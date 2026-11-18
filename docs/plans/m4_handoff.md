@@ -8,7 +8,14 @@ Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff
 > - E1's forecast check is an exact float32 match (M2 stored float32);
 > - the smoke runs cover the warm-up events' evidence and SHAP on retrain 2022-11-01, and print only completeness, banned-phrase counts, E1 results and timings.
 >
-> **Next: step 3a** (`src/gridcast/explainability/`, the E1 gate and the SHAP smoke run), then 3b (`anomalies/evidence.py`).
+> - **Step 3a done:**
+>   - `src/gridcast/explainability/` (families, stored fits, TreeSHAP with E1's gate, the seeded sample, pair explanations);
+>   - `anomalies.explain` in the config;
+>   - `make explain-smoke`;
+>   - 13 new unit tests (397 in the suite).
+> - **SHAP smoke run** (retrain 2022-11-01, 80,000 pairs, 37 s): E1 passes on every pair, with no float32 mismatch and a largest SHAP-sum error of 2.5 × 10⁻¹¹. The full global samples should take about 11 min (development) and 5 min (holdout). Details are in [`m4_plan.md`](m4_plan.md), step 3 outcome.
+>
+> **Next: step 3b** (`anomalies/evidence.py`: the §2.5 fields, the three-sentence summaries, the banned-phrase test, and evidence for the warm-up smoke events).
 
 > **Update, 2026-11-17 (seventeenth session, later: step 2b and the warm-up smoke run):**
 > - **New:**

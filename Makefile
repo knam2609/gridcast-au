@@ -6,7 +6,7 @@ REGIONS ?= VIC1
 DAYS ?= 2026-10-01
 CHECK_MONTH ?= 2026-09
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe ingest-generation weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout anomaly-reference-events anomalies-smoke catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe ingest-generation weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout anomaly-reference-events anomalies-smoke explain-smoke catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -125,6 +125,9 @@ anomaly-reference-events: ## M4 step 1a: write docs/m4_reference_events.md (AEMO
 
 anomalies-smoke: ## M4 step 2: detectors, events and injections on the warm-up periods only (bugs, no writes; minutes)
 	$(UV) run gridcast anomalies-smoke --region $(firstword $(REGIONS))
+
+explain-smoke: ## M4 step 3: SHAP of run 2's retrain 2022-11-01 (E1 results and timings only, no writes)
+	$(UV) run gridcast explain-smoke --region $(firstword $(REGIONS))
 
 catalogue: ## Regenerate docs/feature_catalogue.md from the feature catalogue in code
 	$(UV) run gridcast feature-catalogue
