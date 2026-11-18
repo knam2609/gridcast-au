@@ -13,7 +13,12 @@ Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff
 >
 > **Step 4b, the freeze:** `anomalies.frozen_config_hash` = `2ce8b3fc523ae81c`, `anomalies.frozen_commit` = `2dc58fa`, pinned by `tests/unit/test_anomaly_freeze.py`. No development score existed when it was recorded.
 >
-> **Next:** `make anomalies-dev` from the clean freeze-record commit (it refuses on a dirty tree), then `report-m4`.
+> **Development run done:** run 104, batch `40cbe0f5-…`, from `4990ebf`, about 3 min. **`report-m4`** (`74fc3a2`, `b0a5c5b`) recomputed the stored run with no mismatch. **A4, A5 and E1 (demand peaks) pass; A1, A2 and A3 fail** ([`reports/m4_anomalies.md`](../../reports/m4_anomalies.md); numbers in [`m4_plan.md`](m4_plan.md), step 4 outcome):
+> - A1: D6 flags 0.259% of intervals at p ≤ 0.001 (bound 0.2%); the other 11 checks are inside.
+> - A2: P05 (5 Aug 2024, $17,500 for 10 min) missed; D4's lowest p near it was 1.48 × 10⁻².
+> - A3: only D2 (±) and D5 reach 90%; D1, D3, D4 and D6 fail, as the smoke run previewed.
+>
+> **Next: a question round.** Should a disclosed, re-hashed v2 follow for the failing detectors (plan §6), and with what changes? Or should v1 stand as published? Then step 5 (`explain-dev`, `report-m4-explain`), which does not depend on the anomaly verdicts. A v2 must not touch the holdout until its own development run is done.
 
 > **Update, 2026-11-19 (eighteenth session: step 3, evidence, summaries and the SHAP core):** in the question round the user chose every recommendation. Recorded in [`m4_plan.md`](m4_plan.md) §1, "Clarified in step 3", before any evidence or SHAP code:
 > - a demand event's SHAP explains its demand peak (the lowest-p D1–D3 alert);

@@ -388,6 +388,19 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
 - Freeze record and unit test (§2.8).
 - `gridcast anomalies-dev` from a clean commit stores the batch: per-interval scores and p-values (parquet under `<data root>/anomalies/`), events in `anomalies`, `model_runs` rows, and the injection results.
 - `gridcast report-m4` → `reports/m4_anomalies.md` and figures: A1–A5 on development, power curves, the reference-event table, the catalogue and the case studies.
+- *Outcome (2026-11-19, step 4):*
+  - **Question round,** every recommendation chosen (§1, "Clarified in step 4"), committed `a7de6b2` before any freeze code.
+  - **4a `2dc58fa`:** `anomalies/recipe.py`, `anomalies/freeze.py`, `inputs.split_band`, `anomalies/dev.py`, and `gridcast anomalies-freeze-check` / `anomalies-dev`. Before the freeze, the warm-up smoke runs reproduced step 3's results.
+  - **4b `4990ebf`, the freeze:** hash `2ce8b3fc523ae81c`, code `2dc58fa`, pinned by a unit test. No development score existed yet.
+  - **The development run** (run 104, batch `40cbe0f5-d232-4bb9-8b92-0402ab249086`) ran once from `4990ebf` with a clean tree, in about 3 min: load 1 s, detect 46 s, inject 36 s, cuts 87 s, evidence 5 s. It stored 420,768 intervals, 44,000 injections, 47 forests and 1,102 events.
+  - **4c `74fc3a2` + `b0a5c5b`:** `gridcast report-m4`. The plan's readings of each criterion were written while the run was in progress, before any of its output was read. The report recomputed every tier, line, event and count from the stored run with no mismatch.
+  - **Verdicts ([`reports/m4_anomalies.md`](../../reports/m4_anomalies.md)): A4, A5 and E1 (demand peaks) pass; A1, A2 and A3 fail.**
+    - A1: 11 of 12 checks inside. D6's share at p ≤ 0.001 is 0.259%, above the 0.2% bound; its 1.79% at p ≤ 0.01 is inside.
+    - A2: 6 of 7 class-P events caught. P05 (5 Aug 2024, 08:00–08:15 local, $17,500 for 2 intervals) was missed; the lowest p of any calibrated detector within 30 min of it was D4's 1.48 × 10⁻².
+    - A3: 3 of 11. D2 reached 100% at ±1,000 MW and D5 91.4% at $5,000. Below 90%: D1 ±2,000 MW 33.2% / 33.4%; D3 ±2,000 MW 79.6% / 80.4%; D4 $15,000 10.7% and −$1,000 32.8%; D6 ±2,000 MW 1.9% each. These are the four detectors that step 2b's smoke run flagged.
+    - A4: all 1,102 events complete, none with a banned phrase. A5: the synthetic suite passed 7 of 7, the 3 real cuts showed 0 differences, and no forest leaked. E1: 422 demand-peak pairs, 0 mismatches.
+  - Reported only: 475 calibrated events (104 severe) and 627 price-line-only events.
+  - **Not decided:** whether a disclosed v2 follows (§6, risks table) and for which detectors. That is the user's call, so it needs a question round. Step 5 (explanations) does not depend on these verdicts.
 
 **Step 5. Explanations report.**
 - `gridcast explain-dev` (the global SHAP sample and the E1 gate).
