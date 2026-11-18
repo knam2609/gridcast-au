@@ -2,6 +2,14 @@
 
 Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff.md`](m3_handoff.md) and [`m3_plan.md`](m3_plan.md).
 
+> **Update, 2026-11-19 (eighteenth session: step 3's question round):** the user chose every recommendation. Recorded in [`m4_plan.md`](m4_plan.md) §1, "Clarified in step 3", before any evidence or SHAP code:
+> - a demand event's SHAP explains its demand peak (the lowest-p D1–D3 alert);
+> - summaries have three sentences;
+> - E1's forecast check is an exact float32 match (M2 stored float32);
+> - the smoke runs cover the warm-up events' evidence and SHAP on retrain 2022-11-01, and print only completeness, banned-phrase counts, E1 results and timings.
+>
+> **Next: step 3a** (`src/gridcast/explainability/`, the E1 gate and the SHAP smoke run), then 3b (`anomalies/evidence.py`).
+
 > **Update, 2026-11-17 (seventeenth session, later: step 2b and the warm-up smoke run):**
 > - **New:**
 >   - `anomalies/inputs.py`: the database series and the QR band with run 2's common mask, checked against run 2's issue times and actuals;

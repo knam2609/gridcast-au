@@ -41,6 +41,23 @@
   - an event's peak is the alert with the lowest p, then the largest score, then the earliest. Scores of different detectors are not on one scale, so a cross-detector tie is settled by this fixed but arbitrary rule. A lines-only event's peak is its highest price;
   - the reported-only flat-price injection holds the price at its value at the injection start for 3 h.
 
+**Clarified in step 3, before any evidence or SHAP value on real data (2026-11-19; the user chose every recommendation):**
+- **A demand event's SHAP breakdown explains its demand peak.** That is the D1–D3 alert with the lowest p, with §2.4's tie rule. It equals the event peak whenever a demand detector holds that peak. In a mixed event, the overall peak may be a price alert at an interval where demand was ordinary. The evidence names the interval explained, and §2.5 item 8's forecasts are taken at it.
+- **Summaries have three sentences:**
+  1. the lead fact for the peak's category: the value against its profile, or the actual against the forecast band;
+  2. the other market variable over the same 5 minutes (price for demand events, demand otherwise);
+  3. the operator flags in the event's span.
+  - Supply and weather facts stay in the evidence fields. The fewer facts a summary places side by side, the fewer causal readings it invites.
+- **E1's forecast check is exact at storage precision.** M2 stored its forecasts as float32, and one float32 step at 5,000 MW is about 0.0005 MW, so "within 10⁻⁶ MW" cannot be tested against them. The recomputed forecast, cast to float32 as M2 stored it, must equal the stored value bit for bit, the standard of M3's point reproduction. The second check, base value + Σ SHAP = raw prediction within 10⁻⁶, stays as written, in float64.
+- **Smoke runs are for bugs and cost only:**
+  - evidence and summaries are built for step 2b's warm-up smoke events, and the run prints only field completeness, banned-phrase counts and 5 example summaries;
+  - SHAP runs on retrain 2022-11-01, whose issue times fall in D2/D3's warm-up. The run prints only the E1 results and timings, with no SHAP summary.
+- **Readings fixed before coding (no setting changed):**
+  - LightGBM C's stored forecasts start at issue time 2022-11-01. Events before then, and pairs outside M2's common mask (e.g. the GFS gap of Dec 2023 → Jan 2024), mark §2.5 items 3 and 8 unavailable, with that reason;
+  - the *latest* forecast of interval *t* is the one from the issue time at lead 1–6 (as D2), and the *day-ahead* forecast is from the issue time at lead 283–288 (as D3);
+  - AEMO's *matched* forecasts follow M2's benchmark (`evaluation/aemo_benchmark.py`). They are the 5-minute pre-dispatch and 30-minute pre-dispatch runs whose nominal run time is our issue time, at both issue times. Pre-dispatch is compared with the mean actual demand over its 30-minute period. A run that does not reach *t* is marked unavailable;
+  - holdout SHAP explains holdout issue times only. The `holdout_main` retrain of 2025-08-01 contributes its October 2025 issue times; its Aug–Sep 2025 issue times are development, already explained by run 2's identical model.
+
 ## 2. Design
 
 ### 2.1 Periods
