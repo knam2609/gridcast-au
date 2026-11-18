@@ -1218,6 +1218,16 @@ def anomalies_dev(region: Annotated[str, typer.Option(help="Region id")] = "VIC1
         typer.echo(line)
 
 
+@app.command("report-m4")
+def report_m4(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+    """Write reports/m4_anomalies.md from the stored development run (A1-A5, E1 at peaks)."""
+    from gridcast.anomalies.report import write_report as write_m4
+    from gridcast.database.engine import get_engine
+
+    path = write_m4(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
 @app.command("feature-catalogue")
 def feature_catalogue() -> None:
     """Write docs/feature_catalogue.md from the feature catalogue in code (no database)."""

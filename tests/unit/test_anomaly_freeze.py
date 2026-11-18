@@ -35,7 +35,7 @@ def test_frozen_anomaly_code_is_unchanged() -> None:
 
 # Modules that only call the frozen code and store or read its outputs, the smoke runs, and
 # the freeze check itself. Later stages (report, holdout) must be added here when written.
-UNFROZEN_ANOMALIES = {"__init__", "dev", "freeze", "smoke"}
+UNFROZEN_ANOMALIES = {"__init__", "dev", "freeze", "report", "smoke"}
 UNFROZEN_EXPLAIN = {"__init__", "smoke"}
 
 

@@ -76,6 +76,13 @@
   - the cuts are uniform over the interval indices of the development scored period (from 2022-05-01), never its last interval. A truncated run keeps the forecasts issued at or before the cut;
   - the development run reads data only up to NEM midnight of 2025-10-01. It refuses to run if the freeze does not hold, the tree is dirty, or a successful development run is already stored for the hash. Development is scored once;
   - if E1 fails at any demand peak, the run stops before anything is stored (§2.6's withholding).
+- **How `report-m4` reads the criteria, fixed while the development run was in progress and before any of its output was read (2026-11-19):**
+  - A1's *scored intervals* are those in the detector's scored period that have a p-value: a valid score, and for D6 a month model;
+  - A2 counts an alert at any interval whose end lies in [start − 30 min, end + 30 min] of the reference event, where start is the start of its first flagged interval and end the end of its last;
+  - A3's power is the detected share of the injections drawn, with their number shown (fewer than 1,000 only if fewer starts were eligible). The flat-price injection is reported only;
+  - A4 covers every development event of the stored run;
+  - A5 passes only if the synthetic suite (`tests/unit/test_anomaly_causality.py`, controls included) passes, every real cut shows no difference, and no forest's last training interval ends after its month's start (recomputed from the stored ranges);
+  - the report recomputes the stored counts: every tier from its p-value and the price lines from the stored prices, and each detector's alert count and the event count against the run's record. It stops on any mismatch.
 
 ## 2. Design
 
