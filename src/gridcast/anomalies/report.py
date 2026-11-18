@@ -455,9 +455,9 @@ def _style(ax: Axes, title: str, xlabel: str, ylabel: str) -> None:
 
 def plot_power(power: pd.DataFrame, path: Path) -> None:
     """Small multiples: one detector per panel (sizes are in different units)."""
-    fig = Figure(figsize=(10, 6.2), dpi=150, facecolor=SURFACE)
+    fig = Figure(figsize=(10, 6.6), dpi=150, facecolor=SURFACE)
     axes = fig.subplots(2, 3)
-    fig.subplots_adjust(left=0.07, right=0.98, top=0.86, bottom=0.1, hspace=0.55, wspace=0.28)
+    fig.subplots_adjust(left=0.07, right=0.98, top=0.86, bottom=0.15, hspace=0.62, wspace=0.28)
     fig.suptitle(
         "Detection power by injection size (development, 1,000 shared starts per detector)",
         color=INK,
