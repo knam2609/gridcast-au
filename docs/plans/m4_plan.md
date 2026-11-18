@@ -58,6 +58,19 @@
   - AEMO's *matched* forecasts follow M2's benchmark (`evaluation/aemo_benchmark.py`). They are the 5-minute pre-dispatch and 30-minute pre-dispatch runs whose nominal run time is our issue time, at both issue times. Pre-dispatch is compared with the mean actual demand over its 30-minute period. A run that does not reach *t* is marked unavailable;
   - holdout SHAP explains holdout issue times only. The `holdout_main` retrain of 2025-08-01 contributes its October 2025 issue times; its Aug–Sep 2025 issue times are development, already explained by run 2's identical model.
 
+**Clarified in step 4, before the freeze and before any development score (2026-11-19; the user chose every recommendation):**
+- **What the freeze covers.**
+  - The anomaly config hash covers the whole `anomalies` section: the reference-event rules, every detector setting, the injection, the evidence and the SHAP settings. It leaves out output directories and the freeze record itself. It also covers the split dates (`backtest.holdout_start`, `backtest.holdout_end`).
+  - `FROZEN_PATHS` = M3's frozen paths (which hold M2's), every `anomalies` module that scores, merges, injects or describes, and `explainability/` except its smoke module.
+  - The smoke, report and freeze modules and the CLI are not frozen. A unit test classifies every module of both packages, so new recipe code cannot slip past the freeze.
+- **The holdout band for D2/D3 is split by issue time.** Issue times before `backtest.holdout_start` use the development QR batch with run 2's common mask. Later issue times use the holdout QR batch with `holdout_main`'s mask. The evidence's forecasts already follow this rule. The two QR batches overlap on Aug–Sep 2025 (2,928 issue times); there they were bit-identical when checked on 2026-11-19 (843,264 finite pairs per quantile). The holdout run refuses to start if they ever differ.
+- **Case-study ties (§3.2).** p has a floor of 1/(1 + n), which any score above its whole 26-week window reaches, so ties at the floor are likely.
+  - The rule: the 5 development events with the lowest p from a calibrated detector. Ties go to the event with more calibrated detectors firing, then to a seeded draw (`anomalies.seed`).
+  - The two named events (13 Feb 2024 and 9 Dec 2024) are added on top. A rule pick that is also a named event is shown once and not replaced.
+  - The holdout uses the same rule, without named events.
+- **A5 also checks real data.** The report runs the synthetic suite, as pre-registered. In addition, the development run reruns detection on the real series truncated at 3 seeded cut times inside the development scored period. Every score, p-value, window size, tier and event opening at or before each cut must equal the full pass exactly. Both parts count toward A5.
+- **Storage (the default, stated in the question round):** one `model_runs` row per anomaly run (kind `anomaly`, target `market`). Per-interval scores, p-values, window sizes and tiers, the injection results, the forest training ranges and the cut checks go to parquet under `<data root>/anomalies/<batch>/`. Events, with their evidence and summaries, go to the `anomalies` table.
+
 ## 2. Design
 
 ### 2.1 Periods

@@ -2,6 +2,15 @@
 
 Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff.md`](m3_handoff.md) and [`m3_plan.md`](m3_plan.md).
 
+> **Update, 2026-11-19 (nineteenth session: step 4 question round):** the user chose every recommendation. The decisions are in [`m4_plan.md`](m4_plan.md) §1, "Clarified in step 4", recorded before any freeze code or development score:
+> - **Freeze:** the hash covers the whole `anomalies` section plus the split dates. `FROZEN_PATHS` = M3's frozen paths, the scoring, merging, injection and evidence modules of `anomalies/`, and `explainability/` without its smoke module.
+> - **Holdout band:** split by issue time (development QR + run 2's mask before 2025-10-01, holdout QR + `holdout_main`'s mask after). The Aug–Sep 2025 overlap is bit-identical (checked today), and the holdout run must refuse if it is not.
+> - **Case-study ties:** lowest p, then more calibrated detectors, then a seeded draw; the named events come on top.
+> - **A5:** the synthetic suite plus 3 seeded real-data cuts in the development run.
+> - **Storage:** one `model_runs` row per run, parquet under `<data root>/anomalies/<batch>/`, events in `anomalies`.
+>
+> **Next:** the step-4 code (freeze, combined band, case rule, cuts, `gridcast anomalies-dev`), then the freeze record, then the development run from the clean freeze commit, then `report-m4`.
+
 > **Update, 2026-11-19 (eighteenth session: step 3, evidence, summaries and the SHAP core):** in the question round the user chose every recommendation. Recorded in [`m4_plan.md`](m4_plan.md) §1, "Clarified in step 3", before any evidence or SHAP code:
 > - a demand event's SHAP explains its demand peak (the lowest-p D1–D3 alert);
 > - summaries have three sentences;
