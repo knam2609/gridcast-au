@@ -268,6 +268,21 @@ anomalies:
     sample_pairs: 20000             # global sample per (retrain, lead band), seeded
     sum_tolerance: 1.0e-6
     output_dir: explain             # under the data root
+  cases:
+    # §3.2 (ties: user 2026-11-19): the n events with the lowest p from a calibrated detector;
+    # ties by more calibrated detectors firing, then a seeded draw. The named NEM days are
+    # added on top in development (a rule pick that is also named is shown once).
+    n: 5
+    named_days: ["2024-02-13", "2024-12-09"]
+  causality:
+    # A5 on real data (user 2026-11-19): besides the synthetic suite run by the report, the
+    # development run reruns detection on the real series truncated at this many seeded
+    # cut times in its scored period; everything at or before each cut must be identical.
+    real_cuts: 3
+  output_dir: anomalies             # under the data root; not hashed
+  # The freeze (step 4), recorded after the recipe commit; not hashed.
+  frozen_config_hash: null
+  frozen_commit: null
 
 aemo:
   # AEMO's own demand forecasts: every run of 30-minute pre-dispatch and 5-minute

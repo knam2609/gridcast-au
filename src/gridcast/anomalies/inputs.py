@@ -7,6 +7,11 @@
 * :func:`read_band` reads the rearranged ``q025``/``q975`` of a stored QR batch and the
   common mask of the M2 batch whose pairs it scores (run 2 for development). It checks
   that both cover the same issue times and that the QR batch's actuals equal run 2's.
+* :func:`split_band` is the band of a split, split by issue time (step 4, user 2026-11-19):
+  issue times before ``backtest.holdout_start`` from the development QR batch with run 2's
+  mask, later ones from the holdout QR batch with ``holdout_main``'s mask. The holdout QR
+  batch starts two months earlier (its first retrain, 2025-08-01); on that overlap it must
+  equal the development QR batch exactly (:func:`check_qr_overlap`), or the band is refused.
 * :func:`check_band_actuals` checks the stored actuals against market demand, so D2/D3
   score the same demand the other detectors see.
 
@@ -16,6 +21,9 @@ data after the warm-up.
 
 from __future__ import annotations
 
+import itertools
+from collections.abc import Sequence
+
 import numpy as np
 import pandas as pd
 from sqlalchemy import Engine, text
@@ -23,6 +31,7 @@ from sqlalchemy import Engine, text
 from gridcast.anomalies.series import MarketSeries, QuantileBand, epoch_minutes
 from gridcast.config import AppConfig
 from gridcast.features.calendar import load_calendar_days
+from gridcast.forecasting.origins import nem_midnight_utc
 from gridcast.intervals.cqr_batch import QR_RUN_NAME, read_qr_quantiles
 from gridcast.intervals.inputs import read_stored_batch, read_wide
 from gridcast.timeutils import INTERVAL
@@ -107,11 +116,15 @@ def load_market_series(
 
 
 def read_band(
-    cfg: AppConfig, qr_batch: str, mask_batch: str, end: pd.Timestamp | None = None
+    cfg: AppConfig,
+    qr_batch: str,
+    mask_batch: str,
+    end: pd.Timestamp | None = None,
+    start: pd.Timestamp | None = None,
 ) -> tuple[QuantileBand, np.ndarray]:
     """A stored QR batch's 2.5–97.5% band with the M2 batch's common mask, and its actuals.
 
-    ``end`` keeps issue times before it (the M2 batch is restricted the same way).
+    Only issue times in ``[start, end)`` are kept (the M2 batch is restricted the same way).
     """
     qr_dir = cfg.data_path(cfg.intervals.output_dir) / qr_batch
     keys = [cfg.anomalies.residual.lower_quantile, cfg.anomalies.residual.upper_quantile]
@@ -120,8 +133,12 @@ def read_band(
     if not a_times.equals(times):
         raise ValueError(f"{QR_RUN_NAME} {qr_batch}: actuals and quantiles differ in issue times")
     batch = read_stored_batch(cfg.data_path(cfg.paths.backtest_dir), mask_batch, "demand")
-    keep = np.ones(len(times), dtype=bool) if end is None else np.asarray(times < end)
-    batch = batch.restrict(end=end)
+    keep = np.ones(len(times), dtype=bool)
+    if start is not None:
+        keep &= np.asarray(times >= start)
+    if end is not None:
+        keep &= np.asarray(times < end)
+    batch = batch.restrict(start=start, end=end)
     times, actual = times[keep], actual[keep]
     lower, upper = q[keys[0]][keep], q[keys[1]][keep]
     if not times.equals(batch.origin_times):
@@ -139,6 +156,86 @@ def read_band(
         raise ValueError(f"QR batch {qr_batch} lacks quantiles on {missing} common-mask pairs")
     valid = mask & np.isfinite(lower) & np.isfinite(upper)
     return QuantileBand(pd.DatetimeIndex(times), lower, upper, valid), actual
+
+
+class BandMismatch(ValueError):
+    """The development and holdout QR batches differ where both forecast."""
+
+
+def check_qr_overlap(cfg: AppConfig) -> int:
+    """The holdout QR batch's issue times before ``holdout_start`` (its first retrain's
+    development part) must equal the development QR batch's band bit for bit, NaN in the
+    same places. Returns the number of overlapping issue times."""
+    res = cfg.anomalies.residual
+    keys = [res.lower_quantile, res.upper_quantile]
+    root = cfg.data_path(cfg.intervals.output_dir)
+    t_dev, q_dev = read_qr_quantiles(root / res.dev_qr_batch, keys)
+    t_hold, q_hold = read_qr_quantiles(root / res.holdout_qr_batch, keys)
+    before = np.asarray(t_hold < nem_midnight_utc(str(cfg.backtest.holdout_start)))
+    overlap = t_hold[before]
+    rows = t_dev.get_indexer(overlap)
+    if np.any(rows < 0):
+        raise BandMismatch(
+            f"holdout QR batch {res.holdout_qr_batch} has {int((rows < 0).sum())} development "
+            f"issue times that QR batch {res.dev_qr_batch} lacks"
+        )
+    for k in keys:
+        if not np.array_equal(q_dev[k][rows], q_hold[k][before], equal_nan=True):
+            raise BandMismatch(
+                f"{k}: QR batches {res.dev_qr_batch} and {res.holdout_qr_batch} differ on "
+                f"their {len(overlap)} common development issue times"
+            )
+    return len(overlap)
+
+
+def concat_bands(
+    parts: Sequence[tuple[QuantileBand, np.ndarray]],
+) -> tuple[QuantileBand, np.ndarray]:
+    """Bands of consecutive issue-time ranges, joined (no issue time twice, same leads)."""
+    if not parts:
+        raise ValueError("no band to join")
+    if len({b.n_leads for b, _ in parts}) != 1:
+        raise ValueError("the bands must have the same leads")
+    for (a, _), (b, _) in itertools.pairwise(parts):
+        if len(a.issue_times) and len(b.issue_times) and b.issue_times[0] <= a.issue_times[-1]:
+            raise ValueError("the bands' issue times overlap or are out of order")
+    times = parts[0][0].issue_times.as_unit("ns")
+    for b, _ in parts[1:]:
+        times = pd.DatetimeIndex(times.append(b.issue_times.as_unit("ns")))
+    band = QuantileBand(
+        times,
+        np.concatenate([b.lower for b, _ in parts]),
+        np.concatenate([b.upper for b, _ in parts]),
+        np.concatenate([b.valid for b, _ in parts]),
+    )
+    return band, np.concatenate([a for _, a in parts])
+
+
+def split_band(cfg: AppConfig, split: str) -> tuple[QuantileBand, np.ndarray]:
+    """The D2/D3 band of ``split`` ("dev" or "holdout") and its stored actuals.
+
+    Development: the development QR batch with run 2's mask (``anomalies.explain.dev_batch``),
+    issue times before ``holdout_start``. Holdout: the same, then the holdout QR batch with
+    ``holdout_main``'s mask from ``holdout_start`` to ``holdout_end``, after
+    :func:`check_qr_overlap` has passed.
+    """
+    res, ex = cfg.anomalies.residual, cfg.anomalies.explain
+    holdout = nem_midnight_utc(str(cfg.backtest.holdout_start))
+    dev = read_band(cfg, res.dev_qr_batch, ex.dev_batch, end=holdout)
+    if split == "dev":
+        return dev
+    if split != "holdout":
+        raise ValueError(f"unknown split {split!r}")
+    check_qr_overlap(cfg)
+    end = cfg.backtest.holdout_end
+    hold = read_band(
+        cfg,
+        res.holdout_qr_batch,
+        ex.holdout_batch,
+        start=holdout,
+        end=nem_midnight_utc(str(end)) if end is not None else None,
+    )
+    return concat_bands([dev, hold])
 
 
 def check_band_actuals(band: QuantileBand, actual: np.ndarray, series: MarketSeries) -> int:

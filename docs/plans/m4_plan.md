@@ -70,6 +70,12 @@
   - The holdout uses the same rule, without named events.
 - **A5 also checks real data.** The report runs the synthetic suite, as pre-registered. In addition, the development run reruns detection on the real series truncated at 3 seeded cut times inside the development scored period. Every score, p-value, window size, tier and event opening at or before each cut must equal the full pass exactly. Both parts count toward A5.
 - **Storage (the default, stated in the question round):** one `model_runs` row per anomaly run (kind `anomaly`, target `market`). Per-interval scores, p-values, window sizes and tiers, the injection results, the forest training ranges and the cut checks go to parquet under `<data root>/anomalies/<batch>/`. Events, with their evidence and summaries, go to the `anomalies` table.
+- **Readings fixed while coding, before the freeze (no setting changed):**
+  - a named day's case study is the calibrated event ranked first by the case rule among those whose span (first to last alert) touches that NEM day. If none does, the report says that no calibrated event touched the day;
+  - the seeded draws use their own streams of `anomalies.seed`: (seed, 101) gives one uniform key per event in time order for the case ties, and (seed, 102) gives the cuts. The injections keep streams 1–7;
+  - the cuts are uniform over the interval indices of the development scored period (from 2022-05-01), never its last interval. A truncated run keeps the forecasts issued at or before the cut;
+  - the development run reads data only up to NEM midnight of 2025-10-01. It refuses to run if the freeze does not hold, the tree is dirty, or a successful development run is already stored for the hash. Development is scored once;
+  - if E1 fails at any demand peak, the run stops before anything is stored (§2.6's withholding).
 
 ## 2. Design
 

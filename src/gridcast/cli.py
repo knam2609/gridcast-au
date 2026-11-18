@@ -1184,6 +1184,40 @@ def explain_smoke(
         typer.echo(line)
 
 
+@app.command("anomalies-freeze-check")
+def anomalies_freeze_check() -> None:
+    """M4 step 4: the anomaly recipe against its freeze record; exit 1 on any difference."""
+    from gridcast.anomalies.freeze import freeze_state
+
+    state = freeze_state(load_config())
+    typer.echo(
+        f"anomaly config hash {state.config_hash} (frozen {state.frozen_config_hash}); "
+        f"HEAD {state.sha}{' (dirty)' if state.dirty else ''}, "
+        f"frozen commit {state.frozen_commit}"
+    )
+    for problem in state.problems:
+        typer.echo(f"problem: {problem}")
+    if state.problems:
+        raise typer.Exit(1)
+    typer.echo("the freeze holds")
+
+
+@app.command("anomalies-dev")
+def anomalies_dev(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+    """M4 step 4: the one development run of the frozen anomaly recipe (scores, injections,
+    real-data cuts, evidence; stored). Refuses unless the freeze holds and the tree is clean."""
+    from gridcast.anomalies.dev import DevRefused, run_dev, summary_lines
+    from gridcast.database.engine import get_engine
+
+    try:
+        run = run_dev(get_engine(), load_config(), region)
+    except DevRefused as exc:
+        typer.echo(f"refused: {exc}")
+        raise typer.Exit(1) from exc
+    for line in summary_lines(run):
+        typer.echo(line)
+
+
 @app.command("feature-catalogue")
 def feature_catalogue() -> None:
     """Write docs/feature_catalogue.md from the feature catalogue in code (no database)."""

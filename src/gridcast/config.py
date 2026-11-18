@@ -457,6 +457,19 @@ class ExplainConfig(BaseModel):
     output_dir: str
 
 
+class CaseStudiesConfig(BaseModel):
+    """Case studies chosen by a fixed rule (m4_plan.md §3.2; ties: user 2026-11-19)."""
+
+    n: int = Field(gt=0)  # events with the lowest p from a calibrated detector
+    named_days: list[dt.date]  # NEM days named in advance (development only)
+
+
+class CausalityConfig(BaseModel):
+    """A5 on real data (user 2026-11-19): seeded cuts of the development run."""
+
+    real_cuts: int = Field(gt=0)
+
+
 class AnomaliesConfig(BaseModel):
     """Milestone 4: market anomalies and demand-model explanations (docs/plans/m4_plan.md).
 
@@ -480,6 +493,14 @@ class AnomaliesConfig(BaseModel):
     injection: InjectionConfig
     evidence: EvidenceConfig
     explain: ExplainConfig
+    cases: CaseStudiesConfig
+    causality: CausalityConfig
+    # Not part of the anomaly config hash: where runs are stored, and the freeze record
+    # (step 4): the hash and the commit whose recipe code (anomalies.freeze.FROZEN_PATHS)
+    # every scored run must use.
+    output_dir: Path = Path("anomalies")  # under the data root
+    frozen_config_hash: str | None = None
+    frozen_commit: str | None = None
 
 
 class WeatherVariableConfig(BaseModel):
