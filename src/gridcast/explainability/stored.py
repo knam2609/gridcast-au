@@ -68,9 +68,18 @@ def parse_band(key: str) -> tuple[int, int]:
 
 
 def fits_from_records(
-    records: Sequence[dict[str, Any]], data_root: Path, lead_bands: Sequence[Sequence[int]]
+    records: Sequence[dict[str, Any]],
+    data_root: Path,
+    lead_bands: Sequence[Sequence[int]],
+    period: tuple[pd.Timestamp, pd.Timestamp | None] | None = None,
 ) -> list[StoredFit]:
-    """Fits from M2's stored retrain records, checked to cover every band at every retrain."""
+    """Fits from M2's stored retrain records, checked to cover every band at every retrain.
+
+    ``period`` (first issue time, exclusive end) clips every fold to the batch's own issue
+    times. ``holdout_main``'s first retrain (2025-08-01) also forecast Aug–Sep 2025, which
+    are development issue times explained by run 2's identical fit, so its fold starts at
+    the holdout.
+    """
     bands = [tuple(int(v) for v in b) for b in lead_bands]
     retrains = sorted({str(r["retrain"]) for r in records})
     starts = {d: nem_midnight_utc(d) for d in retrains}
@@ -83,6 +92,12 @@ def fits_from_records(
         if r.get("path") is None:
             raise ValueError(f"fit {r['retrain']} {r['band']} has no stored model file")
         i = retrains.index(str(r["retrain"]))
+        start = starts[retrains[i]]
+        end = starts[retrains[i + 1]] if i + 1 < len(retrains) else None
+        if period is not None:
+            start = max(start, period[0])
+            if period[1] is not None:
+                end = period[1] if end is None else min(end, period[1])
         out.append(
             StoredFit(
                 retrain=str(r["retrain"]),
@@ -92,8 +107,8 @@ def fits_from_records(
                 num_leaves=int(chosen["num_leaves"]),
                 n_trees=int(params["n_trees"]),
                 path=data_root / str(r["path"]),
-                fold_start=starts[retrains[i]],
-                fold_end=starts[retrains[i + 1]] if i + 1 < len(retrains) else None,
+                fold_start=start,
+                fold_end=end,
             )
         )
     seen = {(f.retrain, f.band) for f in out}
@@ -135,17 +150,30 @@ def batch_config(
     return config
 
 
-def stored_fits(engine: Engine, cfg: AppConfig, split: str) -> list[StoredFit]:
-    """Every fit of the batch that ``split`` ("dev" or "holdout") explains."""
-    ex = cfg.anomalies.explain
+def split_period(cfg: AppConfig, split: str) -> tuple[pd.Timestamp, pd.Timestamp | None]:
+    """Issue times a split explains: development [ml.first_issue, holdout_start), holdout
+    [holdout_start, holdout_end)."""
+    holdout = nem_midnight_utc(str(cfg.backtest.holdout_start))
     if split == "dev":
-        batch, evaluation_set = ex.dev_batch, DEV_SET
-    elif split == "holdout":
-        batch, evaluation_set = ex.holdout_batch, HOLDOUT_SET
-    else:
-        raise ValueError(f"unknown split {split!r}")
+        return nem_midnight_utc(str(cfg.ml.first_issue)), holdout
+    if split == "holdout":
+        end = cfg.backtest.holdout_end
+        return holdout, nem_midnight_utc(str(end)) if end is not None else None
+    raise ValueError(f"unknown split {split!r}")
+
+
+def stored_fits(engine: Engine, cfg: AppConfig, split: str) -> list[StoredFit]:
+    """Every fit of the batch that ``split`` ("dev" or "holdout") explains, folds clipped to
+    the split's issue times."""
+    ex = cfg.anomalies.explain
+    period = split_period(cfg, split)
+    batch, evaluation_set = (
+        (ex.dev_batch, DEV_SET) if split == "dev" else (ex.holdout_batch, HOLDOUT_SET)
+    )
     config = batch_config(engine, cfg, batch, evaluation_set)
-    return fits_from_records(config["model_params"]["retrains"], cfg.data_root(), cfg.ml.lead_bands)
+    return fits_from_records(
+        config["model_params"]["retrains"], cfg.data_root(), cfg.ml.lead_bands, period
+    )
 
 
 def load_model(

@@ -296,3 +296,14 @@ def test_a_pair_without_a_fit_is_refused(run: _Run) -> None:
     early = pd.DatetimeIndex([nem_midnight_utc("2024-03-20")])
     with pytest.raises(LookupError, match="no stored fit"):
         explain_pairs(_builder(), fits, early, np.array([1]), np.array([5000.0], np.float32), cfg)
+
+
+def test_folds_are_clipped_to_the_batch_period(tmp_path: Path) -> None:
+    # holdout_main's first retrain also forecast development issue times (Aug-Sep 2025).
+    records = [_record(d, b) for d in ("2025-08-01", "2025-11-01") for b in KEYS]
+    period = (nem_midnight_utc("2025-10-01"), nem_midnight_utc("2026-10-01"))
+    fits = fits_from_records(records, tmp_path, BANDS, period)
+    assert fits[0].fold_start == period[0] and fits[0].fold_end == nem_midnight_utc("2025-11-01")
+    assert fits[-1].fold_end == period[1]
+    sep = pd.DatetimeIndex([nem_midnight_utc("2025-09-15")])
+    assert locate(fits, sep, np.array([1]))[0] == -1

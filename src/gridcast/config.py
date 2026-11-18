@@ -430,6 +430,21 @@ class InjectionConfig(BaseModel):
         return self
 
 
+class EvidenceConfig(BaseModel):
+    """Event evidence and summaries (m4_plan.md §2.5, criterion A4)."""
+
+    change_minutes: list[int] = Field(min_length=1)
+    supply_change_minutes: int = Field(gt=0)
+    banned_phrases: list[str] = Field(min_length=1)
+
+    @field_validator("change_minutes")
+    @classmethod
+    def _whole_intervals(cls, v: list[int]) -> list[int]:
+        if any(m <= 0 or m % 5 for m in v):
+            raise ValueError("change minutes must be positive multiples of 5")
+        return v
+
+
 class ExplainConfig(BaseModel):
     """SHAP of the stored M2 LightGBM C boosters and the E1 gate (m4_plan.md §2.6)."""
 
@@ -463,6 +478,7 @@ class AnomaliesConfig(BaseModel):
     price_lines: PriceLinesConfig
     events: AnomalyEventsConfig
     injection: InjectionConfig
+    evidence: EvidenceConfig
     explain: ExplainConfig
 
 

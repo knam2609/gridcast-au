@@ -2,7 +2,7 @@
 
 Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff.md`](m3_handoff.md) and [`m3_plan.md`](m3_plan.md).
 
-> **Update, 2026-11-19 (eighteenth session: step 3's question round):** the user chose every recommendation. Recorded in [`m4_plan.md`](m4_plan.md) §1, "Clarified in step 3", before any evidence or SHAP code:
+> **Update, 2026-11-19 (eighteenth session: step 3, evidence, summaries and the SHAP core):** in the question round the user chose every recommendation. Recorded in [`m4_plan.md`](m4_plan.md) §1, "Clarified in step 3", before any evidence or SHAP code:
 > - a demand event's SHAP explains its demand peak (the lowest-p D1–D3 alert);
 > - summaries have three sentences;
 > - E1's forecast check is an exact float32 match (M2 stored float32);
@@ -13,9 +13,22 @@ Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff
 >   - `anomalies.explain` in the config;
 >   - `make explain-smoke`;
 >   - 13 new unit tests (397 in the suite).
-> - **SHAP smoke run** (retrain 2022-11-01, 80,000 pairs, 37 s): E1 passes on every pair, with no float32 mismatch and a largest SHAP-sum error of 2.5 × 10⁻¹¹. The full global samples should take about 11 min (development) and 5 min (holdout). Details are in [`m4_plan.md`](m4_plan.md), step 3 outcome.
+> - **SHAP smoke run** (retrain 2022-11-01, 80,000 pairs, 37 s): E1 passes on every pair, with no float32 mismatch and a largest SHAP-sum error of 2.5 × 10⁻¹¹. The full global samples should take about 11–17 min (development) and 5–7 min (holdout), depending on machine load. Details are in [`m4_plan.md`](m4_plan.md), step 3 outcome.
 >
-> **Next: step 3b** (`anomalies/evidence.py`: the §2.5 fields, the three-sentence summaries, the banned-phrase test, and evidence for the warm-up smoke events).
+> - **Step 3b done:**
+>   - `anomalies/evidence.py` (47 labelled fields, three-sentence summaries, A4's checks);
+>   - `anomalies/evidence_inputs.py` (loads only what the events need; SHAP behind E1);
+>   - `profiles.SlotValues`;
+>   - `anomalies.evidence` in the config;
+>   - `make evidence-smoke`;
+>   - folds clipped to each batch's period;
+>   - 19 new unit tests (416 in the suite) and 2 integration tests.
+> - **Evidence smoke run** (20 s): all 40 warm-up events are complete, no summary has a banned phrase, and E1 passes on all 14 demand-peak pairs. Three wording bugs were found in the examples and fixed. Details are in [`m4_plan.md`](m4_plan.md), step 3 outcome.
+>
+> **Next: step 4** (freeze, the development run, `report-m4`). Run a question round first. Open points:
+> - **What the freeze covers.** The candidates are `FROZEN_PATHS` = M2's frozen paths, every `anomalies/` module that scores, merges or describes (the injection harness and the smoke modules too?), and `explainability/`. The hash should cover the whole `anomalies` config section, including `evidence` and `explain`.
+> - **The holdout band for D2/D3.** `inputs.read_band` needs the QR batch and the M2 batch to have the same issue times. The holdout QR batch (`b226706b`) starts at 2025-08-01, but `holdout_main` starts at 2025-10-01. The one continuous holdout run therefore needs a combined band: the development QR batch with run 2's mask before 2025-10-01, and the holdout QR batch with `holdout_main`'s mask from then on. `evidence_inputs.point_sources` already combines its forecasts this way. The combined band must be fixed before the freeze.
+> - **Storage of the development batch.** Per-interval scores and p-values go to parquet, events to `anomalies`, plus `model_runs` rows and the injection results. The layout is still to be decided.
 
 > **Update, 2026-11-17 (seventeenth session, later: step 2b and the warm-up smoke run):**
 > - **New:**

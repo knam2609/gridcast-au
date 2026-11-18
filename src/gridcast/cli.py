@@ -1150,6 +1150,24 @@ def anomalies_smoke(
             typer.echo(line)
 
 
+@app.command("evidence-smoke")
+def evidence_smoke(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    weeks: Annotated[int, typer.Option(help="Pseudo-scored weeks at each warm-up's end")] = 8,
+) -> None:
+    """M4 step 3b: evidence and summaries of the warm-up smoke events (completeness,
+    banned phrases, E1, 5 example summaries; no writes)."""
+    from gridcast.anomalies.smoke import evidence_lines, market_pass, residual_pass
+    from gridcast.database.engine import get_engine
+
+    cfg = load_config()
+    engine = get_engine()
+    for run_pass in (market_pass, residual_pass):
+        sp = run_pass(engine, cfg, region, weeks, 0, inject=False)
+        for line in evidence_lines(engine, cfg, region, sp):
+            typer.echo(line)
+
+
 @app.command("explain-smoke")
 def explain_smoke(
     region: Annotated[str, typer.Option(help="Region id")] = "VIC1",

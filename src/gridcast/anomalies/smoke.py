@@ -29,8 +29,11 @@ from gridcast.anomalies.detectors import DETECTORS, LINES, RESIDUAL
 from gridcast.anomalies.injection import power_table, run_injections
 from gridcast.anomalies.inputs import check_band_actuals, load_market_series, read_band
 from gridcast.anomalies.run import Detection, Split, detect
+from gridcast.anomalies.series import MarketSeries
 from gridcast.config import AppConfig
 from gridcast.forecasting.origins import nem_midnight_utc
+
+NO_INJECTIONS = pd.DataFrame()
 
 
 @dataclass(slots=True)
@@ -43,6 +46,7 @@ class SmokePass:
     detection: Detection
     injections: pd.DataFrame
     seconds: dict[str, float]
+    series: MarketSeries
     checked_actuals: int = 0
 
 
@@ -58,7 +62,12 @@ def _split(name: str, end_day: dt.date, weeks: int, residual_only: bool) -> Spli
 
 
 def market_pass(
-    engine: Engine, cfg: AppConfig, region_id: str, weeks: int, n_starts: int
+    engine: Engine,
+    cfg: AppConfig,
+    region_id: str,
+    weeks: int,
+    n_starts: int,
+    inject: bool = True,
 ) -> SmokePass:
     a = cfg.anomalies
     t0 = time.perf_counter()
@@ -70,7 +79,7 @@ def market_pass(
     split = _split("smoke-market", a.market_first_day, weeks, residual_only=False)
     det = detect(series, None, split, a)
     t2 = time.perf_counter()
-    inj = run_injections(series, det.run, split, a, n_starts=n_starts)
+    inj = run_injections(series, det.run, split, a, n_starts=n_starts) if inject else NO_INJECTIONS
     t3 = time.perf_counter()
     return SmokePass(
         "market",
@@ -81,11 +90,17 @@ def market_pass(
         det,
         inj,
         {"load": t1 - t0, "detect": t2 - t1, "inject": t3 - t2},
+        series,
     )
 
 
 def residual_pass(
-    engine: Engine, cfg: AppConfig, region_id: str, weeks: int, n_starts: int
+    engine: Engine,
+    cfg: AppConfig,
+    region_id: str,
+    weeks: int,
+    n_starts: int,
+    inject: bool = True,
 ) -> SmokePass:
     a = cfg.anomalies
     t0 = time.perf_counter()
@@ -101,7 +116,11 @@ def residual_pass(
     split = _split("smoke-residual", a.residual_first_day, weeks, residual_only=True)
     det = detect(series, band, split, a, market=False)
     t2 = time.perf_counter()
-    inj = run_injections(series, det.run, split, a, n_starts=n_starts, labels=RESIDUAL)
+    inj = (
+        run_injections(series, det.run, split, a, n_starts=n_starts, labels=RESIDUAL)
+        if inject
+        else NO_INJECTIONS
+    )
     t3 = time.perf_counter()
     return SmokePass(
         "residual",
@@ -112,6 +131,7 @@ def residual_pass(
         det,
         inj,
         {"load": t1 - t0, "detect": t2 - t1, "inject": t3 - t2},
+        series,
         checked,
     )
 
@@ -165,7 +185,7 @@ def summarise(sp: SmokePass, cfg: AppConfig) -> list[str]:
         f"severe {sum(e.tier == 'severe' for e in det.events)}); by category: "
         + (", ".join(f"{k} {v}" for k, v in cats.items()) or "none")
     )
-    table = power_table(sp.injections)
+    table = power_table(sp.injections) if not sp.injections.empty else pd.DataFrame()
     if not table.empty:
         elig = sp.injections.groupby("label")["n_eligible"].first()
         out.append("   injections (power by size; n per size; eligible starts):")
@@ -176,3 +196,73 @@ def summarise(sp: SmokePass, cfg: AppConfig) -> list[str]:
             n = int(grp["n"].iloc[0])
             out.append(f"     {label:26s} n {n:4d}  eligible {int(elig[label]):6,}  {cells}")
     return out
+
+
+# --------------------------------------------------------------------------- evidence (step 3b)
+
+
+def example_events(sp: SmokePass, k: int = 5) -> list[int]:
+    """Fixed rule: the first event of each peak detector in time order, then the earliest
+    remaining events, up to ``k`` (positions in the pass's event list)."""
+    from gridcast.anomalies.evidence import peak_detector
+
+    det = sp.detection
+    chosen: list[int] = []
+    seen: set[str] = set()
+    for i, e in enumerate(det.events):
+        name = peak_detector(e, det)
+        if name not in seen:
+            seen.add(name)
+            chosen.append(i)
+    chosen = chosen[:k]
+    for i in range(len(det.events)):
+        if len(chosen) >= k:
+            break
+        if i not in chosen:
+            chosen.append(i)
+    return sorted(chosen)
+
+
+def evidence_lines(engine: Engine, cfg: AppConfig, region_id: str, sp: SmokePass) -> list[str]:
+    """Step 3b's evidence smoke (user 2026-11-19): field completeness, banned-phrase counts,
+    E1 on the demand-peak explanations, and 5 example summaries; nothing else, no writes."""
+    from collections import Counter
+
+    from gridcast.anomalies.evidence import REQUIRED_FIELDS, banned_in, missing_fields
+    from gridcast.anomalies.evidence_inputs import run_evidence
+
+    t0 = time.perf_counter()
+    er = run_evidence(engine, cfg, region_id, "dev", sp.series, sp.detection)
+    secs = time.perf_counter() - t0
+    n = len(er.evidence)
+    incomplete = [missing_fields(ev) for ev in er.evidence]
+    banned = [banned_in(t, cfg.anomalies.evidence.banned_phrases) for t in er.summaries]
+    reasons: Counter[str] = Counter()
+    fields_by_reason: dict[str, set[str]] = {}
+    for ev in er.evidence:
+        for path in REQUIRED_FIELDS:
+            node = ev
+            for part in path.split("."):
+                node = node[part]
+            if "unavailable" in node:
+                reasons[node["unavailable"]] += 1
+                fields_by_reason.setdefault(node["unavailable"], set()).add(path)
+    g = er.shap_gate
+    lines = [
+        f"== evidence, {sp.name} pass: {n} events in {secs:.1f} s",
+        f"   A4 fields: {sum(not m for m in incomplete)} of {n} events complete "
+        f"({len(REQUIRED_FIELDS)} fields each)"
+        + (f"; first gaps: {next(m for m in incomplete if m)[:5]}" if any(incomplete) else ""),
+        f"   banned phrases: {sum(bool(b) for b in banned)} summaries"
+        + (f" ({sorted({p for b in banned for p in b})})" if any(banned) else ""),
+        f"   SHAP at demand peaks: {g.n} pairs, E1 {'pass' if g.passed or g.n == 0 else 'FAIL'}"
+        f" (forecast mismatches {g.forecast_mismatches}, max sum error {g.max_sum_error:.1e})",
+        "   unavailable fields by reason (field-events; fields):",
+    ]
+    for reason, count in reasons.most_common():
+        names = ", ".join(sorted(p.split(".", 1)[1] for p in fields_by_reason[reason]))
+        lines.append(f"     {count:6d}  {reason} [{names}]")
+    lines.append("   example summaries (first event of each peak detector, then earliest):")
+    for i in example_events(sp):
+        lines.append(f"     - {er.summaries[i]}")
+    return lines

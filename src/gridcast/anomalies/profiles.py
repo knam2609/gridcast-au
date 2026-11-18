@@ -109,3 +109,27 @@ def daily_robust_scale(
         _, mad = _median_mad(cube[rows].reshape(1, -1))
         scale[day] = max(consistency * mad[0], floor) if np.isfinite(mad[0]) else np.nan
     return scale[lay.local_day]
+
+
+class SlotValues:
+    """The values behind a :func:`slot_profile`, for the evidence (§2.5): the same local
+    half-hour over the same look-back days (and day type, if split), so the evidence's
+    median is the detector's profile median."""
+
+    def __init__(self, values: np.ndarray, lay: Layout, days: int, by_day_type: bool) -> None:
+        self.lay = lay
+        self.days = days
+        self.by_day_type = by_day_type
+        self.cube = _cube(
+            np.asarray(values, dtype=np.float64), lay.local_day, lay.slot, (lay.n_days, lay.n_slots)
+        )
+
+    def at(self, index: int) -> np.ndarray | None:
+        """Finite values of interval ``index``'s profile (None: the profile is missing)."""
+        day = int(self.lay.local_day[index])
+        rows = _days_for(day, self.lay, self.days, self.by_day_type)
+        if rows is None or rows.size == 0:
+            return None
+        block = self.cube[rows, int(self.lay.slot[index])].ravel()
+        block = block[np.isfinite(block)]
+        return block if block.size else None

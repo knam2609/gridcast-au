@@ -332,7 +332,31 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
   - **SHAP smoke run** (retrain 2022-11-01, 4 fits × 20,000 pairs, 37 s; E1 results and timings only):
     - **E1 passes on all 80,000 pairs.** No recomputed forecast differs from the stored float32 value, and the largest SHAP-sum error is 2.5 × 10⁻¹¹.
     - The largest float64-vs-stored gap, 4.8 × 10⁻⁴ MW, is float32 rounding: 45 of the fold's lead 1–6 forecasts lie above 8,192 MW, where one float32 step is 9.8 × 10⁻⁴ MW.
-    - **Cost:** predict + SHAP took 1.4–2.7 s per 31-leaf fit and 24.4 s for the 127-leaf fit. Scaled by tree count, the full global samples need about 11 min (development, 48 fits) and 5 min (holdout, 20 fits), well under §5's hour. Feature building is negligible.
+    - **Cost:** predict + SHAP took 1.4–2.7 s per 31-leaf fit and 24.4 s for the 127-leaf fit. Scaled by tree count, the full global samples need about 11 min (development, 48 fits) and 5 min (holdout, 20 fits), well under §5's hour. A rerun after the fold fix of step 3b, sharing the CPU with the integration suite, projected 17 and 7 min. Feature building is negligible.
+- *Outcome (2026-11-19, step 3b: evidence and summaries):*
+  - **Config:** `anomalies.evidence` holds the change horizons (5, 30 and 60 min), the supply-change horizon (60 min) and §2.5's banned phrases, so step 4's hash covers them.
+  - **`anomalies/evidence.py`** (pure):
+    - 47 required fields (`REQUIRED_FIELDS`) in eight groups: event, values, forecasts, changes, supply, weather, flags, shap. Each is a fact (value, unit, source, *known at the time* or *retrospective*) or `{"unavailable": reason}`, with no NaN, so it is jsonb-ready;
+    - the peak detector and the demand peak follow `merge_events`' tie rule exactly;
+    - profiles come from `profiles.SlotValues`, the same windows as the detectors, so the evidence's demand median is D1's. The percentile in the trailing 26 weeks is the share of intervals at or below the peak's value;
+    - AEMO's matched runs: a fact is *retrospective* if it was published after the peak or its 30-minute period ends after it;
+    - battery output is unavailable until the first non-zero bidirectional-unit interval at or before the peak; availability is unavailable before table v8;
+    - `summarise` writes the three sentences from the evidence alone; `missing_fields` and `banned_in` are A4's checks.
+  - **`anomalies/evidence_inputs.py`** loads only what the events need:
+    - flags, battery output and availability;
+    - stored forecasts, the QR band and M2's common mask, read one file at a time. A holdout event also reads run 2, because its day-ahead pair can be issued in late September 2025;
+    - GFS from variant C's feature rows and ERA5, from a builder truncated at the series' end;
+    - AEMO runs;
+    - SHAP at demand peaks behind E1's gate.
+  - **Fold fix in `explainability/stored.py`:** folds are clipped to the batch's period. Otherwise `holdout_main`'s first retrain also covers Aug–Sep 2025, which belong to run 2.
+  - **Tests:**
+    - 18 unit tests in `tests/unit/test_anomaly_evidence.py`, plus one for the fold clipping: completeness, jsonb readiness, three sentences and no banned phrase for every synthetic event; the demand peak of a mixed event; the profile median against D1's; AEMO labels; battery and availability start dates; flags; each detector's sentence; the stored lookup's reasons;
+    - 2 integration tests of the loader in `tests/integration/test_anomaly_inputs.py`.
+    - The unit suite has 416 tests; the full integration suite (82 tests, 11 min) passes.
+  - **Evidence smoke run** (`make evidence-smoke`, 20 s, warm-up events of step 2b, no writes):
+    - market pass: 33 events, all 47 fields complete, no banned phrase; no SHAP, as LightGBM C's forecasts start 2022-11-01;
+    - residual pass: 7 events, complete, no banned phrase. **E1 passes on all 14 demand-peak pairs** (largest SHAP-sum error 1.1 × 10⁻¹¹).
+    - The example summaries showed three wording bugs, all fixed with tests: "−$0" for small negative prices; "ranged from $19 to $19" for a price that moved by less than a cent (now "stayed at $19.18/MWh (to the cent)"); and "1 of the event's 1 intervals were".
 
 **Step 4. Freeze, the development run, and the report.**
 - Freeze record and unit test (§2.8).

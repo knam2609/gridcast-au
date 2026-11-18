@@ -247,6 +247,15 @@ anomalies:
     price_volatility: {minutes: 60, sizes: [50, 200, 1000, 5000]}  # alternate +- A $/MWh
     isolation_forest: {minutes: 60, sizes: [-2000, -1000, -500, -250, 250, 500, 1000, 2000]}
     flat_price_minutes: 180         # reported only: price held at its value at the start
+  evidence:
+    # §2.5: facts with times and sources, each labelled known at the time or retrospective;
+    # three-sentence summaries (user 2026-11-19). A4: no summary contains a banned phrase
+    # (case-insensitive, on word boundaries).
+    change_minutes: [5, 30, 60]     # demand and price changes before the peak
+    supply_change_minutes: 60       # wind and solar output change before the peak
+    banned_phrases: ["because", "cause", "caused", "causes", "due to", "driven by", "drove",
+                     "led to", "leads to", "resulted in", "as a result", "triggered",
+                     "explains", "explained by", "the reason"]
   explain:
     # §2.6: TreeSHAP (LightGBM pred_contrib) of the stored M2 LightGBM C boosters; no refit.
     # E1 (user 2026-11-19): the recomputed forecast, cast to float32 as M2 stored it, equals
