@@ -660,7 +660,8 @@ def criteria(res: Results) -> list[Criterion]:
         Criterion(
             "A5",
             "the synthetic causality suite passes (controls included), every real cut is "
-            "identical, and no forest was fitted on its own month",
+            f"identical, and no {'forest' if res.version == 1 else 'D6 month model'} was fitted "
+            "on its own month",
             f"suite {res.causality.passed} passed, {res.causality.failed} failed; "
             f"{len(cuts)} real cuts, {res.cut_differences} differences; "
             f"{len(res.forest_leaks)} forest leaks",
@@ -1049,6 +1050,11 @@ def _disclosures(version: int) -> str:
         "- The warm-up smoke runs under v2 (before any v2 development score) previewed high "
         "power for v2's D4 and D6 and a low D6 alert rate in the warm-up weeks (plan step 4g).\n"
         "- How this report reads v2 was fixed before v2's development run (plan §2.10).\n"
+        "- The first v2 development run computed every output, then failed on insert: the "
+        "events table's detector list did not yet name `robust_distance` (fixed by migration "
+        "0008). Nothing was stored, and this run is the rerun from the same frozen code. What "
+        "was seen of the failed attempt (two cut counts in its log, and 11 events' fields in "
+        "its error message) is listed in plan step 4h.\n"
         "- Price associations, SHAP summaries and the holdout of both versions come in steps 5 "
         "and 6.\n"
     )
