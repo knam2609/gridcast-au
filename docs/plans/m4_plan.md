@@ -247,6 +247,12 @@ Only D4 and D6 change (§1, "Decided after the development verdicts"). D1, D2, D
 - **A5:** no monthly model sees an interval ending after its month's start. The synthetic causality suite gains D6 v2 cases, and the real-data cuts run on v2.
 - **Evidence:** D6's summary sentence reads "the multivariate detector (robust distance) gave the 5 minutes to … a p-value of … against its trailing 26 weeks". Every other field is v1's.
 - **Criteria:** A1–A5 and E1 as §3, on development (*post hoc*, §1) and on the holdout (*holds* / *does not hold*, §3.2), with A6 per recipe hash.
+- **How `report-m4` reads v2, fixed before v2's development run (2026-11-20):**
+  - every reading in §1 ("How `report-m4` reads the criteria") applies unchanged;
+  - A3's D6 checks are `robust_distance` at ±2,000 MW;
+  - A5 runs the causality suite's v2 cases (ids `v2`, controls included). Its month-model leak check covers the distance models;
+  - the report is `reports/m4_anomalies_v2.md`. Each v2 verdict is labelled *post hoc*, with v1's development result beside it;
+  - the case studies follow the same rule (§3.2, step-4 ties).
 
 ## 3. Success criteria (pre-registered)
 
