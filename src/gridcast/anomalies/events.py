@@ -27,10 +27,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from gridcast.anomalies.detectors import CATEGORIES, CATEGORY, DETECTORS, LINES
+from gridcast.anomalies.detectors import CALIBRATED, CATEGORIES, CATEGORY, LINES
 from gridcast.anomalies.pvalues import NOTABLE, SEVERE, TIER_NAMES
 
-ORDER = (*DETECTORS, *LINES)
+# Canonical order: every version's calibrated detectors (a run has one D6), then the lines.
+ORDER = (*CALIBRATED, *LINES)
 
 
 @dataclass(frozen=True, slots=True)

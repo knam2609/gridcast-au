@@ -12,7 +12,9 @@ score is close to an out-of-sample score. A1 checks whether that holds in practi
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Protocol
 
 import numpy as np
 import pandas as pd
@@ -22,6 +24,27 @@ from gridcast.anomalies.pvalues import static_pvalues
 from gridcast.anomalies.series import Layout, epoch_ns
 from gridcast.config import IsolationForestConfig
 from gridcast.timeutils import INTERVAL, NEM_TZ
+
+
+class MonthScorer(Protocol):
+    """A month's D6 model: v1's forest or v2's distance."""
+
+    def score(self, rows: np.ndarray) -> np.ndarray: ...
+
+
+class MonthFit(MonthScorer, Protocol):
+    """What the run stores and checks of any month model (ranges, A5's leak test)."""
+
+    @property
+    def month(self) -> int: ...
+    @property
+    def start(self) -> pd.Timestamp: ...
+    @property
+    def train_first_end(self) -> pd.Timestamp: ...
+    @property
+    def train_last_end(self) -> pd.Timestamp: ...
+    @property
+    def n_train(self) -> int: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +107,9 @@ def fit_month_models(
     return models
 
 
-def score_months(features: np.ndarray, lay: Layout, models: dict[int, MonthModel]) -> np.ndarray:
+def score_months(
+    features: np.ndarray, lay: Layout, models: Mapping[int, MonthScorer]
+) -> np.ndarray:
     """Each interval's score under its month's model (NaN: no model or a missing feature)."""
     out = np.full(len(features), np.nan)
     complete = np.all(np.isfinite(features), axis=1)

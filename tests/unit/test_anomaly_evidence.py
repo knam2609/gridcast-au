@@ -21,6 +21,7 @@ from gridcast.anomalies.detectors import (
     PRICE_VOLATILITY,
     RESIDUAL_DAYAHEAD,
     RESIDUAL_SHORT,
+    ROBUST_DISTANCE,
 )
 from gridcast.anomalies.events import merge_events
 from gridcast.anomalies.evidence import (
@@ -385,6 +386,7 @@ def _evidence_for(detector: str) -> dict:
         (PRICE_LEVEL, "the price in the 5 minutes to 15:40 was $95/MWh"),
         (PRICE_VOLATILITY, "was 0.16 times its median over the previous 7 days"),
         (ISOLATION_FOREST, "a p-value of 1.9 × 10⁻⁵"),
+        (ROBUST_DISTANCE, "(robust distance) gave the 5 minutes to 15:40 a p-value of 1.9 × 10⁻⁵"),
         (LINE_NOTABLE, "4 of the event's 11 intervals were at or above $300/MWh and 1 at or above"),
     ],
 )

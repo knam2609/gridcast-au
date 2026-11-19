@@ -285,6 +285,25 @@ anomalies:
   frozen_config_hash: "2ce8b3fc523ae81c"
   frozen_commit: "2dc58fa"
 
+anomalies_v2:
+  # M4 v2, decided after v1's development verdicts (m4_plan.md §1 "Decided after the
+  # development verdicts", §2.10; user 2026-11-20). Only what differs from `anomalies` (v1):
+  # every other setting, D6's nine features included, is read from `anomalies`. D5 keeps
+  # anomalies.price_level.scale_aud ($10).
+  price_level:
+    scale_aud: 100                  # D4: x = asinh(price / $100); profile and floor as v1
+  robust_distance:
+    # D6 v2: sqrt((f - m)' S^-1 (f - m)) of the nine features f (D4's z from v2), m the
+    # coordinate-wise median and S the Ledoit-Wolf covariance about m of the previous
+    # train_weeks' complete rows, refitted at each NEM-month start if at least
+    # min_train_rows; p-value against the trailing anomalies.pvalues window of its own
+    # (out-of-sample) scores, as D1-D5.
+    train_weeks: 26
+    min_train_rows: 256
+  # v2's freeze; not hashed. v2's hash covers `anomalies`, `anomalies_v2` and the splits.
+  frozen_config_hash: null
+  frozen_commit: null
+
 aemo:
   # AEMO's own demand forecasts: every run of 30-minute pre-dispatch and 5-minute
   # pre-dispatch (MMSDM "all runs" archives, ~50 MB a month each, cached under raw/).

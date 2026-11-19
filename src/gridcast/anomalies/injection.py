@@ -213,10 +213,11 @@ def _multivariate_scores(
     mp = st.margin_profile
     f[..., 6] = (margin - mp.median[rows]) / np.maximum(k_mad * mp.mad[rows], iso.z_floor_mw)
     out = np.full(rows.shape, np.nan)
+    scorers = st.scorers()
     months = st.lay.nem_month[rows]
     for month in np.unique(months):
         sel = months == month
-        out[sel] = st.models[int(month)].score(f[sel])
+        out[sel] = scorers[int(month)].score(f[sel])
     return out
 
 

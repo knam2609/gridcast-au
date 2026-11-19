@@ -12,6 +12,9 @@ Every score at interval ``t`` uses only data known at ``t``'s end:
   the last hour, b = median of v over the 7 days ending 1 h before ``t``.
 * **D6** ``isolation_forest``: −``score_samples`` of the month's Isolation Forest, refitted
   at each NEM-month start on the previous 26 weeks (:mod:`gridcast.anomalies.isolation`).
+  In v2, ``robust_distance``: the distance from the month's training median under a shrunk
+  covariance (:mod:`gridcast.anomalies.distance`), with a rolling p-value like D1–D5. v2's
+  D4 uses x = asinh(price / $100) (m4_plan.md §2.10).
 
 What differs between recipe versions is a :class:`Recipe` (m4_plan.md §1, "Decided after the
 development verdicts"). Version 1, the default everywhere, is the recipe frozen in step 4.
@@ -22,12 +25,20 @@ injection harness can re-score modified data against them (§2.9).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
-from gridcast.anomalies.isolation import MonthModel, fit_month_models, score_months
+from gridcast.anomalies.distance import DistanceModel, fit_distance_models
+from gridcast.anomalies.isolation import (
+    MonthFit,
+    MonthModel,
+    MonthScorer,
+    fit_month_models,
+    score_months,
+)
 from gridcast.anomalies.profiles import Profile, daily_robust_scale, slot_profile
 from gridcast.anomalies.series import (
     INTERVALS_PER_DAY,
@@ -37,7 +48,7 @@ from gridcast.anomalies.series import (
     epoch_minutes,
     layout,
 )
-from gridcast.config import AnomaliesConfig
+from gridcast.config import AnomaliesConfig, RobustDistanceConfig
 
 DEMAND_LEVEL = "demand_level"
 RESIDUAL_SHORT = "demand_residual_short"
@@ -45,6 +56,7 @@ RESIDUAL_DAYAHEAD = "demand_residual_dayahead"
 PRICE_LEVEL = "price_level"
 PRICE_VOLATILITY = "price_volatility"
 ISOLATION_FOREST = "isolation_forest"
+ROBUST_DISTANCE = "robust_distance"  # v2's D6 (m4_plan.md §2.10)
 LINE_NOTABLE = "price_line_300"
 LINE_SEVERE = "price_line_5000"
 
@@ -58,6 +70,8 @@ DETECTORS = (
     ISOLATION_FOREST,
 )
 ROLLING = DETECTORS[:5]
+# Every calibrated detector of any recipe version, in canonical order (v2's D6 last).
+CALIBRATED = (*DETECTORS, ROBUST_DISTANCE)
 LINES = (LINE_NOTABLE, LINE_SEVERE)
 RESIDUAL = (RESIDUAL_SHORT, RESIDUAL_DAYAHEAD)
 MARKET = (DEMAND_LEVEL, PRICE_LEVEL, PRICE_VOLATILITY, ISOLATION_FOREST)
@@ -81,6 +95,7 @@ CATEGORY = {
     PRICE_LEVEL: CATEGORIES[4],
     PRICE_VOLATILITY: CATEGORIES[5],
     ISOLATION_FOREST: CATEGORIES[6],
+    ROBUST_DISTANCE: CATEGORIES[6],
 }
 
 D6_FEATURES = (
@@ -108,6 +123,13 @@ class Recipe:
     price_level_scale_aud: float  # D4: x = asinh(price / scale)
     price_volatility_scale_aud: float  # D5, and D6's volatility feature
     multivariate: str  # D6's detector
+    distance: RobustDistanceConfig | None = None  # v2's D6 settings
+
+    def __post_init__(self) -> None:
+        if self.multivariate not in (ISOLATION_FOREST, ROBUST_DISTANCE):
+            raise ValueError(f"no multivariate detector {self.multivariate!r}")
+        if (self.multivariate == ROBUST_DISTANCE) != (self.distance is not None):
+            raise ValueError("the robust distance needs its settings, and only it")
 
     @property
     def detectors(self) -> tuple[str, ...]:
@@ -116,8 +138,9 @@ class Recipe:
 
     @property
     def rolling(self) -> tuple[str, ...]:
-        """The detectors whose p-values come from the trailing windows (§2.2)."""
-        return ROLLING
+        """The detectors whose p-values come from the trailing windows (§2.2): D1–D5, and
+        v2's D6. v1's Isolation Forest is calibrated against its training window."""
+        return (*ROLLING, self.multivariate) if self.multivariate == ROBUST_DISTANCE else ROLLING
 
 
 def v1_recipe(cfg: AnomaliesConfig) -> Recipe:
@@ -232,8 +255,18 @@ class DetectorState:
     change_scale: np.ndarray  # D6: robust scale of the 5-minute demand changes
     margin_profile: Profile  # D6: available generation minus demand
     features: np.ndarray  # (n, 9) D6 features
-    models: dict[int, MonthModel]  # D6 by NEM month
+    models: dict[int, MonthModel]  # v1's D6 forests by NEM month (empty in v2)
+    distances: dict[int, DistanceModel]  # v2's D6 by NEM month (empty in v1)
     recipe: Recipe
+
+    def scorers(self) -> Mapping[int, MonthScorer]:
+        """D6's month models of this recipe."""
+        return self.distances if self.recipe.distance is not None else self.models
+
+    def month_fits(self) -> list[MonthFit]:
+        """D6's month models of this recipe, by month."""
+        fits: list[MonthFit] = [*self.distances.values(), *self.models.values()]
+        return sorted(fits, key=lambda m: m.month)
 
 
 def demand_z(demand: np.ndarray, state: DetectorState, cfg: AnomaliesConfig) -> np.ndarray:
@@ -306,6 +339,7 @@ def compute_scores(
             margin_profile=empty,
             features=np.full((n, len(D6_FEATURES)), np.nan),
             models={},
+            distances={},
             recipe=recipe,
         )
         scores = {d: nan for d in recipe.detectors} | residual
@@ -346,8 +380,14 @@ def compute_scores(
             curtailment(series.solar_cleared, series.solar_uigf, iso.curtailment_min_uigf_mw),
         ]
     )
-    models = _month_models(features, series.ends, lay, cfg, recipe)
-    s6 = score_months(features, lay, models)
+    models: dict[int, MonthModel] = {}
+    distances: dict[int, DistanceModel] = {}
+    if recipe.distance is not None:
+        distances = fit_distance_models(features, series.ends, lay, recipe.distance)
+        s6 = score_months(features, lay, distances)
+    else:
+        models = fit_month_models(features, series.ends, lay, iso, cfg.seed)
+        s6 = score_months(features, lay, models)
 
     state = DetectorState(
         lay=lay,
@@ -361,6 +401,7 @@ def compute_scores(
         margin_profile=margin_profile,
         features=features,
         models=models,
+        distances=distances,
         recipe=recipe,
     )
     scores = {
@@ -372,16 +413,3 @@ def compute_scores(
         recipe.multivariate: s6,
     }
     return scores, state
-
-
-def _month_models(
-    features: np.ndarray,
-    ends: pd.DatetimeIndex,
-    lay: Layout,
-    cfg: AnomaliesConfig,
-    recipe: Recipe,
-) -> dict[int, MonthModel]:
-    """D6's models, one per NEM month."""
-    if recipe.multivariate == ISOLATION_FOREST:
-        return fit_month_models(features, ends, lay, cfg.isolation_forest, cfg.seed)
-    raise ValueError(f"no multivariate detector {recipe.multivariate!r}")

@@ -5,7 +5,9 @@ so none of these rules can change after the development results are seen:
 
 * :func:`anomaly_config_hash`: the whole ``anomalies`` config section (reference-event
   rules, every detector setting, injection, evidence, SHAP, case studies and cuts), minus
-  output directories and the freeze record, plus the split dates;
+  output directories and the freeze record, plus the split dates. It is v1's hash;
+  :func:`recipe_config_hash` adds ``anomalies_v2`` for v2 (m4_plan.md §2.10);
+* :func:`recipe_for`: each version's :class:`~gridcast.anomalies.detectors.Recipe`;
 * :func:`dev_split` and :func:`holdout_split`: the scored periods (§2.1);
 * :func:`case_studies`: §3.2's rule with the step-4 tie rule (user 2026-11-19). The
   ``cases.n`` events with the lowest p from a calibrated detector, ties by more calibrated
@@ -29,7 +31,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from gridcast.anomalies.detectors import LINES, Recipe
+from gridcast.anomalies.detectors import LINES, ROBUST_DISTANCE, Recipe, v1_recipe
 from gridcast.anomalies.events import Event
 from gridcast.anomalies.run import Detection, Split, detect
 from gridcast.anomalies.series import MarketSeries, QuantileBand, nem_day_ordinals
@@ -42,6 +44,8 @@ HASH_EXCLUDED: dict[str, Any] = {
     "frozen_commit": True,
     "explain": {"output_dir"},
 }
+V2_HASH_EXCLUDED: dict[str, Any] = {"frozen_config_hash": True, "frozen_commit": True}
+VERSIONS = (1, 2)
 # Seed streams of anomalies.seed (injections use 1-7).
 CASE_SEED_INDEX = 101
 CUT_SEED_INDEX = 102
@@ -58,6 +62,42 @@ def anomaly_config_hash(cfg: AppConfig) -> str:
     }
     blob = json.dumps(payload, sort_keys=True, default=str).encode()
     return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def recipe_config_hash(cfg: AppConfig, version: int) -> str:
+    """v1: :func:`anomaly_config_hash`. v2: the same payload plus ``anomalies_v2`` (minus
+    its freeze record)."""
+    if version == 1:
+        return anomaly_config_hash(cfg)
+    if version != 2:
+        raise ValueError(f"no anomaly recipe version {version}")
+    payload = {
+        "anomalies": cfg.anomalies.model_dump(mode="json", exclude=HASH_EXCLUDED),
+        "anomalies_v2": cfg.anomalies_v2.model_dump(mode="json", exclude=V2_HASH_EXCLUDED),
+        "splits": {
+            "holdout_start": str(cfg.backtest.holdout_start),
+            "holdout_end": str(cfg.backtest.holdout_end),
+        },
+    }
+    blob = json.dumps(payload, sort_keys=True, default=str).encode()
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def recipe_for(cfg: AppConfig, version: int) -> Recipe:
+    """v1: the recipe frozen in step 4. v2 (§2.10): D4 with ``anomalies_v2.price_level``,
+    D5 keeping ``anomalies.price_level``, and D6 the robust distance."""
+    if version == 1:
+        return v1_recipe(cfg.anomalies)
+    if version != 2:
+        raise ValueError(f"no anomaly recipe version {version}")
+    v2 = cfg.anomalies_v2
+    return Recipe(
+        2,
+        v2.price_level.scale_aud,
+        cfg.anomalies.price_level.scale_aud,
+        ROBUST_DISTANCE,
+        v2.robust_distance,
+    )
 
 
 # --------------------------------------------------------------------------- splits
@@ -190,6 +230,6 @@ def forest_leaks(detection: Detection) -> list[str]:
     after the month's start."""
     return [
         f"{mm.month // 12}-{mm.month % 12 + 1:02d}"
-        for mm in detection.run.state.models.values()
+        for mm in detection.run.state.month_fits()
         if mm.train_last_end > mm.start
     ]

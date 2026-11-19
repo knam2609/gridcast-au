@@ -443,6 +443,19 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
   - Then `detectors.Recipe` (version, D4's and D5's price scales, D6's detector) went through `compute_scores`, `run_detectors`, `alert_tiers`, `detect`, the injections, the cut checks and the case ties. Version 1 is the default everywhere. Run 104 again reproduced exactly from the generalised code (a check on a dirty tree; the recorded check runs at v2's freeze commit, 4g).
   - Until that record, `test_frozen_anomaly_code_is_unchanged` fails, because files under v1's `FROZEN_PATHS` changed since `2dc58fa`. That is the expected state between the code and its freeze record.
 - **4g:** v2's code (D4's transform, the robust distance with rolling calibration, its injection, evidence sentence and causality tests), the `anomalies_v2` config, and v2's freeze.
+  - *Outcome, code (2026-11-20):*
+    - new and frozen: `anomalies/distance.py`;
+    - `Recipe` gains the robust distance (a rolling detector in v2), plus `recipe.recipe_for` and `recipe_config_hash`;
+    - the `anomalies_v2` config section;
+    - a version option on `anomalies-smoke`, `evidence-smoke`, `anomalies-freeze-check`, `anomalies-dev` and `anomalies-reproduce` (Make: `VERSION=2`).
+  - Tests:
+    - the causality suite runs for both versions (7 tests each, controls included);
+    - `tests/unit/test_anomaly_v2.py`: on synthetic data, v2 reproduces v1's D1, D2, D3 and D5 exactly; D4 is \|z\| of asinh(price / $100); D6's p-value is against its own trailing scores;
+    - the distance's form, its batch invariance, and its growth beyond the training range;
+    - the injection harness equals a full recompute for v2's D4 and D6.
+  - **Warm-up smoke runs under v2** (bugs only, before the freeze): no error. D1, D2, D3 and D5 match v1's step-2b smoke run. The preview at the largest sizes: D4 $15,000 100% and −$1,000 89%, and D6 ±2,000 MW 100% (v1's smoke run: 28%, 52% and 1–2%).
+    - D6's alert rate in the pseudo-scored warm-up weeks is low: 0.11% at p ≤ 0.01. v1's D1 showed 0.14% there and passed A1 in development, so this predicts nothing on its own.
+    - The evidence smoke run: 24 of 24 events complete, 0 banned phrases, E1 passes on 14 pairs.
 - **4h:** v2's one development run and `report-m4` for v2 (`reports/m4_anomalies_v2.md`), with v1 beside it and every v2 verdict labelled post hoc.
 
 **Step 5. Explanations report.**

@@ -31,6 +31,7 @@ from gridcast.anomalies.dev import (
     run_config,
 )
 from gridcast.anomalies.freeze import freeze_state
+from gridcast.anomalies.recipe import recipe_for
 from gridcast.anomalies.report import StoredRun, load_run
 from gridcast.config import AppConfig
 
@@ -63,6 +64,7 @@ class Check:
 
 @dataclass(slots=True)
 class Reproduction:
+    version: int
     run_id: int
     batch_id: str
     sha: str | None
@@ -163,12 +165,13 @@ def without_seconds(frame: pd.DataFrame) -> pd.DataFrame:
     return frame.drop(columns=["seconds"])
 
 
-def reproduce(engine: Engine, cfg: AppConfig, region_id: str) -> Reproduction:
-    """Recompute the stored development run and compare everything (nothing is written)."""
+def reproduce(engine: Engine, cfg: AppConfig, region_id: str, version: int = 1) -> Reproduction:
+    """Recompute recipe ``version``'s stored development run and compare everything
+    (nothing is written)."""
     t = time.perf_counter()
-    stored: StoredRun = load_run(engine, cfg, region_id)
-    state = freeze_state(cfg)
-    out = compute_dev(engine, cfg, region_id)
+    stored: StoredRun = load_run(engine, cfg, region_id, version)
+    state = freeze_state(cfg, version=version)
+    out = compute_dev(engine, cfg, region_id, recipe_for(cfg, version))
     intervals = interval_frame(out.detection, out.split)
     checks = [
         frame_check("intervals.parquet", intervals, stored.intervals),
@@ -181,6 +184,7 @@ def reproduce(engine: Engine, cfg: AppConfig, region_id: str) -> Reproduction:
         record_check(run_config(out, cfg, state, region_id), stored.config),
     ]
     return Reproduction(
+        version,
         stored.run_id,
         stored.batch_id,
         state.sha,
@@ -192,7 +196,7 @@ def reproduce(engine: Engine, cfg: AppConfig, region_id: str) -> Reproduction:
 
 def summary_lines(rep: Reproduction) -> list[str]:
     head = (
-        f"run {rep.run_id} (batch {rep.batch_id}) recomputed at {rep.sha}"
+        f"recipe v{rep.version}: run {rep.run_id} (batch {rep.batch_id}) recomputed at {rep.sha}"
         f"{' (dirty tree)' if rep.dirty else ''} in {rep.seconds:.0f} s"
     )
     lines = [head]

@@ -3,6 +3,8 @@ UV ?= uv
 START ?= 2021-10
 END ?= 2026-09
 REGIONS ?= VIC1
+# M4 anomaly recipe version (1 or 2)
+VERSION ?= 1
 DAYS ?= 2026-10-01
 CHECK_MONTH ?= 2026-09
 
@@ -124,19 +126,19 @@ anomaly-reference-events: ## M4 step 1a: write docs/m4_reference_events.md (AEMO
 	$(UV) run gridcast anomaly-reference-events --region $(firstword $(REGIONS))
 
 anomalies-smoke: ## M4 step 2: detectors, events and injections on the warm-up periods only (bugs, no writes; minutes)
-	$(UV) run gridcast anomalies-smoke --region $(firstword $(REGIONS))
+	$(UV) run gridcast anomalies-smoke --region $(firstword $(REGIONS)) --version $(VERSION)
 
 evidence-smoke: ## M4 step 3b: evidence and summaries of the warm-up smoke events (completeness, banned phrases, E1, 5 examples; no writes)
-	$(UV) run gridcast evidence-smoke --region $(firstword $(REGIONS))
+	$(UV) run gridcast evidence-smoke --region $(firstword $(REGIONS)) --version $(VERSION)
 
 explain-smoke: ## M4 step 3: SHAP of run 2's retrain 2022-11-01 (E1 results and timings only, no writes)
 	$(UV) run gridcast explain-smoke --region $(firstword $(REGIONS))
 
 anomalies-freeze-check: ## M4 step 4: the anomaly recipe against its freeze record (exit 1 on any difference)
-	$(UV) run gridcast anomalies-freeze-check
+	$(UV) run gridcast anomalies-freeze-check --version $(VERSION)
 
 anomalies-dev: ## M4 step 4: the one development run of the frozen anomaly recipe (clean tree; stores the batch)
-	$(UV) run gridcast anomalies-dev --region $(firstword $(REGIONS))
+	$(UV) run gridcast anomalies-dev --region $(firstword $(REGIONS)) --version $(VERSION)
 
 report-m4: ## M4 step 4: reports/m4_anomalies.md from the stored development run (runs the causality suite)
 	$(UV) run gridcast report-m4 --region $(firstword $(REGIONS))
@@ -145,7 +147,7 @@ anomalies-diagnose-v1: ## M4 after step 4: docs/m4_v1_diagnosis.md, why v1's D1,
 	$(UV) run gridcast anomalies-diagnose-v1 --region $(firstword $(REGIONS))
 
 anomalies-reproduce: ## M4 step 4f: recompute the stored development run with the current code; exit 1 on any difference
-	$(UV) run gridcast anomalies-reproduce --region $(firstword $(REGIONS))
+	$(UV) run gridcast anomalies-reproduce --region $(firstword $(REGIONS)) --version $(VERSION)
 
 catalogue: ## Regenerate docs/feature_catalogue.md from the feature catalogue in code
 	$(UV) run gridcast feature-catalogue

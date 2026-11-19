@@ -503,6 +503,30 @@ class AnomaliesConfig(BaseModel):
     frozen_commit: str | None = None
 
 
+class V2PriceLevelConfig(BaseModel):
+    scale_aud: float = Field(gt=0)
+
+
+class RobustDistanceConfig(BaseModel):
+    """M4 v2's D6: distance from the training median under a Ledoit–Wolf covariance."""
+
+    train_weeks: int = Field(gt=0)
+    min_train_rows: int = Field(gt=0)
+
+
+class AnomaliesV2Config(BaseModel):
+    """M4 v2 (m4_plan.md §2.10): only the settings that differ from ``anomalies`` (v1).
+
+    Decided after v1's development verdicts, so v2's development verdicts are post hoc.
+    """
+
+    price_level: V2PriceLevelConfig  # D4's transform; D5 keeps anomalies.price_level
+    robust_distance: RobustDistanceConfig  # D6
+    # Not hashed: v2's freeze record.
+    frozen_config_hash: str | None = None
+    frozen_commit: str | None = None
+
+
 class WeatherVariableConfig(BaseModel):
     unit: str  # unit string Open-Meteo must report (checked on every response)
     kind: Literal["instant", "preceding_hour_mean"]
@@ -630,6 +654,7 @@ class AppConfig(BaseModel):
     aemo: AemoBenchmarkConfig
     intervals: IntervalsConfig
     anomalies: AnomaliesConfig
+    anomalies_v2: AnomaliesV2Config
 
     @model_validator(mode="after")
     def _weather_regions_known(self) -> AppConfig:

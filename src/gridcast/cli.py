@@ -1138,6 +1138,7 @@ def anomalies_smoke(
     region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
     weeks: Annotated[int, typer.Option(help="Pseudo-scored weeks at each warm-up's end")] = 8,
     starts: Annotated[int, typer.Option(help="Injection starts per detector")] = 200,
+    version: Annotated[int, typer.Option(help="Anomaly recipe version (1 or 2)")] = 1,
 ) -> None:
     """M4 step 2 smoke run on the warm-up periods only (bugs, never tuning; no writes)."""
     from gridcast.anomalies.smoke import market_pass, residual_pass, summarise
@@ -1146,7 +1147,8 @@ def anomalies_smoke(
     cfg = load_config()
     engine = get_engine()
     for run_pass in (market_pass, residual_pass):
-        for line in summarise(run_pass(engine, cfg, region, weeks, starts), cfg):
+        sp = run_pass(engine, cfg, region, weeks, starts, version=version)
+        for line in summarise(sp, cfg):
             typer.echo(line)
 
 
@@ -1154,6 +1156,7 @@ def anomalies_smoke(
 def evidence_smoke(
     region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
     weeks: Annotated[int, typer.Option(help="Pseudo-scored weeks at each warm-up's end")] = 8,
+    version: Annotated[int, typer.Option(help="Anomaly recipe version (1 or 2)")] = 1,
 ) -> None:
     """M4 step 3b: evidence and summaries of the warm-up smoke events (completeness,
     banned phrases, E1, 5 example summaries; no writes)."""
@@ -1163,7 +1166,7 @@ def evidence_smoke(
     cfg = load_config()
     engine = get_engine()
     for run_pass in (market_pass, residual_pass):
-        sp = run_pass(engine, cfg, region, weeks, 0, inject=False)
+        sp = run_pass(engine, cfg, region, weeks, 0, inject=False, version=version)
         for line in evidence_lines(engine, cfg, region, sp):
             typer.echo(line)
 
@@ -1185,13 +1188,16 @@ def explain_smoke(
 
 
 @app.command("anomalies-freeze-check")
-def anomalies_freeze_check() -> None:
+def anomalies_freeze_check(
+    version: Annotated[int, typer.Option(help="Anomaly recipe version (1 or 2)")] = 1,
+) -> None:
     """M4 step 4: the anomaly recipe against its freeze record; exit 1 on any difference."""
     from gridcast.anomalies.freeze import freeze_state
 
-    state = freeze_state(load_config())
+    state = freeze_state(load_config(), version=version)
     typer.echo(
-        f"anomaly config hash {state.config_hash} (frozen {state.frozen_config_hash}); "
+        f"recipe v{version}: anomaly config hash {state.config_hash} "
+        f"(frozen {state.frozen_config_hash}); "
         f"HEAD {state.sha}{' (dirty)' if state.dirty else ''}, "
         f"frozen commit {state.frozen_commit}"
     )
@@ -1203,14 +1209,17 @@ def anomalies_freeze_check() -> None:
 
 
 @app.command("anomalies-dev")
-def anomalies_dev(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+def anomalies_dev(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    version: Annotated[int, typer.Option(help="Anomaly recipe version (1 or 2)")] = 1,
+) -> None:
     """M4 step 4: the one development run of the frozen anomaly recipe (scores, injections,
     real-data cuts, evidence; stored). Refuses unless the freeze holds and the tree is clean."""
     from gridcast.anomalies.dev import DevRefused, run_dev, summary_lines
     from gridcast.database.engine import get_engine
 
     try:
-        run = run_dev(get_engine(), load_config(), region)
+        run = run_dev(get_engine(), load_config(), region, version)
     except DevRefused as exc:
         typer.echo(f"refused: {exc}")
         raise typer.Exit(1) from exc
@@ -1229,13 +1238,16 @@ def report_m4(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -
 
 
 @app.command("anomalies-reproduce")
-def anomalies_reproduce(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+def anomalies_reproduce(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    version: Annotated[int, typer.Option(help="Anomaly recipe version (1 or 2)")] = 1,
+) -> None:
     """Recompute the stored development run with the current code and compare everything it
     stored (nothing is written); exit 1 on any difference."""
     from gridcast.anomalies.reproduce import reproduce, summary_lines
     from gridcast.database.engine import get_engine
 
-    rep = reproduce(get_engine(), load_config(), region)
+    rep = reproduce(get_engine(), load_config(), region, version)
     for line in summary_lines(rep):
         typer.echo(line)
     if not rep.ok:

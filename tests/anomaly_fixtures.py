@@ -14,6 +14,7 @@ from functools import cache
 import numpy as np
 import pandas as pd
 
+from gridcast.anomalies.detectors import ROBUST_DISTANCE, Recipe
 from gridcast.anomalies.run import Split
 from gridcast.anomalies.series import MarketSeries, QuantileBand, epoch_minutes
 from gridcast.config import AnomaliesConfig, load_config
@@ -38,6 +39,14 @@ def small_config() -> AnomaliesConfig:
             ),
         }
     )
+
+
+def small_v2_recipe() -> Recipe:
+    """v2 (m4_plan.md §2.10) with the robust distance's window shrunk like the forest's."""
+    a = small_config()
+    v2 = load_config().anomalies_v2
+    distance = v2.robust_distance.model_copy(update={"train_weeks": 1, "min_train_rows": 64})
+    return Recipe(2, v2.price_level.scale_aud, a.price_level.scale_aud, ROBUST_DISTANCE, distance)
 
 
 def split(cfg: AnomaliesConfig | None = None) -> Split:

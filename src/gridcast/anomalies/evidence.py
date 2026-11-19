@@ -41,6 +41,7 @@ from gridcast.anomalies.detectors import (
     PRICE_VOLATILITY,
     RESIDUAL_DAYAHEAD,
     RESIDUAL_SHORT,
+    ROBUST_DISTANCE,
     price_x,
     volatility,
     volatility_baseline,
@@ -952,6 +953,11 @@ def _lead_sentence(evidence: Mapping[str, Any]) -> str:
             f"the multivariate detector (Isolation Forest) gave the 5 minutes to {at} a "
             f"p-value of {_p_text(peak['p'])} against its training window (the 26 weeks "
             f"before the month)"
+        )
+    if detector == ROBUST_DISTANCE:
+        return (
+            f"the multivariate detector (robust distance) gave the 5 minutes to {at} a "
+            f"p-value of {_p_text(peak['p'])} against its trailing 26 weeks"
         )
     lines = _value(evidence, "event.price_lines")
     n, k = lines["intervals"], lines["at_or_above_notable"]

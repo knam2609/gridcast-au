@@ -48,6 +48,7 @@ from gridcast.anomalies.recipe import (
     dev_split,
     differences,
     forest_leaks,
+    recipe_for,
     truncated_detection,
 )
 from gridcast.anomalies.run import Detection, Split, detect
@@ -80,8 +81,10 @@ def existing_runs(engine: Engine, region_id: str, split: str, config_hash: str) 
     return [tuple(r) for r in rows]
 
 
-def check_preconditions(engine: Engine, cfg: AppConfig, region_id: str) -> FreezeState:
-    state = freeze_state(cfg)
+def check_preconditions(
+    engine: Engine, cfg: AppConfig, region_id: str, version: int = 1
+) -> FreezeState:
+    state = freeze_state(cfg, version=version)
     problems = list(state.problems)
     if state.sha is None:
         problems.append("not a git checkout")
@@ -213,7 +216,7 @@ def forest_frame(det: Detection) -> pd.DataFrame:
             "train_last_end": mm.train_last_end,
             "n_train": mm.n_train,
         }
-        for mm in sorted(det.run.state.models.values(), key=lambda m: m.month)
+        for mm in det.run.state.month_fits()
     ]
     return pd.DataFrame(rows)
 
@@ -255,6 +258,7 @@ def run_config(out: DevOutputs, cfg: AppConfig, state: FreezeState, region_id: s
     events = det.events
     return {
         "split": out.split.name,
+        "recipe_version": out.detection.run.recipe.version,
         "anomaly_config_hash": state.config_hash,
         "frozen_commit": state.frozen_commit,
         "region": region_id,
@@ -280,7 +284,7 @@ def run_config(out: DevOutputs, cfg: AppConfig, state: FreezeState, region_id: s
             "lines_only": sum(e.lines_only for e in events),
             "severe": sum(e.tier == "severe" for e in events),
             "alerts": {d: int((t > 0).sum()) for d, t in det.tiers.items()},
-            "forests": len(det.run.state.models),
+            "forests": len(det.run.state.month_fits()),
             "injections": len(out.injections),
         },
         "a5_real": {
@@ -392,10 +396,10 @@ class DevRun:
     config: dict
 
 
-def run_dev(engine: Engine, cfg: AppConfig, region_id: str) -> DevRun:
-    state = check_preconditions(engine, cfg, region_id)
-    log.info("anomalies.dev.start", hash=state.config_hash, sha=state.sha)
-    out = compute_dev(engine, cfg, region_id)
+def run_dev(engine: Engine, cfg: AppConfig, region_id: str, version: int = 1) -> DevRun:
+    state = check_preconditions(engine, cfg, region_id, version)
+    log.info("anomalies.dev.start", version=version, hash=state.config_hash, sha=state.sha)
+    out = compute_dev(engine, cfg, region_id, recipe_for(cfg, version))
     t = time.perf_counter()
     run_id, batch_id, directory = store_dev(engine, cfg, region_id, out, state)
     out.seconds["store"] = time.perf_counter() - t
@@ -410,7 +414,8 @@ def summary_lines(run: DevRun) -> list[str]:
     gate = c["shap_gate"]
     return [
         f"stored anomaly run {run.run_id}, batch {run.batch_id} -> {run.directory}",
-        f"   hash {c['anomaly_config_hash']}, frozen commit {c['frozen_commit']}",
+        f"   recipe v{c['recipe_version']}, hash {c['anomaly_config_hash']}, "
+        f"frozen commit {c['frozen_commit']}",
         f"   series {c['series']['intervals']:,} intervals ({c['series']['first_end']} -> "
         f"{c['series']['last_end']}); band {c['inputs']['band_issue_times']:,} issue times, "
         f"actuals checked on {c['inputs']['checked_actuals']:,} pairs",

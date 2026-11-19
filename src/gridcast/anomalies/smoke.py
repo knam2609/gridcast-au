@@ -25,9 +25,10 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import Engine
 
-from gridcast.anomalies.detectors import DETECTORS, LINES, RESIDUAL
+from gridcast.anomalies.detectors import LINES, RESIDUAL
 from gridcast.anomalies.injection import power_table, run_injections
 from gridcast.anomalies.inputs import check_band_actuals, load_market_series, read_band
+from gridcast.anomalies.recipe import recipe_for
 from gridcast.anomalies.run import Detection, Split, detect
 from gridcast.anomalies.series import MarketSeries
 from gridcast.config import AppConfig
@@ -68,6 +69,7 @@ def market_pass(
     weeks: int,
     n_starts: int,
     inject: bool = True,
+    version: int = 1,
 ) -> SmokePass:
     a = cfg.anomalies
     t0 = time.perf_counter()
@@ -77,7 +79,7 @@ def market_pass(
         raise AssertionError("the market smoke pass read data after the warm-up")
     t1 = time.perf_counter()
     split = _split("smoke-market", a.market_first_day, weeks, residual_only=False)
-    det = detect(series, None, split, a)
+    det = detect(series, None, split, a, recipe=recipe_for(cfg, version))
     t2 = time.perf_counter()
     inj = run_injections(series, det.run, split, a, n_starts=n_starts) if inject else NO_INJECTIONS
     t3 = time.perf_counter()
@@ -101,6 +103,7 @@ def residual_pass(
     weeks: int,
     n_starts: int,
     inject: bool = True,
+    version: int = 1,
 ) -> SmokePass:
     a = cfg.anomalies
     t0 = time.perf_counter()
@@ -114,7 +117,7 @@ def residual_pass(
     checked = check_band_actuals(band, actual, series)
     t1 = time.perf_counter()
     split = _split("smoke-residual", a.residual_first_day, weeks, residual_only=True)
-    det = detect(series, band, split, a, market=False)
+    det = detect(series, band, split, a, market=False, recipe=recipe_for(cfg, version))
     t2 = time.perf_counter()
     inj = (
         run_injections(series, det.run, split, a, n_starts=n_starts, labels=RESIDUAL)
@@ -160,7 +163,7 @@ def summarise(sp: SmokePass, cfg: AppConfig) -> list[str]:
     """Plain-text lines for the console (and the handoff)."""
     det = sp.detection
     masks = sp.split.masks(det.run.ends)
-    names = RESIDUAL if not det.run.market else (*DETECTORS, *LINES)
+    names = RESIDUAL if not det.run.market else (*det.run.recipe.detectors, *LINES)
     first = min(sp.split.market_first_day, sp.split.residual_first_day)
     out = [
         f"== {sp.name} pass: {sp.n_intervals:,} intervals, {sp.first_end} -> {sp.last_end}; "
@@ -171,9 +174,9 @@ def summarise(sp: SmokePass, cfg: AppConfig) -> list[str]:
         out.append(f"   stored QR actuals equal market demand on {sp.checked_actuals:,} pairs")
     out += [_detector_line(d, sp, masks[d], cfg.anomalies.pvalues.notable) for d in names]
     if det.run.market:
-        models = det.run.state.models.values()
+        models = det.run.state.month_fits()
         out.append(
-            f"   isolation forest: {len(models)} monthly models; training rows "
+            f"   {det.run.recipe.multivariate}: {len(models)} monthly models; training rows "
             + ", ".join(f"{mm.month // 12}-{mm.month % 12 + 1:02d} {mm.n_train:,}" for mm in models)
         )
     cats: dict[str, int] = {}

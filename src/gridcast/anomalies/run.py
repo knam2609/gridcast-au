@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from gridcast.anomalies.detectors import (
-    DETECTORS,
+    CALIBRATED,
     LINE_NOTABLE,
     LINE_SEVERE,
     LINES,
@@ -69,7 +69,7 @@ class Split:
         end = self.end_day.toordinal() if self.end_day else np.iinfo(np.int64).max
         market = (days >= self.market_first_day.toordinal()) & (days < end)
         residual = (days >= self.residual_first_day.toordinal()) & (days < end)
-        return {d: residual if d in RESIDUAL else market for d in (*DETECTORS, *LINES)}
+        return {d: residual if d in RESIDUAL else market for d in (*CALIBRATED, *LINES)}
 
     def index_range(self, ends: pd.DatetimeIndex) -> tuple[int, int]:
         """``[start, stop)`` of the intervals from the earlier first day to the end."""

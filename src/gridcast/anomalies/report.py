@@ -133,10 +133,11 @@ FROM anomalies WHERE run_id = :run ORDER BY first_interval_end
 """
 
 
-def load_run(engine: Engine, cfg: AppConfig, region_id: str) -> StoredRun:
-    frozen = cfg.anomalies.frozen_config_hash
+def load_run(engine: Engine, cfg: AppConfig, region_id: str, version: int = 1) -> StoredRun:
+    record = cfg.anomalies if version == 1 else cfg.anomalies_v2
+    frozen = record.frozen_config_hash
     if not frozen:
-        raise ReportMismatch("no freeze recorded (anomalies.frozen_config_hash)")
+        raise ReportMismatch(f"no freeze recorded for recipe v{version}")
     with engine.connect() as conn:
         rows = conn.execute(text(RUN_SQL), {"region": region_id, "hash": frozen}).all()
         if len(rows) != 1:
