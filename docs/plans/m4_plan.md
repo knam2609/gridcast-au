@@ -471,6 +471,15 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
     - Fix: **migration 0008** adds `robust_distance` to that list and changes nothing else. `sql/` is not under the frozen paths, so both freezes still hold. An integration test now stores v2 events.
     - **Disclosed:** what was seen of that attempt's output. While `report-m4`'s v2 code was being written, its progress log was read once; it showed that the first two real cuts had 0 differences. The error message then showed the fields of 11 events (dates, detectors, lowest p, summaries; 10 in May 2022, 1 in Sep 2025). Nothing else was read, and no setting or reading changed.
     - The rerun uses the same frozen code and data, and the run is deterministic.
+  - *Outcome (2026-11-20):*
+    - **The development run** (run 106, batch `0ff972b0-9d46-4ca0-a84f-86d85c450be1`) ran from `7b989af` with a clean tree (frozen code `04da607`), in about 2.5 min. It stored 994 events: 388 calibrated (76 severe) and 606 price-line-only.
+    - **`report-m4 --version 2`** wrote [`reports/m4_anomalies_v2.md`](../../reports/m4_anomalies_v2.md). It recomputed the stored run with no mismatch. v2's D1, D2, D3 and D5 (20 stored columns) equal run 104's exactly.
+    - **Verdicts, post hoc: A1, A2, A4, A5 and E1 pass; A3 fails** (5 of 6, against v1's pre-registered 3 of 6, which stands):
+      - A1: 12 of 12 inside. D4 1.07% / 0.153% and D6 1.41% / 0.141% (p ≤ 0.01 / p ≤ 0.001).
+      - A2: 7 of 7. P05 was caught by D4 at p 7.44 × 10⁻⁴; it was known to be missed before v2 was designed.
+      - A3: 5 of 11. D6 reached 100% at ±2,000 MW (v1: 1.9%). D4 reached 84.6% at $15,000 and 66.2% at −$1,000 (v1: 10.7% and 32.8%), still below 90%. D1 and D3 are as v1.
+      - A4: 994 of 994 complete, none with a banned phrase. A5: the suite's v2 cases 7 of 7, the 3 cuts 0 differences, 0 month-model leaks. E1: 424 demand-peak pairs, 0 mismatches.
+    - **Next:** step 5 (explanations; independent of the version), then step 6: the holdout, scored once for v1 and once for v2.
 
 **Step 5. Explanations report.**
 - `gridcast explain-dev` (the global SHAP sample and the E1 gate).

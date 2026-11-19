@@ -2,6 +2,23 @@
 
 Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff.md`](m3_handoff.md) and [`m3_plan.md`](m3_plan.md).
 
+> **Update, 2026-11-20 (twentieth session, later: steps 4f–4h, v2 built, frozen and scored on development):**
+> - **4f `38e4687`:** the frozen modules are generalised behind `detectors.Recipe`; version 1 is the default everywhere. `gridcast anomalies-reproduce` (`anomalies/reproduce.py`, not frozen) recomputes a stored development run and compares every column, injection, month-model range, cut, event (evidence and summary included) and the run record. It passed on the untouched code first, and then on the generalised code.
+> - **4g `04da607` (code) + `17ca965` (freeze):**
+>   - `anomalies/distance.py` (frozen), the `anomalies_v2` config section, and `recipe_for` / `recipe_config_hash`;
+>   - a `--version` option on `anomalies-smoke`, `evidence-smoke`, `anomalies-freeze-check`, `anomalies-dev`, `anomalies-reproduce` and `report-m4` (Make: `VERSION=2`);
+>   - the causality suite runs both versions, plus `tests/unit/test_anomaly_v2.py`;
+>   - the warm-up smoke runs under v2 found no bug.
+>   - From a clean tree at `04da607`, run 104 reproduced exactly. **v1:** hash `2ce8b3fc523ae81c`, code carried from `2dc58fa` to `04da607`. **v2:** hash `44abbf4b24cf6ac8`, code `04da607`.
+> - **4h:**
+>   - The first v2 development run stored nothing: migration 0007's detector list rejected `robust_distance`. **Migration 0008** (`7b989af`) fixed that, and it is applied to the main database. What was seen of the failed attempt is disclosed in the plan.
+>   - The rerun is **run 106, batch `0ff972b0-…`**. `report-m4 --version 2` wrote [`reports/m4_anomalies_v2.md`](../../reports/m4_anomalies_v2.md) (`d5f9c53`).
+> - **v2 verdicts (post hoc): A1, A2, A4, A5 and E1 pass; A3 fails.**
+>   - D6 reaches 100% at ±2,000 MW, and A1 is 12 of 12. P05 is caught.
+>   - D4 reaches 84.6% at $15,000 and 66.2% at −$1,000, still below 90%. D1 and D3 are unchanged.
+>   - v1's pre-registered 3 of 6 stands as published.
+> - **Next: step 5** (`explain-dev`, `report-m4-explain`; independent of the version). Then **step 6**: the holdout once per version (each run must first reproduce its own development batch: run 104 for v1, run 106 for v2). M5/M6 serve v2. Run a question round for step 5 and for step 6 where the plan leaves choices open.
+
 > **Update, 2026-11-20 (twentieth session: the v2 question round, step 4e):** before the question round, a read-only diagnosis of the stored development run found each failure's mechanism. It is [`docs/m4_v1_diagnosis.md`](../m4_v1_diagnosis.md), from `gridcast anomalies-diagnose-v1` (`anomalies/diagnosis.py`, not frozen). It recomputes v1's own state, checks it bit for bit against run 104, and scores no alternative:
 > - **D4:** asinh(price / $10) makes a −$50 → +$50 move as large as a 95-fold spike, so the per-slot robust scale decides the ranking. 54.8% of alerts sit at the floor scale; power at $15,000 is 36.8% at the tightest-scale starts and 0.4% at the widest.
 > - **D6:** the Isolation Forest saturates (0 of 41 monthly models let a one-feature extreme reach p ≤ 0.001), and its training-window calibration drifts (11 of 41 months above 0.2%, 19 with no alert).
