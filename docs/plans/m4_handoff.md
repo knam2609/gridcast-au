@@ -2,6 +2,22 @@
 
 Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff.md`](m3_handoff.md) and [`m3_plan.md`](m3_plan.md).
 
+> **Update, 2026-11-20 (twentieth session: the v2 question round, step 4e):** before the question round, a read-only diagnosis of the stored development run found each failure's mechanism. It is [`docs/m4_v1_diagnosis.md`](../m4_v1_diagnosis.md), from `gridcast anomalies-diagnose-v1` (`anomalies/diagnosis.py`, not frozen). It recomputes v1's own state, checks it bit for bit against run 104, and scores no alternative:
+> - **D4:** asinh(price / $10) makes a −$50 → +$50 move as large as a 95-fold spike, so the per-slot robust scale decides the ranking. 54.8% of alerts sit at the floor scale; power at $15,000 is 36.8% at the tightest-scale starts and 0.4% at the widest.
+> - **D6:** the Isolation Forest saturates (0 of 41 monthly models let a one-feature extreme reach p ≤ 0.001), and its training-window calibration drifts (11 of 41 months above 0.2%, 19 with no alert).
+> - **D1** follows the real spread of demand (78–84% power at stable slots, 0.8% at the widest), so it is not a defect. **D3** was not examined.
+>
+> **The user chose every recommendation** (recorded in [`m4_plan.md`](m4_plan.md) §1, "Decided after the development verdicts", and §2.10):
+> - a disclosed **v2 for D4 and D6 only**; v1's verdicts stay published;
+> - **D4 v2** uses x = asinh(price / $100), with everything else as v1. D5 keeps asinh(price / $10);
+> - **D6 v2** is a **robust distance**: the same nine features (D4's z from v2) and monthly refit, distance from the training median under a Ledoit–Wolf covariance, and a rolling p-value against its own out-of-sample scores;
+> - **the holdout scores v1 and v2, once each**, and M5/M6 serve v2 whatever the holdout shows;
+> - v2's development verdicts are labelled **post hoc**.
+>
+> **How (readings fixed before coding):** the frozen modules are generalised behind a recipe version rather than copied. v1's code freeze is then carried by behaviour: `gridcast anomalies-reproduce` must reproduce run 104 exactly (every column, injection, forest range, cut, event, evidence field and summary) before v2 changes anything. The v1 holdout repeats that check. v1's `anomalies` config and hash do not change; v2's settings go in a new `anomalies_v2` section with its own freeze. v2's D6 is stored as `robust_distance`. The v2 freeze and development run come before any holdout score.
+>
+> **Next: step 4f** (generalise, then reproduce run 104), **4g** (v2 code + freeze), **4h** (v2's development run + `reports/m4_anomalies_v2.md`). Then step 5 (explanations), then step 6 (holdout, v1 and v2).
+
 > **Update, 2026-11-19 (nineteenth session: step 4 question round):** the user chose every recommendation. The decisions are in [`m4_plan.md`](m4_plan.md) §1, "Clarified in step 4", recorded before any freeze code or development score:
 > - **Freeze:** the hash covers the whole `anomalies` section plus the split dates. `FROZEN_PATHS` = M3's frozen paths, the scoring, merging, injection and evidence modules of `anomalies/`, and `explainability/` without its smoke module.
 > - **Holdout band:** split by issue time (development QR + run 2's mask before 2025-10-01, holdout QR + `holdout_main`'s mask after). The Aug–Sep 2025 overlap is bit-identical (checked today), and the holdout run must refuse if it is not.

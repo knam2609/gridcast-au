@@ -1228,6 +1228,17 @@ def report_m4(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -
     typer.echo(f"wrote {path}")
 
 
+@app.command("anomalies-diagnose-v1")
+def anomalies_diagnose_v1(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+    """Write docs/m4_v1_diagnosis.md: why v1's D1, D4 and D6 failed (reported only; recomputes
+    v1's own state from the stored development run, scores no alternative)."""
+    from gridcast.anomalies.diagnosis import write_doc
+    from gridcast.database.engine import get_engine
+
+    path = write_doc(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
 @app.command("feature-catalogue")
 def feature_catalogue() -> None:
     """Write docs/feature_catalogue.md from the feature catalogue in code (no database)."""
