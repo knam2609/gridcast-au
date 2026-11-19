@@ -141,7 +141,7 @@ anomalies-dev: ## M4 step 4: the one development run of the frozen anomaly recip
 	$(UV) run gridcast anomalies-dev --region $(firstword $(REGIONS)) --version $(VERSION)
 
 report-m4: ## M4 step 4: reports/m4_anomalies.md from the stored development run (runs the causality suite)
-	$(UV) run gridcast report-m4 --region $(firstword $(REGIONS))
+	$(UV) run gridcast report-m4 --region $(firstword $(REGIONS)) --version $(VERSION)
 
 anomalies-diagnose-v1: ## M4 after step 4: docs/m4_v1_diagnosis.md, why v1's D1, D4 and D6 failed (reported only)
 	$(UV) run gridcast anomalies-diagnose-v1 --region $(firstword $(REGIONS))

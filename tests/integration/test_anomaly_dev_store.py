@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 from sqlalchemy import Engine, text
 
+from gridcast.anomalies.detectors import ROBUST_DISTANCE, Recipe
 from gridcast.anomalies.dev import DevOutputs, existing_runs, interval_frame, store_dev
 from gridcast.anomalies.evidence_inputs import EvidenceRun
 from gridcast.anomalies.freeze import FreezeState
@@ -18,18 +19,18 @@ from gridcast.config import load_config
 from gridcast.database.load import ensure_regions
 from gridcast.explainability.treeshap import empty_gate
 from gridcast.timeutils import INTERVAL, NEM_TZ
-from tests.anomaly_fixtures import base_inputs, small_config, split
+from tests.anomaly_fixtures import base_inputs, small_config, small_v2_recipe, split
 
 pytestmark = pytest.mark.integration
 
 
-def _outputs() -> DevOutputs:
+def _outputs(recipe: Recipe | None = None) -> DevOutputs:
     series, band = base_inputs()
     cfg = small_config()
     # A bounded split: the run row needs an end, and the table accepts only dev/holdout.
     last_day = (series.ends[-1] - INTERVAL).tz_convert(NEM_TZ).date()
     sp = replace(split(), end_day=last_day + dt.timedelta(days=1))
-    det = detect(series, band, sp, cfg)
+    det = detect(series, band, sp, cfg, recipe=recipe)
     inj = run_injections(series, det.run, sp, cfg, n_starts=20)
     evidence = [{"event": {"index": i}} for i in range(len(det.events))]
     summaries = [f"Event {i}." for i in range(len(det.events))]
@@ -96,6 +97,31 @@ def test_store_writes_files_run_and_events(db: Engine, tmp_path: Path) -> None:
     assert existing_runs(db, "VIC1", "dev", "feedc0de") == [(run_id, batch_id)]
     assert existing_runs(db, "VIC1", "holdout", "feedc0de") == []
     assert existing_runs(db, "VIC1", "dev", "other") == []
+
+
+def test_v2_events_naming_the_robust_distance_are_stored(db: Engine, tmp_path: Path) -> None:
+    """Migration 0008: the detector list accepts v2's D6 (the first v2 development run
+    failed on 0007's list and stored nothing)."""
+    cfg = load_config()
+    cfg.anomalies = cfg.anomalies.model_copy(update={"output_dir": tmp_path})
+    with db.begin() as conn:
+        ensure_regions(conn, cfg)
+    out = _outputs(small_v2_recipe())
+    assert any(ROBUST_DISTANCE in e.detectors for e in out.detection.events)
+    run_id, _, directory = store_dev(db, cfg, "VIC1", out, STATE)
+    with db.connect() as conn:
+        stored = conn.execute(
+            text("SELECT count(*) FROM anomalies WHERE run_id = :r AND :d = ANY (detectors)"),
+            {"r": run_id, "d": ROBUST_DISTANCE},
+        ).scalar_one()
+        version = conn.execute(
+            text("SELECT config->>'recipe_version' FROM model_runs WHERE run_id = :r"),
+            {"r": run_id},
+        ).scalar_one()
+    assert stored == sum(ROBUST_DISTANCE in e.detectors for e in out.detection.events)
+    assert version == "2"
+    forests = pd.read_parquet(directory / "forests.parquet")
+    assert len(forests) == len(out.detection.run.state.distances) > 0
 
 
 def test_a_failed_insert_leaves_no_files(db: Engine, tmp_path: Path) -> None:

@@ -1228,12 +1228,16 @@ def anomalies_dev(
 
 
 @app.command("report-m4")
-def report_m4(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
-    """Write reports/m4_anomalies.md from the stored development run (A1-A5, E1 at peaks)."""
+def report_m4(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    version: Annotated[int, typer.Option(help="Anomaly recipe version (1 or 2)")] = 1,
+) -> None:
+    """Write reports/m4_anomalies.md (v2: m4_anomalies_v2.md, post hoc, beside v1) from the
+    stored development run (A1-A5, E1 at peaks)."""
     from gridcast.anomalies.report import write_report as write_m4
     from gridcast.database.engine import get_engine
 
-    path = write_m4(get_engine(), load_config(), region)
+    path = write_m4(get_engine(), load_config(), region, version=version)
     typer.echo(f"wrote {path}")
 
 

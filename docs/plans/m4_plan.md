@@ -467,6 +467,10 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
     - v2's record is hash `44abbf4b24cf6ac8`, code `04da607`.
     - Both are pinned by `tests/unit/test_anomaly_freeze.py`. No v2 development score existed when they were recorded.
 - **4h:** v2's one development run and `report-m4` for v2 (`reports/m4_anomalies_v2.md`), with v1 beside it and every v2 verdict labelled post hoc.
+  - *The first attempt stored nothing (2026-11-20).* `anomalies-dev --version 2` ran from `c0436a8`, a clean tree with both freezes holding. It computed every output, then failed on insert: the `anomalies` table's detector list (migration 0007) named v1's detectors only and rejected `robust_distance`. The run row and events were in one transaction, which rolled back, and the files were removed, so no v2 run was stored.
+    - Fix: **migration 0008** adds `robust_distance` to that list and changes nothing else. `sql/` is not under the frozen paths, so both freezes still hold. An integration test now stores v2 events.
+    - **Disclosed:** what was seen of that attempt's output. While `report-m4`'s v2 code was being written, its progress log was read once; it showed that the first two real cuts had 0 differences. The error message then showed the fields of 11 events (dates, detectors, lowest p, summaries; 10 in May 2022, 1 in Sep 2025). Nothing else was read, and no setting or reading changed.
+    - The rerun uses the same frozen code and data, and the run is deterministic.
 
 **Step 5. Explanations report.**
 - `gridcast explain-dev` (the global SHAP sample and the E1 gate).

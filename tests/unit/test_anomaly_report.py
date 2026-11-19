@@ -113,7 +113,9 @@ def _rc(n: int = 40) -> Recomputed:
     p = {d: np.full(n, 0.5) for d in DETECTORS}
     t = {d: np.zeros(n, dtype=np.int8) for d in DETECTORS}
     on = {d: np.ones(n, dtype=bool) for d in DETECTORS}
-    return Recomputed(ends, np.zeros(n), t, p, {d: np.zeros(n) for d in DETECTORS}, on, [])
+    return Recomputed(
+        DETECTORS, ends, np.zeros(n), t, p, {d: np.zeros(n) for d in DETECTORS}, on, []
+    )
 
 
 def _ref(start: str, end: str) -> ReferenceEvent:

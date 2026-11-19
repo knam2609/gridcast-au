@@ -40,12 +40,13 @@ from gridcast.anomalies.detectors import (
     PRICE_VOLATILITY,
     RESIDUAL_DAYAHEAD,
     RESIDUAL_SHORT,
+    ROBUST_DISTANCE,
 )
 from gridcast.anomalies.events import Event, merge_events
 from gridcast.anomalies.evidence import banned_in, missing_fields
 from gridcast.anomalies.freeze import freeze_state
 from gridcast.anomalies.pvalues import tiers as tiers_from_p
-from gridcast.anomalies.recipe import case_studies, dev_split
+from gridcast.anomalies.recipe import case_studies, dev_split, recipe_for
 from gridcast.anomalies.reference import CLASS_O, CLASS_P, ReferenceEvent, reference_events
 from gridcast.anomalies.run import Split, gap_intervals
 from gridcast.config import PROJECT_ROOT, AppConfig
@@ -55,7 +56,9 @@ from gridcast.evaluation.report import AXIS, GRID, INK, INK_2, MUTED, SURFACE, _
 from gridcast.provenance import git_sha
 from gridcast.timeutils import INTERVAL, NEM_TZ
 
-REPORT_NAME = "m4_anomalies.md"
+REPORT_NAMES = {1: "m4_anomalies.md", 2: "m4_anomalies_v2.md"}
+REPORT_NAME = REPORT_NAMES[1]
+FIGURE_PREFIX = {1: "m4", 2: "m4v2"}
 CAUSALITY_TESTS = ("tests/unit/test_anomaly_causality.py",)
 
 NAMES = {
@@ -65,6 +68,7 @@ NAMES = {
     PRICE_LEVEL: "D4 price level",
     PRICE_VOLATILITY: "D5 price volatility",
     ISOLATION_FOREST: "D6 Isolation Forest",
+    ROBUST_DISTANCE: "D6 robust distance",
     LINE_NOTABLE: "L1 price ≥ $300",
     LINE_SEVERE: "L2 price ≥ $5,000",
 }
@@ -73,6 +77,7 @@ SHORT = {d: NAMES[d].split(" ", 1)[0] for d in NAMES}
 COLORS = dict(
     zip(DETECTORS, ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"), strict=True)
 )
+COLORS[ROBUST_DISTANCE] = COLORS[ISOLATION_FOREST]  # D6's slot in either version
 A1_BANDS = ((0.01, 0.005, 0.02), (0.001, 0.0005, 0.002))  # (level, low, high)
 A3_POWER = 0.9
 # A3's checks: (detector, size) at the largest pre-registered size of each sign (§3).
@@ -96,7 +101,14 @@ UNITS = {
     PRICE_LEVEL: "price set to, $/MWh",
     PRICE_VOLATILITY: "± amplitude, $/MWh",
     ISOLATION_FOREST: "MW added",
+    ROBUST_DISTANCE: "MW added",
 }
+
+
+def a3_checks(detectors: Sequence[str]) -> tuple[tuple[str, float], ...]:
+    """A3's checks with the version's D6 (v2: ``robust_distance``, §2.10)."""
+    d6 = detectors[5]
+    return tuple((d6 if d == ISOLATION_FOREST else d, size) for d, size in A3_CHECKS)
 
 
 class ReportMismatch(RuntimeError):
@@ -186,6 +198,7 @@ def load_prices(engine: Engine, region_id: str, ends: pd.DatetimeIndex) -> np.nd
 
 @dataclass(slots=True)
 class Recomputed:
+    detectors: tuple[str, ...]  # the version's calibrated detectors
     ends: pd.DatetimeIndex
     price: np.ndarray
     tiers: dict[str, np.ndarray]
@@ -196,11 +209,16 @@ class Recomputed:
 
 
 def recompute(
-    run: StoredRun, price: np.ndarray, cfg: AppConfig, split: Split | None = None
+    run: StoredRun,
+    price: np.ndarray,
+    cfg: AppConfig,
+    split: Split | None = None,
+    detectors: Sequence[str] = DETECTORS,
 ) -> Recomputed:
     """Tiers, lines and events from the stored p-values and prices; must equal the run.
 
-    ``split`` defaults to the development split (tests pass their own)."""
+    ``split`` defaults to the development split (tests pass their own); ``detectors`` are
+    the run's recipe's (v1 by default)."""
     a = cfg.anomalies
     f = run.intervals
     ends = pd.DatetimeIndex(pd.to_datetime(f["interval_end"], utc=True))
@@ -209,7 +227,7 @@ def recompute(
     pvalues: dict[str, np.ndarray] = {}
     scores: dict[str, np.ndarray] = {}
     in_period: dict[str, np.ndarray] = {}
-    for d in DETECTORS:
+    for d in detectors:
         p = f[f"{d}__p"].to_numpy(dtype=np.float64)
         period = f[f"{d}__in_period"].to_numpy(dtype=bool)
         t = tiers_from_p(p, a.pvalues.notable, a.pvalues.severe)
@@ -257,7 +275,7 @@ def recompute(
         problems.append(f"the run recorded {counts['events']} events, {len(stored)} are stored")
     if problems:
         raise ReportMismatch("; ".join(problems))
-    return Recomputed(ends, price, tiers, pvalues, scores, in_period, events)
+    return Recomputed(tuple(detectors), ends, price, tiers, pvalues, scores, in_period, events)
 
 
 # --------------------------------------------------------------------------- A1
@@ -266,7 +284,7 @@ def recompute(
 def a1_rows(rc: Recomputed) -> pd.DataFrame:
     """Per detector: scored intervals and the shares at p ≤ 0.01, 0.001 and 0.0001."""
     rows = []
-    for d in DETECTORS:
+    for d in rc.detectors:
         p = rc.pvalues[d]
         scored = rc.in_period[d] & np.isfinite(p)
         ps = p[scored]
@@ -292,7 +310,7 @@ def rates_by(rc: Recomputed, freq: str) -> pd.DataFrame:
     nem = (rc.ends - INTERVAL).tz_convert(NEM_TZ).tz_localize(None)
     key = nem.to_period(freq)
     out = {}
-    for d in DETECTORS:
+    for d in rc.detectors:
         p = rc.pvalues[d]
         scored = rc.in_period[d] & np.isfinite(p)
         s = pd.Series((p <= 0.001)[scored], index=key[scored])
@@ -323,7 +341,7 @@ def reference_checks(
         inside = np.asarray((rc.ends >= ref.start - margin) & (rc.ends <= ref.end + margin))
         fired = []
         lowest: tuple[str, float] | None = None
-        for d in DETECTORS:
+        for d in rc.detectors:
             hit = inside & (rc.tiers[d] >= 1)
             if hit.any():
                 fired.append((d, float(np.min(rc.pvalues[d][hit]))))
@@ -345,9 +363,11 @@ def power_table(inj: pd.DataFrame) -> pd.DataFrame:
     return g.agg(n="size", power="mean").reset_index()
 
 
-def a3_rows(power: pd.DataFrame) -> list[tuple[str, float, int, float]]:
+def a3_rows(
+    power: pd.DataFrame, checks: Sequence[tuple[str, float]] = A3_CHECKS
+) -> list[tuple[str, float, int, float]]:
     rows = []
-    for d, size in A3_CHECKS:
+    for d, size in checks:
         sel = power[(power["label"] == d) & (power["size"] == size)]
         if sel.empty:
             rows.append((d, size, 0, np.nan))
@@ -384,9 +404,11 @@ class CausalityOutcome:
         return self.returncode == 0 and self.failed == 0 and self.passed > 0
 
 
-def run_causality_tests() -> CausalityOutcome:
+def run_causality_tests(version: int | None = None) -> CausalityOutcome:
+    """The synthetic causality suite; ``version`` selects its cases (ids ``v1``, ``v2``)."""
+    select = ["-k", f"v{version}"] if version is not None else []
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *CAUSALITY_TESTS],
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *select, *CAUSALITY_TESTS],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
@@ -454,7 +476,7 @@ def _style(ax: Axes, title: str, xlabel: str, ylabel: str) -> None:
     ax.tick_params(colors=MUTED, labelsize=7.5)
 
 
-def plot_power(power: pd.DataFrame, path: Path) -> None:
+def plot_power(power: pd.DataFrame, path: Path, detectors: Sequence[str] = DETECTORS) -> None:
     """Small multiples: one detector per panel (sizes are in different units)."""
     fig = Figure(figsize=(10, 6.6), dpi=150, facecolor=SURFACE)
     axes = fig.subplots(2, 3)
@@ -466,7 +488,7 @@ def plot_power(power: pd.DataFrame, path: Path) -> None:
         x=0.07,
         ha="left",
     )
-    for ax, d in zip(axes.ravel(), DETECTORS, strict=True):
+    for ax, d in zip(axes.ravel(), detectors, strict=True):
         sel = power[(power["label"] == d) & ~power["reported_only"]].sort_values("size")
         x = np.arange(len(sel))
         ax.axhline(100 * A3_POWER, color=AXIS, linewidth=1, zorder=1)
@@ -491,7 +513,9 @@ def plot_power(power: pd.DataFrame, path: Path) -> None:
     fig.savefig(path, facecolor=SURFACE)
 
 
-def plot_monthly_rates(monthly: pd.DataFrame, path: Path) -> None:
+def plot_monthly_rates(
+    monthly: pd.DataFrame, path: Path, detectors: Sequence[str] = DETECTORS
+) -> None:
     """Small multiples: each detector's monthly share at p ≤ 0.001, with A1's band."""
     fig = Figure(figsize=(10, 6.2), dpi=150, facecolor=SURFACE)
     axes = fig.subplots(2, 3, sharex=True)
@@ -504,7 +528,7 @@ def plot_monthly_rates(monthly: pd.DataFrame, path: Path) -> None:
         ha="left",
     )
     x = pd.PeriodIndex(monthly.index).to_timestamp()
-    for ax, d in zip(axes.ravel(), DETECTORS, strict=True):
+    for ax, d in zip(axes.ravel(), detectors, strict=True):
         y = 100 * monthly[d]
         ax.axhspan(0.05, 0.2, color="#f0efec", linewidth=0, zorder=0)
         ax.axhline(0.1, color=AXIS, linewidth=1, zorder=1)
@@ -524,6 +548,7 @@ def plot_monthly_rates(monthly: pd.DataFrame, path: Path) -> None:
 
 @dataclass(slots=True)
 class Results:
+    version: int
     run: StoredRun
     rc: Recomputed
     a1: pd.DataFrame
@@ -540,11 +565,18 @@ class Results:
 
 
 def compute(
-    engine: Engine, cfg: AppConfig, region_id: str, causality: CausalityOutcome | None = None
+    engine: Engine,
+    cfg: AppConfig,
+    region_id: str,
+    causality: CausalityOutcome | None = None,
+    version: int = 1,
 ) -> Results:
-    run = load_run(engine, cfg, region_id)
+    run = load_run(engine, cfg, region_id, version)
+    if int(run.config.get("recipe_version", 1)) != version:
+        raise ReportMismatch(f"the stored run is not recipe v{version}")
+    detectors = recipe_for(cfg, version).detectors
     ends = pd.DatetimeIndex(pd.to_datetime(run.intervals["interval_end"], utc=True))
-    rc = recompute(run, load_prices(engine, region_id, ends), cfg)
+    rc = recompute(run, load_prices(engine, region_id, ends), cfg, detectors=detectors)
     market = load_market_frame(engine, region_id)
     market = market[market["interval_end"] <= ends[-1]]
     refs = [r for r in reference_events(market, cfg) if r.period == "development"]
@@ -555,6 +587,7 @@ def compute(
     if sorted(leaks) != sorted(stored_leaks):
         raise ReportMismatch(f"forest leaks {leaks} recomputed, {stored_leaks} recorded")
     return Results(
+        version=version,
         run=run,
         rc=rc,
         a1=a1_rows(rc),
@@ -563,9 +596,9 @@ def compute(
         refs=reference_checks([r for r in refs if r.cls == CLASS_P], rc, margin),
         refs_o=reference_checks([r for r in refs if r.cls == CLASS_O], rc, margin),
         power=power,
-        a3=a3_rows(power),
+        a3=a3_rows(power, a3_checks(detectors)),
         a4=a4_counts(run.events, cfg.anomalies.evidence.banned_phrases),
-        causality=causality or run_causality_tests(),
+        causality=causality or run_causality_tests(version),
         cut_differences=int(run.cuts["n_differences"].sum()),
         forest_leaks=leaks,
     )
@@ -679,8 +712,9 @@ def _a1_table(res: Results) -> str:
 
 def _yearly_table(res: Results) -> str:
     y = res.yearly
-    rows = [[str(p)] + [pct(y.loc[p, d], 3) for d in DETECTORS] for p in y.index]
-    return _md_table(["NEM year", *(SHORT[d] for d in DETECTORS)], rows)
+    dets = res.rc.detectors
+    rows = [[str(p)] + [pct(y.loc[p, d], 3) for d in dets] for p in y.index]
+    return _md_table(["NEM year", *(SHORT[d] for d in dets)], rows)
 
 
 def _reference_table(checks: Sequence[ReferenceCheck], tz: str) -> str:
@@ -716,7 +750,7 @@ def _reference_table(checks: Sequence[ReferenceCheck], tz: str) -> str:
 
 def _power_table(res: Results) -> str:
     rows = []
-    for d in DETECTORS:
+    for d in res.rc.detectors:
         sel = res.power[(res.power["label"] == d)].sort_values("size")
         cells = ", ".join(
             f"{size_label(d, s)}: {pct(p, 1)}"
@@ -743,7 +777,7 @@ def _a3_table(res: Results) -> str:
 
 def _thresholds_table(res: Results) -> str:
     rows = []
-    for d in DETECTORS:
+    for d in res.rc.detectors:
         cells = []
         for sign in (-1, 1):
             if not (res.power["label"].eq(d) & (np.sign(res.power["size"]) == sign)).any():
@@ -831,10 +865,11 @@ def _overlap(res: Results) -> str:
     ev = res.run.events[~res.run.events["lines_only"]]
     sets = [set(d) for d in ev["detectors"]]
     rows = []
-    for a in DETECTORS:
-        cells = [f"{sum(a in s and b in s for s in sets):,}" for b in DETECTORS]
+    dets = res.rc.detectors
+    for a in dets:
+        cells = [f"{sum(a in s and b in s for s in sets):,}" for b in dets]
         rows.append([SHORT[a], *cells])
-    return _md_table(["", *(SHORT[d] for d in DETECTORS)], rows)
+    return _md_table(["", *(SHORT[d] for d in dets)], rows)
 
 
 def _case_studies(res: Results, cfg: AppConfig, tz: str) -> str:
@@ -865,21 +900,202 @@ def _case_studies(res: Results, cfg: AppConfig, tz: str) -> str:
     return "\n\n".join(parts)
 
 
+# --------------------------------------------------------------------------- v2 beside v1
+
+UNCHANGED_IN_V2 = (DEMAND_LEVEL, RESIDUAL_SHORT, RESIDUAL_DAYAHEAD, PRICE_VOLATILITY)
+
+
+def check_unchanged(v1: StoredRun, v2: StoredRun) -> int:
+    """§2.10: v2's D1, D2, D3 and D5 must equal v1's stored run exactly (every column)."""
+    a, b = v1.intervals, v2.intervals
+    if not a["interval_end"].equals(b["interval_end"]):
+        raise ReportMismatch("v1 and v2 runs have different interval grids")
+    cols = [c for c in a.columns if c.split("__")[0] in UNCHANGED_IN_V2]
+    differ = [c for c in cols if not a[c].equals(b[c])]
+    if differ:
+        raise ReportMismatch(f"v2 differs from v1 in unchanged columns: {', '.join(differ)}")
+    return len(cols)
+
+
+def _verdicts_beside(v2: list[Criterion], v1: list[Criterion]) -> str:
+    rows = [
+        [
+            c.key,
+            c.rule,
+            c.measured,
+            "**PASS**" if c.passed else "**FAIL**",
+            ("PASS" if o.passed else "FAIL") + f": {o.measured}",
+        ]
+        for c, o in zip(v2, v1, strict=True)
+    ]
+    return _md_table(
+        ["#", "Pass if", "v2 measured", "v2 result (post hoc)", "v1 (run 104, pre-registered)"],
+        rows,
+        "lllcl",
+    )
+
+
+def _changed_table(v1: Results, v2: Results) -> str:
+    """D4 and D6 before and after (development), from both stored runs."""
+
+    def share(res: Results, d: str) -> str:
+        r = res.a1[res.a1["detector"] == d].iloc[0]
+        return f"{pct(r['p01'])} / {pct(r['p001'], 3)}"
+
+    def power(res: Results, d: str, sizes: Sequence[float]) -> str:
+        got = {(dd, s): p for dd, s, _, p in res.a3}
+        return " / ".join(pct(got[(d, s)], 1) for s in sizes)
+
+    def lowest(res: Results, event_id: str) -> str:
+        c = next(x for x in res.refs if x.event.event_id == event_id)
+        if c.lowest is None:
+            return "–"
+        return f"{SHORT[c.lowest[0]]} {pval(c.lowest[1])}" + (" (caught)" if c.caught else "")
+
+    def events(res: Results) -> str:
+        ev = res.run.events[~res.run.events["lines_only"]]
+        return f"{len(ev):,} ({int((ev['tier'] == 'severe').sum()):,} severe)"
+
+    d6_1, d6_2 = v1.rc.detectors[5], v2.rc.detectors[5]
+    rows = [
+        ["D4 share at p ≤ 0.01 / p ≤ 0.001", share(v1, PRICE_LEVEL), share(v2, PRICE_LEVEL)],
+        [
+            "D4 detected at $15,000 / −$1,000",
+            power(v1, PRICE_LEVEL, (15000.0, -1000.0)),
+            power(v2, PRICE_LEVEL, (15000.0, -1000.0)),
+        ],
+        ["D6 share at p ≤ 0.01 / p ≤ 0.001", share(v1, d6_1), share(v2, d6_2)],
+        [
+            "D6 detected at −2,000 / +2,000 MW",
+            power(v1, d6_1, (-2000.0, 2000.0)),
+            power(v2, d6_2, (-2000.0, 2000.0)),
+        ],
+        [
+            "P05: lowest p within 30 min (any calibrated detector)",
+            lowest(v1, "P05"),
+            lowest(v2, "P05"),
+        ],
+        ["Calibrated events", events(v1), events(v2)],
+        [
+            "Price-line-only events",
+            f"{int(v1.run.events['lines_only'].sum()):,}",
+            f"{int(v2.run.events['lines_only'].sum()):,}",
+        ],
+    ]
+    return _md_table(
+        ["Development", "v1 (Isolation Forest, asinh $10)", "v2 (robust distance, asinh $100)"],
+        rows,
+        "lrr",
+    )
+
+
+def _intro(version: int) -> str:
+    common = (
+        "Every number below is recomputed from the stored files and events; the report stops "
+        "if a recomputed tier, line, event or count differs from the run's record. The criteria "
+        "were pre-registered in [`docs/plans/m4_plan.md`](../docs/plans/m4_plan.md) §3"
+    )
+    if version == 1:
+        return (
+            "Generated by `gridcast report-m4` from the stored development run. "
+            + common
+            + ", and every detector setting was fixed in §2 before any detector code or score "
+            "existed. The recipe was frozen before this run, so these verdicts are blind to "
+            "tuning.\n"
+        )
+    return (
+        "Generated by `gridcast report-m4 --version 2` from v2's stored development run. "
+        + common
+        + ". **v2 is a disclosed revision, so its verdicts are post hoc.** v1's development "
+        "verdicts ([`m4_anomalies.md`](m4_anomalies.md)) failed A1, A2 and A3. A read-only "
+        "diagnosis ([`docs/m4_v1_diagnosis.md`](../docs/m4_v1_diagnosis.md)) then found design "
+        'defects in D4 and D6, and the user chose to revise those two only (plan §1, "Decided '
+        'after the development verdicts"; §2.10): D4 uses asinh(price / $100), and D6 is a '
+        "robust distance with a rolling p-value. Every v2 setting and this report's readings "
+        "were frozen before this run, but they were chosen after v1's development results were "
+        "seen, and P05 was known to be missed. The holdout year is v2's blind test (step 6). "
+        "M5 and M6 serve v2 whatever it shows.\n"
+    )
+
+
+def _disclosures(version: int) -> str:
+    common = (
+        "- The detectors were designed after M2's and M3's development and holdout results had "
+        "been seen. The planning saw some development facts (the flagged days, the largest "
+        "5-minute demand changes) and some holdout facts (plan §3.3).\n"
+    )
+    if version == 1:
+        return (
+            common
+            + "- The warm-up smoke run (before any development score) previewed likely failures "
+            "at the largest sizes for D1, D3, D4 and D6 and a low D1 alert rate; the user chose "
+            "to keep the pre-registered recipe (plan §1).\n"
+            "- How this report reads each criterion was fixed in the plan while the development "
+            "run was in progress, before any of its output was read (plan §1, step 4).\n"
+            "- After the first generation of this report, only its presentation changed (p-value "
+            "formatting, local start times in the case studies, the order of the run times, and "
+            "the reported-only column of each reference event's lowest p). No criterion's "
+            "computation changed.\n"
+            "- Price associations, SHAP summaries and the holdout come in steps 5 and 6.\n"
+        )
+    return (
+        common + "- v2 was designed after v1's development verdicts and diagnosis, so every v2 "
+        "development verdict is post hoc: it shows whether the revision fixed the diagnosed "
+        "defects on the data that revealed them, not how it performs on unseen data.\n"
+        "- To keep v1 runnable, the frozen modules were generalised behind a recipe version. "
+        "v1's code freeze was carried to v2's frozen commit by reproducing run 104 exactly "
+        "(`gridcast anomalies-reproduce`; plan step 4g). This report also checks that v2's D1, "
+        "D2, D3 and D5 equal run 104's.\n"
+        "- The warm-up smoke runs under v2 (before any v2 development score) previewed high "
+        "power for v2's D4 and D6 and a low D6 alert rate in the warm-up weeks (plan step 4g).\n"
+        "- How this report reads v2 was fixed before v2's development run (plan §2.10).\n"
+        "- Price associations, SHAP summaries and the holdout of both versions come in steps 5 "
+        "and 6.\n"
+    )
+
+
 def build_report(
     engine: Engine,
     cfg: AppConfig,
     region_id: str,
     causality: CausalityOutcome | None = None,
     figures: Path | None = None,
+    version: int = 1,
 ) -> str:
-    res = compute(engine, cfg, region_id, causality)
+    res = compute(engine, cfg, region_id, causality, version)
     figures = figures or cfg.resolve(cfg.paths.reports_dir) / "figures"
-    plot_power(res.power, figures / "m4_power_by_size.png")
-    plot_monthly_rates(res.monthly, figures / "m4_alert_rate_by_month.png")
+    prefix = FIGURE_PREFIX[version]
+    plot_power(res.power, figures / f"{prefix}_power_by_size.png", res.rc.detectors)
+    plot_monthly_rates(res.monthly, figures / f"{prefix}_alert_rate_by_month.png", res.rc.detectors)
     tz = cfg.region(region_id).local_tz
     c = res.run.config
     crit = criteria(res)
-    state = freeze_state(cfg)
+    state = freeze_state(cfg, version=version)
+    frozen_hash = (cfg.anomalies if version == 1 else cfg.anomalies_v2).frozen_config_hash
+    if version == 1:
+        title = "# M4: market anomalies in development (Victoria)\n"
+        verdicts = [
+            "## Verdicts (development)\n",
+            criteria_table(crit) + "\n",
+            f"**{sum(x.passed for x in crit)} of {len(crit)} pass.** Failures are published as "
+            "measured; nothing in §2 was changed after this run. A disclosed, re-hashed v2 may "
+            "follow (plan §6).\n",
+        ]
+    else:
+        v1 = compute(engine, cfg, region_id, None, 1)
+        same = check_unchanged(v1.run, res.run)
+        title = "# M4 v2: market anomalies in development (Victoria), post hoc\n"
+        verdicts = [
+            "## Verdicts (development, post hoc)\n",
+            _verdicts_beside(crit, criteria(v1)) + "\n",
+            f"**{sum(x.passed for x in crit)} of {len(crit)} pass (post hoc).** v1's "
+            f"pre-registered development result was {sum(x.passed for x in criteria(v1))} of "
+            f"{len(crit)}, and it stands as published.\n",
+            "## What changed: D4 and D6 (development)\n",
+            _changed_table(v1, res) + "\n",
+            f"D1, D2, D3 and D5 are v1's: {same} stored columns (scores, p-values, window "
+            "sizes, tiers and scored-period flags) equal run 104's exactly.\n",
+        ]
     flat = res.power[res.power["reported_only"]]
     flat_line = (
         f"{pct(float(flat['power'].iloc[0]), 1)} of {int(flat['n'].iloc[0]):,}"
@@ -891,27 +1107,20 @@ def build_report(
     l2_events = int(lines_only["detectors"].apply(lambda d: LINE_SEVERE in d).sum())
     catalogue, categories = _catalogue(res)
     report_sha = git_sha()
+    month_models = "forests" if version == 1 else "month models"
     sections = [
-        "# M4: market anomalies in development (Victoria)\n",
-        "Generated by `gridcast report-m4` from the stored development run. Every number below "
-        "is recomputed from the stored files and events; the report stops if a recomputed tier, "
-        "line, event or count differs from the run's record. The criteria were pre-registered in "
-        "[`docs/plans/m4_plan.md`](../docs/plans/m4_plan.md) §3, and every detector setting was "
-        "fixed in §2 before any detector code or score existed. The recipe was frozen before "
-        "this run, so these verdicts are blind to tuning.\n",
-        "## Verdicts (development)\n",
-        criteria_table(crit) + "\n",
-        f"**{sum(x.passed for x in crit)} of {len(crit)} pass.** Failures are published as "
-        "measured; nothing in §2 was changed after this run. A disclosed, re-hashed v2 may "
-        "follow (plan §6).\n",
+        title,
+        _intro(version),
+        *verdicts,
         "## Run\n",
         _md_table(
             ["", ""],
             [
                 ["Run", f"{res.run.run_id} (batch `{res.run.batch_id}`)"],
+                *([["Recipe", f"v{version} (plan §2.10)"]] if version == 2 else []),
                 [
                     "Anomaly config hash",
-                    f"`{c['anomaly_config_hash']}` (frozen `{cfg.anomalies.frozen_config_hash}`)",
+                    f"`{c['anomaly_config_hash']}` (frozen `{frozen_hash}`)",
                 ],
                 [
                     "Frozen recipe code",
@@ -956,7 +1165,7 @@ def build_report(
         _a1_table(res) + "\n",
         "Share at p ≤ 0.001 by NEM year (reported only):\n",
         _yearly_table(res) + "\n",
-        "![Monthly alert rates](figures/m4_alert_rate_by_month.png)\n",
+        f"![Monthly alert rates](figures/{prefix}_alert_rate_by_month.png)\n",
         "## A2: AEMO-flagged reference events\n",
         "Class-P events (price at a cap, floor or administered limit by AEMO's own flags, which "
         "are never detector inputs), from "
@@ -968,9 +1177,10 @@ def build_report(
         f"{len(res.refs_o)} development events had a calibrated alert in the same window.\n",
         _reference_table(res.refs_o, tz) + "\n",
         "## A3: detection power\n",
-        "Each injection is scored alone against the unmodified profiles, baselines, bands, forests "
-        "and windows, at starts where the unmodified detector raised no notable alert within the "
-        "span ± 1 h. Detected = at least one notable alert from that detector inside the span.\n",
+        "Each injection is scored alone against the unmodified profiles, baselines, bands, "
+        f"{month_models} and windows, at starts where the unmodified detector raised no notable "
+        "alert within the span ± 1 h. Detected = at least one notable alert from that detector "
+        "inside the span.\n",
         _a3_table(res) + "\n",
         "All sizes (reported):\n",
         _power_table(res) + "\n",
@@ -980,21 +1190,22 @@ def build_report(
         _power_by_year(res) + "\n",
         "Reported only: holding the price flat for 3 h (D5's calm side) was detected in "
         f"{flat_line}.\n",
-        "![Power by size](figures/m4_power_by_size.png)\n",
+        f"![Power by size](figures/{prefix}_power_by_size.png)\n",
         "## A4: evidence without causal claims\n",
         f"{len(res.run.events):,} development events; {res.a4[0]} incomplete, {res.a4[1]} with a "
         "banned phrase. Each evidence field is a fact with its source, labelled *known at the "
         "time* or *retrospective*, or marked unavailable with a reason.\n",
         "## A5: causality\n",
-        f"- Synthetic suite (`{CAUSALITY_TESTS[0]}`, run by this report): "
-        f"{res.causality.passed} passed, {res.causality.failed} failed. It includes a leaky "
-        "control, which must be caught.\n"
+        f"- Synthetic suite (`{CAUSALITY_TESTS[0]}`"
+        + ("" if version == 1 else ", its v2 cases")
+        + f", run by this report): {res.causality.passed} passed, {res.causality.failed} "
+        "failed. It includes a leaky control, which must be caught.\n"
         f"- Real data: the run repeated detection on the series truncated at "
         f"{len(res.run.cuts)} seeded cuts ("
         + ", ".join(str(t) for t in pd.to_datetime(res.run.cuts["cut_end"], utc=True))
         + f"); {res.cut_differences} differences at or before the cuts.\n"
-        f"- Forests: {len(res.run.forests)} monthly models; {len(res.forest_leaks)} saw an "
-        "interval ending after their month's start.\n",
+        f"- {'Forests' if version == 1 else 'D6 month models'}: {len(res.run.forests)} monthly "
+        f"models; {len(res.forest_leaks)} saw an interval ending after their month's start.\n",
         "## Event catalogue (reported)\n",
         catalogue + "\n",
         categories + "\n",
@@ -1009,27 +1220,20 @@ def build_report(
         "evidence by fixed templates and state facts only.\n",
         _case_studies(res, cfg, tz) + "\n",
         "## Disclosures\n",
-        "- The detectors were designed after M2's and M3's development and holdout results had "
-        "been seen. The planning saw some development facts (the flagged days, the largest "
-        "5-minute demand changes) and some holdout facts (plan §3.3).\n"
-        "- The warm-up smoke run (before any development score) previewed likely failures at "
-        "the largest sizes for D1, D3, D4 and D6 and a low D1 alert rate; the user chose to keep "
-        "the pre-registered recipe (plan §1).\n"
-        "- How this report reads each criterion was fixed in the plan while the development run "
-        "was in progress, before any of its output was read (plan §1, step 4).\n"
-        "- After the first generation of this report, only its presentation changed (p-value "
-        "formatting, local start times in the case studies, the order of the run times, and the "
-        "reported-only column of each reference event's lowest p). No criterion's computation "
-        "changed.\n"
-        "- Price associations, SHAP summaries and the holdout come in steps 5 and 6.\n",
+        _disclosures(version),
     ]
     return "\n".join(sections)
 
 
 def write_report(
-    engine: Engine, cfg: AppConfig, region_id: str, causality: CausalityOutcome | None = None
+    engine: Engine,
+    cfg: AppConfig,
+    region_id: str,
+    causality: CausalityOutcome | None = None,
+    version: int = 1,
 ) -> Path:
-    path = cfg.resolve(cfg.paths.reports_dir) / REPORT_NAME
+    path = cfg.resolve(cfg.paths.reports_dir) / REPORT_NAMES[version]
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(build_report(engine, cfg, region_id, causality), encoding="utf-8")
+    text_ = build_report(engine, cfg, region_id, causality, version=version)
+    path.write_text(text_, encoding="utf-8")
     return path
