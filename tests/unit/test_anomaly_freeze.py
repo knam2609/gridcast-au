@@ -11,22 +11,32 @@ from gridcast.anomalies.freeze import (
     FreezeState,
     freeze_state,
 )
-from gridcast.anomalies.recipe import anomaly_config_hash
+from gridcast.anomalies.recipe import anomaly_config_hash, recipe_config_hash
 from gridcast.config import PROJECT_ROOT, load_config
 from gridcast.intervals.freeze import FROZEN_PATHS as M3_FROZEN_PATHS
 
 
 def test_anomaly_recipe_is_frozen() -> None:
-    """The recipe was frozen in step 4, before the development run (m4_plan.md §1): a setting
-    change that alters any anomaly run fails here."""
+    """v1 was frozen in step 4, before its development run (m4_plan.md §1): a setting change
+    that alters any v1 run fails here. Its code (frozen at 2dc58fa) was carried to v2's
+    frozen commit by reproducing run 104 exactly."""
     cfg = load_config()
-    assert cfg.anomalies.frozen_commit == "2dc58fa"
+    assert cfg.anomalies.frozen_commit == "04da607"
     assert anomaly_config_hash(cfg) == cfg.anomalies.frozen_config_hash == "2ce8b3fc523ae81c"
 
 
-def test_frozen_anomaly_code_is_unchanged() -> None:
+def test_v2_recipe_is_frozen() -> None:
+    """v2 (§2.10) was frozen before its development run, on the same code as v1."""
+    cfg = load_config()
+    v2 = cfg.anomalies_v2
+    assert v2.frozen_commit == cfg.anomalies.frozen_commit == "04da607"
+    assert recipe_config_hash(cfg, 2) == v2.frozen_config_hash == "44abbf4b24cf6ac8"
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_frozen_anomaly_code_is_unchanged(version: int) -> None:
     """No file under the frozen paths differs from the frozen commit."""
-    state = freeze_state(load_config())
+    state = freeze_state(load_config(), version=version)
     if state.sha is None:
         pytest.skip("not a git checkout with the frozen commit")
     assert state.frozen_changed == ()
@@ -73,7 +83,9 @@ def _state(**kw: object) -> FreezeState:
 def test_freeze_state_problems() -> None:
     assert _state().problems == []
     assert _state(dirty=True).problems == []  # a dirty tree is the caller's concern
-    assert "no freeze recorded" in _state(frozen_commit=None).problems[0]
+    assert "no freeze recorded (anomalies.frozen_*)" in _state(frozen_commit=None).problems[0]
+    v2 = _state(frozen_commit=None, version=2, section="anomalies_v2").problems[0]
+    assert "no freeze recorded (anomalies_v2.frozen_*)" in v2
     assert "anomaly config hash a differs" in _state(frozen_config_hash="z").problems[0]
     changed = _state(frozen_changed=("src/gridcast/anomalies/detectors.py",)).problems
     assert changed == ["frozen code changed since the freeze: src/gridcast/anomalies/detectors.py"]

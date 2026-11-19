@@ -282,8 +282,11 @@ anomalies:
   output_dir: anomalies             # under the data root; not hashed
   # The freeze (step 4, 2026-11-19), recorded after the recipe commit and before the
   # development run; not hashed. Every scored run must match both (anomalies-freeze-check).
+  # v1's code was frozen at 2dc58fa. After the frozen modules were generalised for v2, it
+  # was carried to 04da607 (v2's frozen commit) by reproducing development run 104 exactly
+  # from a clean tree there (gridcast anomalies-reproduce, 2026-11-20).
   frozen_config_hash: "2ce8b3fc523ae81c"
-  frozen_commit: "2dc58fa"
+  frozen_commit: "04da607"
 
 anomalies_v2:
   # M4 v2, decided after v1's development verdicts (m4_plan.md §1 "Decided after the
@@ -300,9 +303,10 @@ anomalies_v2:
     # (out-of-sample) scores, as D1-D5.
     train_weeks: 26
     min_train_rows: 256
-  # v2's freeze; not hashed. v2's hash covers `anomalies`, `anomalies_v2` and the splits.
-  frozen_config_hash: null
-  frozen_commit: null
+  # v2's freeze (2026-11-20), recorded after the v2 code commit and before v2's development
+  # run; not hashed. v2's hash covers `anomalies`, `anomalies_v2` and the splits.
+  frozen_config_hash: "44abbf4b24cf6ac8"
+  frozen_commit: "04da607"
 
 aemo:
   # AEMO's own demand forecasts: every run of 30-minute pre-dispatch and 5-minute

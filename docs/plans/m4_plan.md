@@ -456,6 +456,10 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
   - **Warm-up smoke runs under v2** (bugs only, before the freeze): no error. D1, D2, D3 and D5 match v1's step-2b smoke run. The preview at the largest sizes: D4 $15,000 100% and −$1,000 89%, and D6 ±2,000 MW 100% (v1's smoke run: 28%, 52% and 1–2%).
     - D6's alert rate in the pseudo-scored warm-up weeks is low: 0.11% at p ≤ 0.01. v1's D1 showed 0.14% there and passed A1 in development, so this predicts nothing on its own.
     - The evidence smoke run: 24 of 24 events complete, 0 banned phrases, E1 passes on 14 pairs.
+  - **The freeze (2026-11-20).** The code is `04da607`. From a clean tree there, `gridcast anomalies-reproduce --version 1` reproduced run 104 exactly: 420,768 intervals, 44,000 injections, 47 forest ranges, 3 cuts, 1,102 events and the run record, in 181 s.
+    - v1's record now reads hash `2ce8b3fc523ae81c` (unchanged), code `04da607`, carried from `2dc58fa` by that reproduction.
+    - v2's record is hash `44abbf4b24cf6ac8`, code `04da607`.
+    - Both are pinned by `tests/unit/test_anomaly_freeze.py`. No v2 development score existed when they were recorded.
 - **4h:** v2's one development run and `report-m4` for v2 (`reports/m4_anomalies_v2.md`), with v1 beside it and every v2 verdict labelled post hoc.
 
 **Step 5. Explanations report.**
