@@ -664,7 +664,7 @@ def criteria(res: Results) -> list[Criterion]:
             "on its own month",
             f"suite {res.causality.passed} passed, {res.causality.failed} failed; "
             f"{len(cuts)} real cuts, {res.cut_differences} differences; "
-            f"{len(res.forest_leaks)} forest leaks",
+            f"{len(res.forest_leaks)} {'forest' if res.version == 1 else 'month-model'} leaks",
             res.causality.ok
             and res.cut_differences == 0
             and not res.forest_leaks
