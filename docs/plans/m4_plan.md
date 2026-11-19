@@ -439,6 +439,9 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
 **Step 4, v2 (disclosed revision).**
 - **4e:** the question round and the diagnosis (`anomalies/diagnosis.py`, `gridcast anomalies-diagnose-v1`).
 - **4f:** generalise the frozen modules behind a recipe version. `gridcast anomalies-reproduce` must reproduce run 104 exactly from the generalised code before anything else changes.
+  - *Outcome (2026-11-20):* `anomalies/reproduce.py` and `gridcast anomalies-reproduce` were written first and run on the untouched code. Run 104 reproduced exactly: 420,768 intervals, 44,000 injections, 47 forest ranges, 3 cuts, 1,102 events with evidence and summaries, and the run record. A pass there shows the comparison itself is sound; unit tests show it catches a one-ulp change, a NaN that became a value, and a changed summary or evidence field.
+  - Then `detectors.Recipe` (version, D4's and D5's price scales, D6's detector) went through `compute_scores`, `run_detectors`, `alert_tiers`, `detect`, the injections, the cut checks and the case ties. Version 1 is the default everywhere. Run 104 again reproduced exactly from the generalised code (a check on a dirty tree; the recorded check runs at v2's freeze commit, 4g).
+  - Until that record, `test_frozen_anomaly_code_is_unchanged` fails, because files under v1's `FROZEN_PATHS` changed since `2dc58fa`. That is the expected state between the code and its freeze record.
 - **4g:** v2's code (D4's transform, the robust distance with rolling calibration, its injection, evidence sentence and causality tests), the `anomalies_v2` config, and v2's freeze.
 - **4h:** v2's one development run and `report-m4` for v2 (`reports/m4_anomalies_v2.md`), with v1 beside it and every v2 verdict labelled post hoc.
 

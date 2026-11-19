@@ -29,7 +29,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from gridcast.anomalies.detectors import DETECTORS
+from gridcast.anomalies.detectors import LINES, Recipe
 from gridcast.anomalies.events import Event
 from gridcast.anomalies.run import Detection, Split, detect
 from gridcast.anomalies.series import MarketSeries, QuantileBand, nem_day_ordinals
@@ -93,7 +93,7 @@ def case_order(events: Sequence[Event], seed: int) -> list[int]:
     calibrated detectors firing, then a seeded draw (one uniform key per event, in order)."""
     keys = np.random.default_rng([seed, CASE_SEED_INDEX]).random(len(events))
     ranked = [
-        (e.min_p, -sum(d in DETECTORS for d in e.detectors), float(keys[i]), i)
+        (e.min_p, -sum(d not in LINES for d in e.detectors), float(keys[i]), i)
         for i, e in enumerate(events)
         if e.min_p is not None
     ]
@@ -149,11 +149,16 @@ def truncated_detection(
     split: Split,
     cfg: AnomaliesConfig,
     cut: int,
+    recipe: Recipe | None = None,
 ) -> Detection:
     """The detection from data ending at interval ``cut`` (forecasts issued after it dropped)."""
     end = series.ends[cut]
     return detect(
-        series.head(cut + 1), None if band is None else band.issued_until(end), split, cfg
+        series.head(cut + 1),
+        None if band is None else band.issued_until(end),
+        split,
+        cfg,
+        recipe=recipe,
     )
 
 
@@ -162,7 +167,7 @@ def differences(full: Detection, cut_run: Detection, cut: int) -> list[str]:
     (lines included) and event openings."""
     out = []
     upto = slice(0, cut + 1)
-    for d in DETECTORS:
+    for d in full.run.recipe.detectors:
         for label, x, y in (
             ("score", full.run.scores[d], cut_run.run.scores[d]),
             ("p", full.run.pvalues[d], cut_run.run.pvalues[d]),
@@ -181,7 +186,8 @@ def differences(full: Detection, cut_run: Detection, cut: int) -> list[str]:
 
 
 def forest_leaks(detection: Detection) -> list[str]:
-    """§2.8 test 3: months whose model saw an interval ending after the month's start."""
+    """§2.8 test 3: months whose model (a forest, or v2's distance) saw an interval ending
+    after the month's start."""
     return [
         f"{mm.month // 12}-{mm.month % 12 + 1:02d}"
         for mm in detection.run.state.models.values()

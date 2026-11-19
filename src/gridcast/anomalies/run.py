@@ -16,13 +16,12 @@ import pandas as pd
 
 from gridcast.anomalies.detectors import (
     DETECTORS,
-    ISOLATION_FOREST,
     LINE_NOTABLE,
     LINE_SEVERE,
     LINES,
     RESIDUAL,
-    ROLLING,
     DetectorState,
+    Recipe,
     compute_scores,
 )
 from gridcast.anomalies.events import Event, merge_events
@@ -90,8 +89,12 @@ class DetectorRun:
     pvalues: dict[str, np.ndarray]  # NaN where the score is not valid (or no D6 model)
     n_window: dict[str, np.ndarray]  # window (D6: training) size; -1 where no p-value
     state: DetectorState
-    window: WindowPValues  # the rolling detectors' sweep (columns in ROLLING order)
+    window: WindowPValues  # the rolling detectors' sweep (columns in the recipe's rolling order)
     market: bool = True  # False: D2/D3 only (market detectors and lines never computed)
+
+    @property
+    def recipe(self) -> Recipe:
+        return self.state.recipe
 
 
 def run_detectors(
@@ -100,20 +103,24 @@ def run_detectors(
     cfg: AnomaliesConfig,
     extra: Queries | None = None,
     market: bool = True,
+    recipe: Recipe | None = None,
 ) -> DetectorRun:
     """Scores and p-values of every calibrated detector over the whole series.
 
-    ``extra`` queries (rows, ROLLING column, value) are answered against the same windows.
+    ``extra`` queries (rows, rolling column, value) are answered against the same windows.
     ``market=False`` runs D2 and D3 only (:func:`~gridcast.anomalies.detectors.compute_scores`).
+    ``recipe`` None is version 1. A detector outside the recipe's rolling set (v1's
+    Isolation Forest) takes its p-value from its month model's training scores.
     """
-    scores, state = compute_scores(series, band, cfg, market)
-    matrix = np.column_stack([scores[d] for d in ROLLING])
+    scores, state = compute_scores(series, band, cfg, market, recipe)
+    rolling = state.recipe.rolling
+    matrix = np.column_stack([scores[d] for d in rolling])
     wp = window_pvalues(matrix, np.isfinite(matrix), window_intervals(cfg), extra)
-    pvalues = {d: wp.p[:, k] for k, d in enumerate(ROLLING)}
-    n_window = {d: wp.n_window[:, k] for k, d in enumerate(ROLLING)}
-    p6, n6 = month_pvalues(scores[ISOLATION_FOREST], state.lay, state.models)
-    pvalues[ISOLATION_FOREST] = p6
-    n_window[ISOLATION_FOREST] = n6
+    pvalues = {d: wp.p[:, k] for k, d in enumerate(rolling)}
+    n_window = {d: wp.n_window[:, k] for k, d in enumerate(rolling)}
+    for d in state.recipe.detectors:
+        if d not in rolling:
+            pvalues[d], n_window[d] = month_pvalues(scores[d], state.lay, state.models)
     return DetectorRun(series.ends, scores, pvalues, n_window, state, wp, market)
 
 
@@ -126,7 +133,7 @@ def alert_tiers(
         off = np.zeros(len(run.ends), dtype=bool)
         masks = {d: (m if d in RESIDUAL else off) for d, m in masks.items()}
     out: dict[str, np.ndarray] = {}
-    for d in DETECTORS:
+    for d in run.recipe.detectors:
         t = tiers(run.pvalues[d], cfg.pvalues.notable, cfg.pvalues.severe)
         t[~masks[d]] = 0
         out[d] = t
@@ -165,8 +172,10 @@ def detect(
     split: Split,
     cfg: AnomaliesConfig,
     market: bool = True,
+    recipe: Recipe | None = None,
 ) -> Detection:
-    """Scores, p-values, alerts and events of one split (``market=False``: D2/D3 only)."""
-    run = run_detectors(series, band, cfg, market=market)
+    """Scores, p-values, alerts and events of one split (``market=False``: D2/D3 only;
+    ``recipe`` None: version 1)."""
+    run = run_detectors(series, band, cfg, market=market, recipe=recipe)
     alert = alert_tiers(run, series.price, split, cfg)
     return Detection(run, alert, split_events(run, alert, series.price, split, cfg))

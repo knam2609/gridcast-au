@@ -1228,6 +1228,20 @@ def report_m4(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -
     typer.echo(f"wrote {path}")
 
 
+@app.command("anomalies-reproduce")
+def anomalies_reproduce(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+    """Recompute the stored development run with the current code and compare everything it
+    stored (nothing is written); exit 1 on any difference."""
+    from gridcast.anomalies.reproduce import reproduce, summary_lines
+    from gridcast.database.engine import get_engine
+
+    rep = reproduce(get_engine(), load_config(), region)
+    for line in summary_lines(rep):
+        typer.echo(line)
+    if not rep.ok:
+        raise typer.Exit(1)
+
+
 @app.command("anomalies-diagnose-v1")
 def anomalies_diagnose_v1(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
     """Write docs/m4_v1_diagnosis.md: why v1's D1, D4 and D6 failed (reported only; recomputes

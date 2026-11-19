@@ -13,6 +13,9 @@ Every score at interval ``t`` uses only data known at ``t``'s end:
 * **D6** ``isolation_forest``: −``score_samples`` of the month's Isolation Forest, refitted
   at each NEM-month start on the previous 26 weeks (:mod:`gridcast.anomalies.isolation`).
 
+What differs between recipe versions is a :class:`Recipe` (m4_plan.md §1, "Decided after the
+development verdicts"). Version 1, the default everywhere, is the recipe frozen in step 4.
+
 :class:`DetectorState` keeps the unmodified profiles, baselines, bands and models, so the
 injection harness can re-score modified data against them (§2.9).
 """
@@ -91,6 +94,37 @@ D6_FEATURES = (
     "wind_curtailment",
     "solar_curtailment",
 )
+
+
+# ----------------------------------------------------------------------------- recipes
+
+
+@dataclass(frozen=True, slots=True)
+class Recipe:
+    """What a recipe version sets. Every other setting comes from the ``anomalies`` config
+    section, for every version."""
+
+    version: int
+    price_level_scale_aud: float  # D4: x = asinh(price / scale)
+    price_volatility_scale_aud: float  # D5, and D6's volatility feature
+    multivariate: str  # D6's detector
+
+    @property
+    def detectors(self) -> tuple[str, ...]:
+        """The calibrated detectors, in §2.3's order."""
+        return (*DETECTORS[:5], self.multivariate)
+
+    @property
+    def rolling(self) -> tuple[str, ...]:
+        """The detectors whose p-values come from the trailing windows (§2.2)."""
+        return ROLLING
+
+
+def v1_recipe(cfg: AnomaliesConfig) -> Recipe:
+    """The recipe frozen in step 4: D4 and D5 share x = asinh(price / ``price_level.scale_aud``),
+    and D6 is the Isolation Forest."""
+    scale = cfg.price_level.scale_aud
+    return Recipe(1, scale, scale, ISOLATION_FOREST)
 
 
 # ----------------------------------------------------------------------------- pieces
@@ -190,7 +224,7 @@ class DetectorState:
 
     lay: Layout
     demand_profile: Profile  # D1 (by day type)
-    x: np.ndarray  # asinh(price / scale)
+    x: np.ndarray  # D4's asinh(price / scale)
     price_profile: Profile  # D4 (all day types)
     v: np.ndarray  # D5 current volatility
     b: np.ndarray  # D5 baseline
@@ -199,6 +233,7 @@ class DetectorState:
     margin_profile: Profile  # D6: available generation minus demand
     features: np.ndarray  # (n, 9) D6 features
     models: dict[int, MonthModel]  # D6 by NEM month
+    recipe: Recipe
 
 
 def demand_z(demand: np.ndarray, state: DetectorState, cfg: AnomaliesConfig) -> np.ndarray:
@@ -242,13 +277,16 @@ def compute_scores(
     band: QuantileBand | None,
     cfg: AnomaliesConfig,
     market: bool = True,
+    recipe: Recipe | None = None,
 ) -> tuple[dict[str, np.ndarray], DetectorState]:
     """Every calibrated detector's score per interval (NaN where not valid).
 
     ``market=False`` computes only D2 and D3: the market detectors' scores, profiles and
     models are never computed (their scores are NaN). The warm-up smoke run uses this to
     score D2/D3 over data that lies in the market detectors' development period.
+    ``recipe`` None is version 1.
     """
+    recipe = v1_recipe(cfg) if recipe is None else recipe
     lay = layout(series, cfg.profile.slot_minutes)
     n = len(series)
     days, k = cfg.profile.days, cfg.profile.mad_consistency
@@ -268,20 +306,21 @@ def compute_scores(
             margin_profile=empty,
             features=np.full((n, len(D6_FEATURES)), np.nan),
             models={},
+            recipe=recipe,
         )
-        scores = {d: nan for d in DETECTORS} | residual
+        scores = {d: nan for d in recipe.detectors} | residual
         return scores, state
 
     # D1
     demand_profile = slot_profile(series.demand, lay, days, by_day_type=True)
     z1 = demand_profile.z(series.demand, k, cfg.demand_level.floor_mw)
     # D4
-    x = price_x(series.price, cfg.price_level.scale_aud)
+    x = price_x(series.price, recipe.price_level_scale_aud)
     price_profile = slot_profile(x, lay, days, by_day_type=False)
     z4 = price_profile.z(x, k, cfg.price_level.floor)
     # D5
     vol = cfg.price_volatility
-    v = volatility(x, vol.window_intervals)
+    v = volatility(price_x(series.price, recipe.price_volatility_scale_aud), vol.window_intervals)
     b = volatility_baseline(v, vol.baseline_days * INTERVALS_PER_DAY, vol.baseline_lag_intervals)
     r5 = log_ratio(v, b, vol.epsilon)
     # D6
@@ -307,7 +346,7 @@ def compute_scores(
             curtailment(series.solar_cleared, series.solar_uigf, iso.curtailment_min_uigf_mw),
         ]
     )
-    models = fit_month_models(features, series.ends, lay, iso, cfg.seed)
+    models = _month_models(features, series.ends, lay, cfg, recipe)
     s6 = score_months(features, lay, models)
 
     state = DetectorState(
@@ -322,6 +361,7 @@ def compute_scores(
         margin_profile=margin_profile,
         features=features,
         models=models,
+        recipe=recipe,
     )
     scores = {
         DEMAND_LEVEL: np.abs(z1),
@@ -329,6 +369,19 @@ def compute_scores(
         RESIDUAL_DAYAHEAD: residual[RESIDUAL_DAYAHEAD],
         PRICE_LEVEL: np.abs(z4),
         PRICE_VOLATILITY: np.abs(r5),
-        ISOLATION_FOREST: s6,
+        recipe.multivariate: s6,
     }
     return scores, state
+
+
+def _month_models(
+    features: np.ndarray,
+    ends: pd.DatetimeIndex,
+    lay: Layout,
+    cfg: AnomaliesConfig,
+    recipe: Recipe,
+) -> dict[int, MonthModel]:
+    """D6's models, one per NEM month."""
+    if recipe.multivariate == ISOLATION_FOREST:
+        return fit_month_models(features, ends, lay, cfg.isolation_forest, cfg.seed)
+    raise ValueError(f"no multivariate detector {recipe.multivariate!r}")

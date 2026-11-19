@@ -37,7 +37,7 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import Connection, Engine, text
 
-from gridcast.anomalies.detectors import DETECTORS, LINES
+from gridcast.anomalies.detectors import LINES, Recipe
 from gridcast.anomalies.evidence import banned_in, missing_fields
 from gridcast.anomalies.evidence_inputs import EvidenceRun, run_evidence
 from gridcast.anomalies.freeze import FreezeState, freeze_state
@@ -124,8 +124,10 @@ class DevOutputs:
     seconds: dict[str, float] = field(default_factory=dict)
 
 
-def compute_dev(engine: Engine, cfg: AppConfig, region_id: str) -> DevOutputs:
-    """Everything the development run stores (no writes)."""
+def compute_dev(
+    engine: Engine, cfg: AppConfig, region_id: str, recipe: Recipe | None = None
+) -> DevOutputs:
+    """Everything the development run stores (no writes); ``recipe`` None is version 1."""
     a = cfg.anomalies
     split = dev_split(cfg)
     last = nem_midnight_utc(str(cfg.backtest.holdout_start))
@@ -143,7 +145,7 @@ def compute_dev(engine: Engine, cfg: AppConfig, region_id: str) -> DevOutputs:
     log.info("anomalies.dev.loaded", intervals=len(series), issue_times=len(band.issue_times))
 
     t = time.perf_counter()
-    det = detect(series, band, split, a)
+    det = detect(series, band, split, a, recipe=recipe)
     secs["detect"] = time.perf_counter() - t
     log.info("anomalies.dev.detected", events=len(det.events), seconds=round(secs["detect"], 1))
 
@@ -155,7 +157,8 @@ def compute_dev(engine: Engine, cfg: AppConfig, region_id: str) -> DevOutputs:
     cuts = []
     for c in cut_indices(series.ends, split, a):
         t = time.perf_counter()
-        diff = differences(det, truncated_detection(series, band, split, a, int(c)), int(c))
+        cut_run = truncated_detection(series, band, split, a, int(c), recipe=det.run.recipe)
+        diff = differences(det, cut_run, int(c))
         cuts.append(CutCheck(int(c), series.ends[int(c)], diff, time.perf_counter() - t))
         log.info("anomalies.dev.cut", cut=str(series.ends[int(c)]), differences=len(diff))
     secs["cuts"] = sum(cc.seconds for cc in cuts)
@@ -189,7 +192,7 @@ def interval_frame(det: Detection, split: Split) -> pd.DataFrame:
     scored-period flag; each line's tier and flag."""
     masks = split.masks(det.run.ends)
     cols: dict[str, Any] = {"interval_end": det.run.ends}
-    for d in DETECTORS:
+    for d in det.run.recipe.detectors:
         cols[f"{d}__score"] = det.run.scores[d]
         cols[f"{d}__p"] = det.run.pvalues[d]
         cols[f"{d}__n_window"] = det.run.n_window[d]

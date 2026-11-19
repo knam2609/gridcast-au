@@ -33,7 +33,6 @@ import pandas as pd
 from gridcast.anomalies.detectors import (
     CATEGORY,
     DEMAND_LEVEL,
-    DETECTORS,
     ISOLATION_FOREST,
     LINE_NOTABLE,
     LINE_SEVERE,
@@ -317,7 +316,8 @@ def peak_detector(event: Event, detection: Detection) -> str:
     """The detector holding the event's peak (a line for a lines-only event)."""
     if event.lines_only:
         return LINE_SEVERE if LINE_SEVERE in event.detectors else LINE_NOTABLE
-    found = _best_alert(event, detection, DETECTORS)
+    calibrated = [d for d in event.detectors if d not in LINES]
+    found = _best_alert(event, detection, calibrated)
     if found is None or found[1] != event.peak:
         raise AssertionError("the event's peak is not its lowest-p alert")
     return found[0]

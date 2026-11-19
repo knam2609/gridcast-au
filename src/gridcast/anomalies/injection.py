@@ -32,15 +32,15 @@ import pandas as pd
 
 from gridcast.anomalies.detectors import (
     DEMAND_LEVEL,
-    ISOLATION_FOREST,
     PRICE_LEVEL,
     PRICE_VOLATILITY,
     RESIDUAL,
     RESIDUAL_DAYAHEAD,
     RESIDUAL_SHORT,
-    ROLLING,
+    Recipe,
     price_x,
     residual_score,
+    v1_recipe,
 )
 from gridcast.anomalies.pvalues import Queries, window_pvalues
 from gridcast.anomalies.run import DetectorRun, Split, window_intervals
@@ -66,13 +66,18 @@ class InjectionSpec:
     reported_only: bool = False
 
 
-def injection_specs(cfg: AnomaliesConfig) -> list[InjectionSpec]:
+def injection_specs(cfg: AnomaliesConfig, recipe: Recipe | None = None) -> list[InjectionSpec]:
+    """§2.9's injections. D6's sizes are ``injection.isolation_forest`` in every version (the
+    config names D6's slot); its label is the recipe's multivariate detector."""
     inj = cfg.injection
+    recipe = v1_recipe(cfg) if recipe is None else recipe
 
-    def spec(detector: str, kind: str, index: int, aligned: bool = False) -> InjectionSpec:
-        setting = getattr(inj, detector)
+    def spec(
+        detector: str, kind: str, index: int, aligned: bool = False, setting: str | None = None
+    ) -> InjectionSpec:
+        s = getattr(inj, setting or detector)
         return InjectionSpec(
-            detector, detector, kind, setting.minutes // 5, tuple(setting.sizes), aligned, index
+            detector, detector, kind, s.minutes // 5, tuple(s.sizes), aligned, index
         )
 
     return [
@@ -81,7 +86,7 @@ def injection_specs(cfg: AnomaliesConfig) -> list[InjectionSpec]:
         spec(RESIDUAL_DAYAHEAD, DEMAND_ADD, 3),
         spec(PRICE_LEVEL, PRICE_SET, 4),
         spec(PRICE_VOLATILITY, PRICE_ALTERNATE, 5),
-        spec(ISOLATION_FOREST, DEMAND_ADD, 6),
+        spec(recipe.multivariate, DEMAND_ADD, 6, setting="isolation_forest"),
         InjectionSpec(
             FLAT_LABEL,
             PRICE_VOLATILITY,
@@ -137,10 +142,10 @@ def draw_starts(eligible: np.ndarray, n_starts: int, seed: int, index: int) -> n
 # ----------------------------------------------------------------------------- re-scoring
 
 
-def _volatility_rows(price: np.ndarray, cfg: AnomaliesConfig) -> np.ndarray:
+def _volatility_rows(price: np.ndarray, cfg: AnomaliesConfig, scale_aud: float) -> np.ndarray:
     """v over the last ``window`` columns-worth of changes: price is ``(k, W + span)``."""
     w = cfg.price_volatility.window_intervals
-    x = price_x(price, cfg.price_level.scale_aud)
+    x = price_x(price, scale_aud)
     dx = np.diff(x, axis=1)  # (k, W + span − 1)
     sq = np.lib.stride_tricks.sliding_window_view(dx * dx, w, axis=1)  # (k, span, W)
     return np.sqrt(sq.mean(axis=2))
@@ -167,10 +172,10 @@ def injected_scores(
         if spec.detector in RESIDUAL:
             lo, hi, _ = st.bands[spec.detector]
             return residual_score(y, lo[rows], hi[rows], cfg.residual.width_floor_mw)
-        if spec.detector == ISOLATION_FOREST:
-            return _isolation_scores(rows, y, series, run, cfg)
+        if spec.detector == run.recipe.multivariate:
+            return _multivariate_scores(rows, y, series, run, cfg)
     if spec.kind == PRICE_SET:
-        x = price_x(np.full(rows.shape, size), cfg.price_level.scale_aud)
+        x = price_x(np.full(rows.shape, size), run.recipe.price_level_scale_aud)
         prof = st.price_profile
         scale = np.maximum(k_mad * prof.mad[rows], cfg.price_level.floor)
         return np.abs((x - prof.median[rows]) / scale)
@@ -183,13 +188,13 @@ def injected_scores(
             price[:, w:] += size * signs[None, :]
         else:
             price[:, w + 1 :] = price[:, [w]]
-        v = _volatility_rows(price, cfg)
+        v = _volatility_rows(price, cfg, run.recipe.price_volatility_scale_aud)
         eps = cfg.price_volatility.epsilon
         return np.abs(np.log((v + eps) / (st.b[rows] + eps)))
     raise ValueError(f"no injection rule for {spec.kind} on {spec.detector}")
 
 
-def _isolation_scores(
+def _multivariate_scores(
     rows: np.ndarray, y: np.ndarray, series: MarketSeries, run: DetectorRun, cfg: AnomaliesConfig
 ) -> np.ndarray:
     """D6 features recomputed from the injected demand, scored by each row's month model."""
@@ -215,7 +220,8 @@ def _isolation_scores(
     return out
 
 
-def _isolation_pvalues(rows: np.ndarray, scores: np.ndarray, run: DetectorRun) -> np.ndarray:
+def _month_pvalues(rows: np.ndarray, scores: np.ndarray, run: DetectorRun) -> np.ndarray:
+    """p-values against each row's month model's training scores (v1's Isolation Forest)."""
     out = np.full(rows.shape, np.nan)
     months = run.state.lay.nem_month[rows]
     for month in np.unique(months):
@@ -253,7 +259,8 @@ def run_injections(
     q_rows, q_cols, q_vals = [], [], []
     offset = 0
     eligible_count: dict[str, int] = {}
-    for spec in injection_specs(cfg):
+    rolling = run.recipe.rolling
+    for spec in injection_specs(cfg, run.recipe):
         if labels is not None and spec.label not in labels:
             continue
         eligible = eligible_starts(spec, run, masks[spec.detector], notable, guard)
@@ -262,10 +269,10 @@ def run_injections(
         for size in spec.sizes:
             scores = injected_scores(spec, size, starts, series, run, cfg)
             sl = None
-            if spec.detector in ROLLING and scores.size:
+            if spec.detector in rolling and scores.size:
                 rows = starts[:, None] + np.arange(spec.span)[None, :]
                 q_rows.append(rows.ravel())
-                q_cols.append(np.full(rows.size, ROLLING.index(spec.detector)))
+                q_cols.append(np.full(rows.size, rolling.index(spec.detector)))
                 q_vals.append(scores.ravel())
                 sl = slice(offset, offset + rows.size)
                 offset += rows.size
@@ -273,7 +280,7 @@ def run_injections(
 
     extra_p = np.zeros(0)
     if offset:
-        matrix = np.column_stack([run.scores[d] for d in ROLLING])
+        matrix = np.column_stack([run.scores[d] for d in rolling])
         queries = Queries(np.concatenate(q_rows), np.concatenate(q_cols), np.concatenate(q_vals))
         extra_p = window_pvalues(
             matrix, np.isfinite(matrix), window_intervals(cfg), queries
@@ -287,7 +294,7 @@ def run_injections(
             p = extra_p[b.query_slice].reshape(b.scores.shape)
         else:
             rows = b.starts[:, None] + np.arange(b.spec.span)[None, :]
-            p = _isolation_pvalues(rows, b.scores, run)
+            p = _month_pvalues(rows, b.scores, run)
         min_p = np.nanmin(p, axis=1)
         parts.append(
             pd.DataFrame(
