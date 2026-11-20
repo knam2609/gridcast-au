@@ -257,3 +257,23 @@ def test_fixed_report_text_has_no_banned_phrase() -> None:
     phrases = CFG.anomalies.evidence.banned_phrases
     assert banned_in(_how_to_read() + _disclosures(CFG), phrases) == []
     assert issubclass(BannedPhraseError, RuntimeError)
+
+
+def test_labels_use_true_minus_signs_and_zeros_have_no_sign() -> None:
+    from gridcast.explainability.associations import num
+    from gridcast.explainability.report import mw, nem_days_of, signed
+
+    assert num(-231.4) == "−231" and num(-0.2) == "0" and num(1342.0) == "1,342"
+    assert Binning("x", "quantile", (-231.0, 24.0)).labels("MW")[0] == "≤ −231 MW"
+    assert mw(-0.3) == "0" and signed(-0.3) == "0" and signed(0.4) == "0"
+    assert signed(12.6) == "+13" and mw(-1234.5) == "−1,234"  # round half to even
+    period = ("2022-10-31T14:00:00+00:00", "2025-09-30T14:00:00+00:00")
+    assert nem_days_of(period) == ("2022-11-01", "2025-09-30")
+
+
+def test_day_counts_per_bin() -> None:
+    data = _data(n_days=5)
+    boot = Bootstrap.draw(data.day, 20, (1, 2), 0.95)
+    codes = np.where(data.day == data.day[0], 0, 1)  # bin 0 holds only the first day
+    t = bin_rates(data, codes, 2, boot, AC)
+    assert t["days"].tolist() == [1, 4]

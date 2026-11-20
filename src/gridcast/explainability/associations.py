@@ -161,7 +161,7 @@ class Binning:
         u = f" {unit}" if unit else ""
         if self.kind == "category":
             return [str(c) for c in self.categories]
-        edges = [f"{e:,.0f}" for e in self.edges]
+        edges = [num(e) for e in self.edges]
         if self.kind == "quantile":
             return (
                 [f"≤ {edges[0]}{u}"]
@@ -175,6 +175,12 @@ class Binning:
                 + [f"> {edges[-1]}{u}"]
             )
         raise ValueError("fixed bins are labelled by fixed_codes")
+
+
+def num(v: float) -> str:
+    """A whole number with a thousands separator and a true minus sign."""
+    text = f"{v:,.0f}"
+    return "0" if text == "-0" else text.replace("-", "−")
 
 
 def quantile_edges(values: np.ndarray, k: int) -> tuple[float, ...]:
@@ -258,7 +264,11 @@ def bin_rates(
     counts = np.zeros((len(boot.days), n_bins))
     np.add.at(counts, (d[ok], codes[ok]), 1.0)
     n = counts.sum(axis=0)
-    out: dict[str, np.ndarray] = {"n": n, "share": n / max(int(ok.sum()), 1)}
+    out: dict[str, np.ndarray] = {
+        "n": n,
+        "days": (counts > 0).sum(axis=0),
+        "share": n / max(int(ok.sum()), 1),
+    }
     boot_n = boot.weights @ counts
     q = 100 * np.array([(1 - boot.level) / 2, (1 + boot.level) / 2])
     for name, hit in (
@@ -290,16 +300,17 @@ def rate_table(
     if binning.kind == "fixed":
         codes, present = fixed_codes(values, binning.width)
         w = binning.width
-        labels = [
-            f"{w * k:,.0f} to {w * (k + 1):,.0f}{' ' + unit if unit else ''}" for k in present
-        ]
+        short = [f"{num(w * k)} to {num(w * (k + 1))}" for k in present]
+        labels = [f"{x} {unit}" if unit else x for x in short]
         frame = bin_rates(data, codes, len(present), boot, cfg)
         frame.insert(0, "lower", w * present)
     else:
         codes = binning.codes(values)
         labels = binning.labels(unit)
+        short = [x.replace(" (zero output)", " (zero)") for x in binning.labels()]
         frame = bin_rates(data, codes, binning.n_bins, boot, cfg)
     frame.insert(0, "bin", labels)
+    frame.insert(1, "bin_short", short)
     return RateTable(variable, labels, frame, int((codes < 0).sum()))
 
 

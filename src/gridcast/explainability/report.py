@@ -38,6 +38,7 @@ from gridcast.explainability.associations import (
 from gridcast.explainability.global_run import StoredSample, read_global
 from gridcast.explainability.summary import ShapSummary, band_label, summarise
 from gridcast.provenance import git_sha
+from gridcast.timeutils import NEM_TZ
 
 REPORT_NAME = "m4_explainability.md"
 EDGES_FILE = "association_edges_dev.json"  # under the explain directory; step 6 reuses them
@@ -50,6 +51,15 @@ FIGURES = {
 # Categorical slots 1-2 of the validated palette: one per rate, the same in every figure.
 BLUE, ORANGE = "#2a78d6", "#eb6834"
 BAND_FILL = "#dce8f7"
+SHORT_TITLES = {
+    "demand": "Demand, MW",
+    "temperature": "ERA5 temperature, °C",
+    "wind": "Wind output, MW",
+    "solar": "Solar output, MW",
+    "net_interchange": "Net interchange, MW (+ = export)",
+    "hour": "Local hour",
+    "month": "Local month",
+}
 FAMILY_SHORT = {
     "lead": "lead time",
     "calendar": "calendar at the target",
@@ -91,13 +101,14 @@ def compute(engine: Engine, cfg: AppConfig, region_id: str) -> Results:
 def mw(v: float, digits: int = 0) -> str:
     if not np.isfinite(v):
         return "–"
-    sign = "−" if v < 0 else ""
-    return f"{sign}{abs(v):,.{digits}f}"
+    v = round(float(v), digits) + 0.0  # + 0.0 turns −0.0 into 0.0
+    return ("−" if v < 0 else "") + f"{abs(v):,.{digits}f}"
 
 
 def signed(v: float, digits: int = 0) -> str:
     if not np.isfinite(v):
         return "–"
+    v = round(float(v), digits) + 0.0
     return ("+" if v > 0 else "−" if v < 0 else "") + f"{abs(v):,.{digits}f}"
 
 
@@ -187,8 +198,11 @@ def plot_weather(shap: ShapSummary, path: Path, quantiles: Sequence[float]) -> N
     fig.savefig(path, facecolor=SURFACE)
 
 
-def plot_rates(assoc: Associations, rate: str, path: Path, title: str, color: str) -> None:
-    """Small multiples, one observable per panel: the rate per bin with its interval."""
+def plot_rates(
+    assoc: Associations, rate: str, path: Path, title: str, color: str, few_days: int
+) -> None:
+    """Small multiples, one observable per panel: the rate per bin with its interval. A bin
+    seen on fewer than ``few_days`` NEM days is drawn hollow (its interval is unreliable)."""
     fig = Figure(figsize=(11, 6.8), dpi=150, facecolor=SURFACE)
     axes = fig.subplots(2, 4)
     fig.subplots_adjust(left=0.06, right=0.99, top=0.88, bottom=0.2, hspace=0.95, wspace=0.3)
@@ -201,9 +215,10 @@ def plot_rates(assoc: Associations, rate: str, path: Path, title: str, color: st
         err = np.vstack([r - 100 * t[f"{rate}_lo"].to_numpy(), 100 * t[f"{rate}_hi"] - r])
         ax.axhline(100 * overall, color=AXIS, linewidth=1, zorder=1)
         ax.errorbar(x, r, yerr=err, fmt="none", ecolor=color, elinewidth=1.2, zorder=2)
+        few = t["days"].to_numpy() < few_days
         ax.plot(
-            x,
-            r,
+            x[~few],
+            r[~few],
             "o",
             color=color,
             markersize=4.5,
@@ -211,17 +226,23 @@ def plot_rates(assoc: Associations, rate: str, path: Path, title: str, color: st
             markeredgewidth=1,
             zorder=3,
         )
-        labels = list(t["bin"])
+        ax.plot(x[few], r[few], "o", color=SURFACE, markersize=4.5, markeredgecolor=color, zorder=3)
+        labels = list(t["bin_short"])
         if var in ("hour", "month"):
             step = 3 if var == "hour" else 1
             ax.set_xticks(x[::step], labels[::step])
         else:
             ax.set_xticks(x, labels, rotation=60, ha="right", fontsize=6)
         ax.set_ylim(bottom=0)
-        _style(ax, TITLES[var], "", "% of intervals")
+        _style(ax, SHORT_TITLES[var], "", "% of intervals")
     axes.ravel()[-1].set_visible(False)
-    axes.ravel()[0].annotate(
-        "line: overall rate", xy=(0.02, 0.92), xycoords="axes fraction", color=MUTED, fontsize=7
+    fig.text(
+        0.03,
+        0.925,
+        f"Grey line: the overall rate. Hollow: a bin seen on fewer than {few_days} NEM days. "
+        "Bin labels are the edges (deciles of development values; temperature in fixed 5 °C bins).",
+        color=MUTED,
+        fontsize=7.5,
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, facecolor=SURFACE)
@@ -266,7 +287,7 @@ def _gate_section(res: Results) -> tuple[str, bool]:
             "Fits",
             "Pairs",
             "Forecast mismatches",
-            "Largest |float64 − stored|, MW",
+            "Largest \\|float64 − stored\\|, MW",
             "SHAP-sum failures",
             "Largest SHAP-sum error",
         ],
@@ -480,7 +501,9 @@ def _question5_section(res: Results, cfg: AppConfig) -> str:
             f"row's top {sc.top_share:.0%} is taken within its own group ({seasons}; by the "
             "target's local month). The terms add up to the forecast, so each difference column "
             "sums to the forecast's difference. They describe the model's arithmetic on a sample, "
-            "not the grid's physics, and no interval is attached.",
+            "not the grid's physics, and no interval is attached. The constant also differs "
+            "between the top 5% and all targets: each fit has its own constant, and the top 5% "
+            "are not spread evenly over the fits.",
             "The family that differs most between the top 5% of actual demand and all targets: "
             + "; ".join(lead)
             + ".",
@@ -494,12 +517,21 @@ def _rate_rows(t: pd.DataFrame) -> list[list[str]]:
         [
             str(r["bin"]),
             f"{int(r['n']):,}",
+            f"{int(r['days']):,}",
             pct(r["share"]),
             rate_ci(r["high"], r["high_lo"], r["high_hi"]),
             rate_ci(r["low"], r["low_lo"], r["low_hi"]),
         ]
         for _, r in t.iterrows()
     ]
+
+
+def _extreme(r: pd.Series, rate: str) -> str:
+    days = int(r["days"])
+    return (
+        f"{pct(r[rate], 2)} ({r['bin']}; {int(r['n']):,} intervals on {days:,} "
+        f"day{'s' if days != 1 else ''})"
+    )
 
 
 def _range_rows(assoc: Associations) -> list[list[str]]:
@@ -511,7 +543,7 @@ def _range_rows(assoc: Associations) -> list[list[str]]:
         for rate in ("high", "low"):
             r = t[rate].to_numpy()
             lo, hi = t.iloc[int(np.argmin(r))], t.iloc[int(np.argmax(r))]
-            cells += [f"{pct(lo[rate], 2)} ({lo['bin']})", f"{pct(hi[rate], 2)} ({hi['bin']})"]
+            cells += [_extreme(lo, rate), _extreme(hi, rate)]
         rows.append(cells)
     return rows
 
@@ -534,7 +566,9 @@ def _associations_section(res: Results, cfg: AppConfig, figs: dict[str, str]) ->
         "(the bin labels are the edges). Solar output is exactly 0 MW in "
         f"{pct(a.tables['solar'].frame['share'].iloc[0])} of intervals, so it has a zero-output "
         "bin plus deciles of positive output. Temperature bins are fixed 5 °C bins that include "
-        "their lower edge. These edges are fixed now: the holdout (step 6) reuses them.",
+        "their lower edge. These edges are fixed now: the holdout (step 6) reuses them. "
+        "*Days* counts the NEM days with at least one interval in the bin: a bin seen on few "
+        "days has an unreliable interval (a bin seen on one day gets a zero-width one).",
         "**Lowest and highest rate across each variable's bins:**",
         _md_table(
             [
@@ -557,7 +591,7 @@ def _associations_section(res: Results, cfg: AppConfig, figs: dict[str, str]) ->
             f"<details><summary>{TITLES[v]}</summary>\n\n"
             + (note.strip() + "\n\n" if note else "")
             + _md_table(
-                ["Bin", "Intervals", "Share", f"P(> {hp}) ({lvl})", f"P(< {lp}) ({lvl})"],
+                ["Bin", "Intervals", "Days", "Share", f"P(> {hp}) ({lvl})", f"P(< {lp}) ({lvl})"],
                 _rate_rows(t.frame),
             )
             + "\n\n</details>"
@@ -568,6 +602,7 @@ def _associations_section(res: Results, cfg: AppConfig, figs: dict[str, str]) ->
             f"{r['demand']} demand",
             f"{r['wind']} wind",
             f"{int(r['n']):,}",
+            f"{int(r['days']):,}",
             rate_ci(r["high"], r["high_lo"], r["high_hi"]),
             rate_ci(r["low"], r["low_lo"], r["low_hi"]),
         ]
@@ -578,22 +613,30 @@ def _associations_section(res: Results, cfg: AppConfig, figs: dict[str, str]) ->
     out += [
         f"**Demand tercile × wind tercile** (demand edges {d_edges} MW; wind edges {w_edges} MW):",
         _md_table(
-            ["Demand", "Wind", "Intervals", f"P(> {hp}) ({lvl})", f"P(< {lp}) ({lvl})"],
+            ["Demand", "Wind", "Intervals", "Days", f"P(> {hp}) ({lvl})", f"P(< {lp}) ({lvl})"],
             tw_rows,
-            "llrrr",
+            "llrrrr",
         ),
     ]
     return "\n\n".join(out)
 
 
+def nem_days_of(period: Sequence[str]) -> tuple[str, str]:
+    """First and last NEM day of a [start, end) period of UTC issue times."""
+    start = pd.Timestamp(period[0]).tz_convert(NEM_TZ)
+    end = pd.Timestamp(period[1]).tz_convert(NEM_TZ) - pd.Timedelta(days=1)
+    return start.date().isoformat(), end.date().isoformat()
+
+
 def _provenance(res: Results, cfg: AppConfig) -> str:
     m = res.sample.manifest
+    first, last = nem_days_of(m["period"])
     return (
         f"Generated by `gridcast report-m4-explain` at commit `{(git_sha() or 'unknown')[:7]}` "
         f"from the stored global SHAP sample (`gridcast explain-dev` at commit "
         f"`{m['commit'][:7]}`, {m['created_at'][:16].replace('T', ' ')} UTC: run 2, batch "
         f"`{m['batch_id'][:8]}…`, {len(m['fits'])} fits, up to {m['sample_pairs']:,} seeded "
-        f"pairs per fit over issue times {m['period'][0][:10]} → {m['period'][1][:10]}) and "
+        f"pairs per fit over the issue times of NEM days {first} → {last}) and "
         "the database. Every number below is computed from those outputs. The decisions behind "
         'it are in [`docs/plans/m4_plan.md`](../docs/plans/m4_plan.md) §1 ("Clarified in step '
         '5"), §2.6 and §2.7. Reported only: E1 is the one criterion here.'
@@ -637,6 +680,10 @@ def _disclosures(cfg: AppConfig) -> str:
             "- The day-block bootstrap resamples NEM days, so it keeps the dependence within a "
             "day but not across days (multi-day heat or wind droughts). The intervals may be "
             "too narrow where such spells dominate a bin.",
+            "- Two presentation details were added after the first draft of this report was "
+            "read, and change no number: the *Days* column with the hollow markers for bins seen "
+            f"on fewer than {cfg.explain_report.associations.few_days} NEM days (the first draft "
+            "showed a 2-interval temperature bin at 100%), and the cleaner labels.",
             "- The global sample is 20,000 seeded pairs per fit (fewer where fewer were eligible, "
             "e.g. the GFS gap of Dec 2023 → Jan 2024), pooled with one weight per pair.",
         ]
@@ -696,6 +743,7 @@ def write_report(engine: Engine, cfg: AppConfig, region_id: str) -> Path:
         f"P(price > ${ac.high_price:,.0f}/MWh) by same-interval observable "
         f"(development, {ac.ci_level:.0%} day-block intervals)",
         ORANGE,
+        ac.few_days,
     )
     plot_rates(
         res.assoc,
@@ -704,6 +752,7 @@ def write_report(engine: Engine, cfg: AppConfig, region_id: str) -> Path:
         f"P(price < ${ac.low_price:,.0f}/MWh) by same-interval observable "
         f"(development, {ac.ci_level:.0%} day-block intervals)",
         BLUE,
+        ac.few_days,
     )
     path = reports / REPORT_NAME
     path.write_text(text_, encoding="utf-8")

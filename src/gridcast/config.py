@@ -553,6 +553,7 @@ class PriceAssociationsConfig(BaseModel):
     bootstrap_resamples: int = Field(gt=0)  # day blocks (NEM days)
     ci_level: float = Field(gt=0, lt=1)
     seed_stream: int  # the bootstrap draws (anomalies.seed, seed_stream)
+    few_days: int = Field(gt=0)  # figures: a bin seen on fewer NEM days is drawn hollow
 
 
 class ExplainReportConfig(BaseModel):

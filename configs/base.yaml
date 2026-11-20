@@ -332,6 +332,8 @@ explain_report:
     bootstrap_resamples: 1000       # NEM-day blocks, percentile intervals
     ci_level: 0.95
     seed_stream: 201                # draws from (anomalies.seed, 201)
+    few_days: 10                    # figures only: bins seen on fewer NEM days drawn hollow
+                                    # (added after the first draft; changes no number)
   report: reports/m4_explainability.md
 
 aemo:
