@@ -101,6 +101,40 @@
   - **Stored names.** v2's D6 is stored as `robust_distance`, so a v2 event never reads as an Isolation Forest event. v2's D4 keeps `price_level` (the same detector with a new transform). Each version has its own `model_runs` rows (the recipe version is in their config), batches and events.
   - **Order:** v2's freeze and its development run come before any holdout score of either version. Step 5 (explanations) does not depend on the version.
 
+**Clarified in step 5, before any global SHAP value or price-association rate was computed (2026-11-20; the user chose every recommendation):**
+- **The global summaries decompose the whole forecast.** Run 2's 48 LightGBM C fits do not share one target form. In the 6–24 h band, 5 fits are *direct*, 4 *residual*, 2 *anchored* and 1 *latest*. In the shorter bands most are *latest*. Raw TreeSHAP explains only each fit's correction to its own anchor (§2.6). A family's credit would then mean different things from fit to fit, and a change of form between retrains would look like instability.
+  - Each anchor is a sum of model features with weight 1: `dem_now` (*latest*), `dem_same_time_yesterday` (*residual*), and both `dem_same_time_yesterday` and `dem_now_vs_yesterday` (*anchored*).
+  - The anchor's share therefore goes to those features: x − x̄, with x̄ the mean over the fit's own global sample. That is the exact Shapley value of a linear term with the sample as background. The fit's constant becomes the base value + the sample mean of the anchor.
+  - Every fit then decomposes the forecast itself: forecast = constant + Σ contributions, exactly. Fits of different forms can be pooled.
+  - Disclosed: the sum mixes path-dependent TreeSHAP (the trees) with an interventional attribution of the linear anchor (sample background), so it is the Shapley value of neither game exactly. Local accuracy holds.
+  - The raw, tree-only values stay stored. The report shows them in a table by (band, target form), beside the headline.
+- **Question 5's top 5% is taken within each group.** The overall row uses the top 5% of all targets. The summer (Dec–Feb) and winter (Jun–Aug) rows use the top 5% of that season's targets, compared with all of that season's targets. The forecast rows do the same with the stored forecast.
+- **The price associations cover the market development period,** NEM days 2022-05-01 → 2025-09-30. That is the span of the market detectors and the price lines, so every development number in the M4 reports covers the same span.
+- **Bin edges come from development data and are fixed now.** Step 6 reuses them unchanged, so the holdout's rates sit on the same bins, and distribution shifts show up as bin occupancy.
+  - Solar output is exactly 0 MW in 47.6% of development intervals, so it gets a separate *zero output* bin plus deciles of positive output. Plain deciles would merge about five bins into one.
+- **Readings fixed before coding (no setting in §2 changed):**
+  - **`gridcast explain-dev`:**
+    - draws §2.6's global sample (20,000 pairs per fit, seeded) for run 2's 48 fits, over issue times 2022-11-01 → 2025-09-30;
+    - runs E1's gate on every pair;
+    - stores, per fit, the pairs, their feature rows, actuals, stored forecasts, anchors, base values and raw contributions, plus each booster's gain importance, under `<data root>/explain/dev/`;
+    - writes a manifest with each fit's gate, the commit and the timings.
+    - If E1 fails for any pair, it stores nothing (explanations withheld). It refuses a dirty tree, or a tree where either anomaly freeze does not hold (`explainability/` is under both).
+    - It is deterministic and reported only, so a rerun is allowed with `--replace`. It is not a once-only score.
+  - **Pooling:** the summaries pool a band's fits with one weight per pair. A family's contribution is the sum of its features' contributions; its mean |SHAP| is the mean of the absolute family sum.
+  - **Stability:** per band, the Spearman correlation of consecutive retrains' rankings of the 25 features by mean |SHAP| (whole forecast), 11 per band. Each pair's two target forms are shown beside it.
+  - **Weather dependence:** per band, the weather family's contribution against `wx_temp` (the population-weighted GFS forecast temperature at the target), in 1 °C bins: mean and 10–90% range. Bins with fewer than 100 pairs are not drawn.
+  - **Gain importance:** M2's split gain per feature, as a share of each fit's total, averaged over the band's fits. It is labelled tree-only, i.e. relative to the anchor.
+  - **Question 5:** the 6–24 h band (leads 73–288), the pooled global sample of its 12 fits. A target is in the top 5% if its value is above its group's 95th percentile. Seasons go by the target's local month. The table shows mean contributions by family in the top 5% and in all targets, their difference, and the pair counts. No interval is attached: it describes the model's arithmetic on a sample.
+  - **Price associations:**
+    - intervals are NEM days by interval start (§2.1);
+    - the rates are P(price > $300/MWh) and P(price < $0/MWh);
+    - the observables, all from the same interval: demand, ERA5 population-weighted temperature (the value the evidence uses), wind and solar cleared output, net interchange, local hour and local month;
+    - deciles are right-closed bins between the development 10% … 90% quantiles. Temperature bins are fixed 5 °C bins at multiples of 5. The two-way table is demand tercile × wind tercile;
+    - an interval that lacks a variable is left out of that variable's table only, and the counts are shown;
+    - the CIs are percentile 95% intervals from 1,000 day-block bootstrap resamples (NEM days), seeded.
+  - **Config:** step 5's report settings live in a new section, `explain_report`. Both anomaly hashes cover all of `anomalies`, so a setting added there would break the freezes. The global sample's own settings (`anomalies.explain`) are already frozen and do not change.
+  - **Freeze classification:** the new `explainability` modules (the global run and the report) and the association module only orchestrate, read and summarise. They are classified as not frozen, as the smoke modules are.
+
 ## 2. Design
 
 ### 2.1 Periods

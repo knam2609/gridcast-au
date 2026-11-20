@@ -2,6 +2,14 @@
 
 Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff.md`](m3_handoff.md) and [`m3_plan.md`](m3_plan.md).
 
+> **Update, 2026-11-20 (twenty-first session: the step-5 question round):** the user chose every recommendation. The decisions are recorded in [`m4_plan.md`](m4_plan.md) §1, "Clarified in step 5", before any global SHAP value or association rate existed:
+> - **Global SHAP decomposes the whole forecast.** Run 2's fits mix target forms (6–24 h: 5 direct, 4 residual, 2 anchored, 1 latest). Each fit's anchor goes to its own features as x − x̄ (an exact linear Shapley term), so fits of any form can be pooled. The raw tree-only values are shown by form beside the headline.
+> - **Question 5:** the top 5% is taken within each group (overall, summer, winter).
+> - **Price associations:** the market development period (2022-05-01 → 2025-09-30). The bin edges come from development data and step 6 reuses them; solar gets a zero-output bin plus deciles of positive output.
+> - Step 5's report settings go in a new `explain_report` config section, so neither anomaly freeze changes.
+>
+> **Next: 5a** (`gridcast explain-dev`), then **5b** (`gridcast report-m4-explain` → `reports/m4_explainability.md`).
+
 > **Update, 2026-11-20 (twentieth session, later: steps 4f–4h, v2 built, frozen and scored on development):**
 > - **4f `38e4687`:** the frozen modules are generalised behind `detectors.Recipe`; version 1 is the default everywhere. `gridcast anomalies-reproduce` (`anomalies/reproduce.py`, not frozen) recomputes a stored development run and compares every column, injection, month-model range, cut, event (evidence and summary included) and the run record. It passed on the untouched code first, and then on the generalised code.
 > - **4g `04da607` (code) + `17ca965` (freeze):**
