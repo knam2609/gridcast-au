@@ -2,6 +2,14 @@
 
 Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff.md`](m3_handoff.md) and [`m3_plan.md`](m3_plan.md).
 
+> **Update, 2026-11-20 (twenty-second session: the step-6 question round):** both anomaly freezes still hold at `3d6f391` (v1 `2ce8b3fc523ae81c`, v2 `44abbf4b24cf6ac8`, code `04da607`). The user chose every recommendation. The decisions and the readings fixed before coding are in [`m4_plan.md`](m4_plan.md) §1, "Clarified in step 6", recorded before any holdout score:
+> - `gridcast evaluate-holdout-anomalies --version 1|2`, one A6 lock per hash. v1 and v2 run back to back, and neither output is read until both are stored (console output goes to log files).
+> - `gridcast explain-holdout` is guarded as `explain-dev` is (deterministic; a rerun only with `--replace`). It runs first, so E1 covers every holdout model before the anomaly runs.
+> - Two reports: `reports/m4_holdout.md` (v1 and v2 side by side, development beside) and `reports/m4_explainability_holdout.md`.
+> - The README leads with v1's pre-registered result, then v2 as the disclosed revision that M5/M6 serve.
+>
+> **Next: 6b** (`explain-holdout` and its run), **6c** (`evaluate-holdout-anomalies`), **6d** (both report codes, committed before either anomaly holdout run), **6e** (v1 then v2, then the reports), **6f** (README, plan, handoff).
+
 > **Update, 2026-11-20 (twenty-first session, later: step 5 done):**
 > - **5a `f128f19`:** `gridcast explain-dev` stored run 2's global SHAP sample (48 fits, 957,568 pairs, 10.9 min, under `<data root>/explain/dev/`). **E1 passes on every pair.**
 > - **5b `f4c3723` + `77cf85d`:** `gridcast report-m4-explain` (`explainability/summary.py`, `associations.py`, `report.py`; config `explain_report`). The code was committed before any output was read. `77cf85d` fixed presentation faults in the first draft and changed no number.

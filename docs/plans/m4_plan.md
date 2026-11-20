@@ -135,6 +135,61 @@
   - **Config:** step 5's report settings live in a new section, `explain_report`. Both anomaly hashes cover all of `anomalies`, so a setting added there would break the freezes. The global sample's own settings (`anomalies.explain`) are already frozen and do not change.
   - **Freeze classification:** the new `explainability` modules (the global run and the report) and the association module only orchestrate, read and summarise. They are classified as not frozen, as the smoke modules are.
 
+**Clarified in step 6, before any holdout score (2026-11-20; the user chose every recommendation):**
+- **One command per version, run back to back.** `gridcast evaluate-holdout-anomalies --version 1|2` has its own A6 lock on each recipe hash. v1 runs first, then v2, in one sitting. Neither run's output is read until both are stored: each run's console output goes to a log file, and only its exit status is seen before then.
+- **Holdout SHAP is guarded as `explain-dev` is.** `gridcast explain-holdout` refuses a dirty tree or a broken freeze. It is deterministic and reported only, so a rerun is allowed with `--replace`. The report states how many runs there were.
+- **Two holdout reports**, replacing step 6's single `m4_holdout.md`:
+  - `reports/m4_holdout.md`: the anomalies, v1 and v2 side by side per criterion, each with its development verdict beside it;
+  - `reports/m4_explainability_holdout.md`: SHAP, question 5 and the price associations, with development beside.
+- **The README leads with v1.** v1's pre-registered development verdicts and its holdout replication come first. v2 follows as the disclosed revision that M5/M6 serve, with its post hoc development verdicts and its blind holdout test. SHAP and the price associations come after. This framing is fixed before any holdout result exists.
+- **Readings fixed before coding (no setting in §2 changed):**
+  - **Order:**
+    1. `explain-holdout` runs first. Its E1 gate covers all 20 holdout models before any anomaly run, and an anomaly run stops if E1 fails at a holdout demand peak. It prints only the gates and timings.
+    2. The code of both holdout reports is written and committed before either anomaly holdout run. It is tested on the stored development runs and synthetic data.
+    3. v1, then v2.
+    4. The reports.
+  - **Refusals** (nothing is computed):
+    - the version's freeze does not hold, or the tree is dirty;
+    - no successful development run is stored for the hash (run 104 for v1, run 106 for v2);
+    - a successful holdout run is already stored for the hash (A6);
+    - the two QR batches differ on their overlap (§1, step 4).
+  - **Reproduction before scoring.** If either check fails, the run stops and stores nothing:
+    1. `anomalies-reproduce`'s full check of the version's development run: every interval column, injection, month model, cut, event (with evidence and summary) and the run record. For v1 this is also the check that carries its code freeze (§1, "How v2 is built").
+    2. The continuous run covers 2021-10-01 → 2026-09-30 and reads data up to NEM midnight of `backtest.holdout_end`. These parts of it must equal the stored development batch exactly:
+       - its scores, p-values and window sizes at every interval up to the development end;
+       - its month models for the months before October 2025;
+       - the development events that its alerts give under the development split.
+    - Until both checks pass, nothing about the holdout part is printed, logged or stored.
+  - **Then, on the holdout split** (NEM days 2025-10-01 → 2026-09-30, every detector):
+    - tiers and events;
+    - the injections: 1,000 shared starts per detector, drawn from the holdout's scored intervals with seed streams 1–7, as in development;
+    - A5's 3 real-data cuts (stream 102) inside the holdout's scored period, and the month-model leak check over every month;
+    - evidence and summaries for every holdout event, with SHAP at the demand peaks behind E1. As in development, a gate failure stops the run before anything is stored.
+  - **Storage, as the development run:**
+    - one `model_runs` row with split `holdout`;
+    - parquet under `<data root>/anomalies/<batch>/`;
+    - the events in `anomalies`, with split `holdout`.
+    - `intervals.parquet` holds the whole continuous run with the holdout's scored-period flags. The injections and cuts are the holdout's, and the month-model table lists every month.
+  - **`report-m4-holdout` reads the criteria as development does** (§1, "How `report-m4` reads the criteria"), on the holdout's scored intervals. Each criterion *holds* or *does not hold*:
+    - A1: the 12 checks;
+    - A3: the 11 checks at the largest sizes;
+    - A4: every holdout event;
+    - A5: the synthetic suite (both versions' cases), the 3 holdout cuts and the leak check;
+    - E1: the holdout demand peaks plus `explain-holdout`'s global sample.
+    - A2 has no holdout event. O08 (23 Mar 2026) is reported with A2's ±30-minute window.
+    - The case studies are the 5 holdout events ranked first by the case rule, per version, with no named days.
+    - The report recomputes the stored counts and stops on any mismatch, as `report-m4` does. It also checks that v2's D1, D2, D3 and D5 equal v1's on the holdout (§2.10).
+  - **`explain-holdout`** explains `holdout_main`'s 20 fits (5 retrains × 4 bands) on holdout issue times only (§1, step 3):
+    - 20,000 seeded pairs per fit (§2.6), or every eligible pair if there are fewer;
+    - E1 on every pair;
+    - stored under `<data root>/explain/holdout/`, in the development sample's layout.
+  - **`report-m4-explain-holdout`** repeats step 5's tables on the holdout sample, each with the development value beside it:
+    - whole-forecast SHAP by band, and the raw values by target form;
+    - stability over each band's 4 consecutive holdout retrain pairs;
+    - weather dependence and gain importance;
+    - question 5, with holdout seasons: summer Dec 2025–Feb 2026, winter Jun–Aug 2026.
+    - **The price associations** cover NEM days 2025-10-01 → 2026-09-30, on the stored development bin edges. Development's rate sits beside each holdout rate, under the same CI and hollow-marker rules. About 0.2% of holdout intervals are above $300 (§3.3), so most of those bins hold few or no such intervals. Their counts are shown, and no bin is dropped.
+
 ## 2. Design
 
 ### 2.1 Periods
@@ -538,13 +593,17 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
 
 **Step 6. Holdout, once per recipe version (v1 and v2; §1).**
 - `gridcast evaluate-holdout-anomalies` (the A6 lock, per recipe hash): one continuous run per version that must first reproduce that version's development batch exactly (for v1, the reproduction that also carries its code freeze).
-- `gridcast report-m4-holdout` → `reports/m4_holdout.md`:
-  - A1, A3–A5 and E1 as holds or does not hold;
-  - the class-O day;
-  - holdout SHAP;
-  - holdout price associations;
-  - case studies by the same rule.
+- Reports (two, decided in step 6's question round, §1):
+  - `gridcast report-m4-holdout` → `reports/m4_holdout.md`: A1, A3–A5 and E1 as holds or does not hold for v1 and v2; the class-O day; case studies by the same rule;
+  - `gridcast report-m4-explain-holdout` → `reports/m4_explainability_holdout.md`: holdout SHAP and holdout price associations.
 - README rewrite (every number from the reports); plan and handoff outcomes.
+- **Sub-steps** (order fixed in §1, "Clarified in step 6"):
+  - **6a:** the question round (this record);
+  - **6b:** `gridcast explain-holdout`, then its one run (gates and timings only);
+  - **6c:** `gridcast evaluate-holdout-anomalies`, with `--check-only` for the refusals and input checks;
+  - **6d:** the code of both holdout reports, tested on the stored development runs and committed before either anomaly holdout run;
+  - **6e:** the v1 and v2 holdout runs back to back, then the reports;
+  - **6f:** the README, plan and handoff outcomes.
 
 ## 5. New dependencies and compute
 
