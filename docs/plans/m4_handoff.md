@@ -2,6 +2,23 @@
 
 Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff.md`](m3_handoff.md) and [`m3_plan.md`](m3_plan.md).
 
+> **Update, 2026-11-21 (twenty-second session, later): step 6 done, M4 complete.** All commits are local; nothing is pushed. Details and numbers are in [`m4_plan.md`](m4_plan.md), step 6 outcome.
+> - **6b `a44cc9b`:** `explain-holdout` ran once: 20 fits, 386,496 pairs, 4.6 min. **E1 passes on every pair.**
+> - **6c `8aad8fd`:** `evaluate-holdout-anomalies --version 1|2`, with `--check-only` (passed for both versions).
+> - **6d `d41aed4`:** both holdout report codes, committed before any holdout score.
+> - **6e:** v1 and v2 ran back to back from `d41aed4`, and the logs stayed unread until both runs were stored. Each reproduced its development run exactly first. Nothing failed, and nothing was rerun.
+>   - **v1:** run 107, batch `b5c57f68-…`.
+>   - **v2:** run 108, batch `96ac5ebd-…`.
+>   - [`reports/m4_holdout.md`](../../reports/m4_holdout.md) and [`reports/m4_explainability_holdout.md`](../../reports/m4_explainability_holdout.md) are in `52e3ea6`.
+> - **Holdout verdicts:**
+>   - **v1:** A4, A5 and E1 hold. A1 does not hold (D6 0.381% at p ≤ 0.001), and A3 does not hold (3 of 11).
+>   - **v2:** A1, A4, A5 and E1 hold. A3 does not hold (5 of 11: D1 ~33%, D3 ~77%, D4 88.5% / 68.5%).
+>   - A6 passes for both, and the command now refuses either version.
+> - **6f:** the README was rewritten for M4 (`5e431ee`; v1 first, then v2), plus the plan and this handoff.
+> - **Tests:** 496 unit tests and the full integration suite (90 tests, 10 min) pass.
+> - **Next:** merge M4 into `main` when the user asks (M1–M3 were merge commits, not squash); then M5, the API, which serves v2.
+>   - Unregistered follow-ups: D1 and D3 power (a property of the data per the diagnosis, so any change needs its own pre-registration); D4 v2 below 90% and its lower power after volatile periods; a monthly alert-rate monitor.
+
 > **Update, 2026-11-20 (twenty-second session: the step-6 question round):** both anomaly freezes still hold at `3d6f391` (v1 `2ce8b3fc523ae81c`, v2 `44abbf4b24cf6ac8`, code `04da607`). The user chose every recommendation. The decisions and the readings fixed before coding are in [`m4_plan.md`](m4_plan.md) §1, "Clarified in step 6", recorded before any holdout score:
 > - `gridcast evaluate-holdout-anomalies --version 1|2`, one A6 lock per hash. v1 and v2 run back to back, and neither output is read until both are stored (console output goes to log files).
 > - `gridcast explain-holdout` is guarded as `explain-dev` is (deterministic; a rerun only with `--replace`). It runs first, so E1 covers every holdout model before the anomaly runs.

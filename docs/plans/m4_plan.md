@@ -4,7 +4,7 @@
 - **Anomaly detection:** detectors whose false-alarm rate is stated and checked, that catch the operator-flagged price events and injected disturbances of known size. Each alert is merged into an event that carries observable evidence and makes no causal claim.
 - **Explanations:** SHAP explanations of the frozen M2 demand model (LightGBM C), and a descriptive, association-only analysis of high and negative prices.
 
-**Status:** planned 2026-11-15 after three question rounds with the user (every recommendation chosen). After the development verdicts, a disclosed v2 of D4 and D6 was decided on 2026-11-20 (§1, §2.10). Branch `m4-anomalies-explainability`, from `main` at `c5fd5d3` (M1–M3 merged). The success criteria in §3 and every detector setting in §2 were fixed before any detector code or score existed.
+**Status:** planned 2026-11-15 after three question rounds with the user (every recommendation chosen). After the development verdicts, a disclosed v2 of D4 and D6 was decided on 2026-11-20 (§1, §2.10). **M4 is complete (2026-11-21):** the holdout was scored once per version (step 6). Branch `m4-anomalies-explainability`, from `main` at `c5fd5d3` (M1–M3 merged). The success criteria in §3 and every detector setting in §2 were fixed before any detector code or score existed.
 
 ## 1. Decisions (agreed 2026-11-15)
 
@@ -604,6 +604,38 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
   - **6d:** the code of both holdout reports, tested on the stored development runs and committed before either anomaly holdout run;
   - **6e:** the v1 and v2 holdout runs back to back, then the reports;
   - **6f:** the README, plan and handoff outcomes.
+- *Outcome (2026-11-20/21, step 6):*
+  - **6a `697941a`:** the question round; every recommendation chosen (§1, "Clarified in step 6").
+  - **6b `a44cc9b`:** `run_global` takes the holdout split, and a `--replace` rerun keeps `previous_runs` in the manifest.
+    - `gridcast explain-holdout` ran once from a clean tree at `a44cc9b`, in 4.6 min: 20 fits and 386,496 pairs. The 5–30 min fit of the first retrain covers October 2025 only, so it used every eligible pair.
+    - **E1 passes on every pair:** 0 forecast mismatches; the largest SHAP-sum error is 5.7 × 10⁻¹¹. The run printed only its gates and timings.
+  - **6c `8aad8fd`:** `anomalies/holdout.py` (not frozen) and `gridcast evaluate-holdout-anomalies`.
+    - `load_run` takes a split.
+    - `run_config` names both batches for the holdout; the development record is unchanged.
+    - Tests: the development-part check on synthetic data for both versions; the refusals, the A6 lock and the stored record on the test database.
+    - `--check-only` passed for both versions. It prints counts only: 525,888 intervals, 68,640 band issue times, actuals equal to market demand on 19,475,472 pairs, and 20 holdout models.
+  - **6d `d41aed4`:** `anomalies/holdout_report.py` and `explainability/holdout_report.py` (both not frozen).
+    - Both were committed before either anomaly holdout run, and before any holdout SHAP value or holdout association rate was read.
+    - They were tested by rendering with the development runs, sample and period standing in for the holdout's (scratch output only).
+    - `report.compute` takes a split. Both development anomaly reports regenerated unchanged apart from their report-code line.
+    - During that test, the banned-phrase check caught "explains" and "explained by" in the explainability report's own disclosure text, which was reworded.
+  - **6e, the runs.** Both ran back to back from `d41aed4`, on a clean tree with both freezes holding. The logs (`<data root>/logs/m4_holdout_v{1,2}.log`) were not read until both runs were stored. Neither failed, and nothing was rerun.
+    - **v1:** run 107, batch `b5c57f68-bb60-49c7-a67e-be6476dfb4a7`, 7.5 min. Run 104 reproduced exactly (178 s), and the continuous run's development part equalled it: 420,768 intervals, 47 forests and 1,102 events. This also carries v1's code freeze to the holdout.
+    - **v2:** run 108, batch `96ac5ebd-1220-4f5b-aec0-04f53c9963ca`, 6.5 min. Run 106 reproduced exactly (153 s), and the development part was equal (994 events).
+  - **[`reports/m4_holdout.md`](../../reports/m4_holdout.md)** (`52e3ea6`). The replications are reported as *holds* or *does not hold*, and A6 passes for both versions:
+    - **v1:** A4, A5 and E1 hold. A1 does not hold: 10 of 12 checks, with D6 at 2.33% / 0.381%. A3 does not hold: 3 of 11 (D1 32.6% / 32.9%, D3 77.0% / 77.1%, D4 22.4% at $15,000 and 35.8% at −$1,000, D6 3.3% / 1.4%).
+    - **v2:** A1 (12 of 12), A4, A5 and E1 hold. A3 does not hold: 5 of 11. D1 and D3 are as v1; D4 reaches 88.5% at $15,000 and 68.5% at −$1,000. D6 (robust distance) and D5 reach 100%.
+    - v2's D1, D2, D3 and D5 equal v1's (20 columns).
+    - O08 (23 Mar 2026) was caught by neither version; the lowest p was D2's, 2.10 × 10⁻².
+    - Events: v1 195 (178 calibrated, 40 severe; 17 price-line-only); v2 133 (118 calibrated, 22 severe; 15 price-line-only). E1 covered 182 holdout demand-peak pairs in each run.
+    - Reported only: v2's D4 caught $15,000 in 56% of starts in Oct–Dec 2025, and in 99% from January 2026.
+  - **[`reports/m4_explainability_holdout.md`](../../reports/m4_explainability_holdout.md)** (`52e3ea6`), reported only:
+    - **Largest family per band, as in development:** demand at the issue time at 5–30 min (795 MW) and 35 min–2 h (705 MW); demand yesterday and last week at 2–6 h (447 MW) and 6–24 h (595 MW).
+    - **Stability:** median Spearman 0.98, 0.93, 0.90 and 0.88 by band.
+    - **Question 5, demand:** the top 5% of actual demand (above 7,106 MW) sits +2,344 MW above all targets. Demand yesterday and last week contributes +1,127 MW. Weather contributes +901 MW in summer and +251 MW in winter.
+    - **Price:** P(price > $300) is 0.20% (0.07–0.38), 214 intervals; P(price < $0) is 25.87% (23.45–28.53). The stored development edges equalled a recomputation.
+  - **6f:** the README (`5e431ee`; v1 first, then v2, as decided), this outcome and the handoff.
+  - **Tests:** 496 unit tests and the full integration suite (90 tests, 10 min) pass, as do lint and mypy.
 
 ## 5. New dependencies and compute
 
