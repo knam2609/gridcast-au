@@ -132,13 +132,17 @@ def events_check(got: pd.DataFrame, stored: pd.DataFrame) -> Check:
     if len(got) != len(stored):
         return Check("events", len(stored), (f"{len(got)} events != stored {len(stored)}",))
     for c in EVENT_COLUMNS:
-        bad = [i for i, (a, b) in enumerate(zip(got[c], stored[c], strict=True)) if not _same(a, b)]
+        bad = [
+            i
+            for i, (a, b) in enumerate(zip(got[c], stored[c], strict=True))
+            if not same_value(a, b)
+        ]
         if bad:
             diffs.append(f"{c}: {len(bad)} events differ (first at event {bad[0]})")
     return Check("events", len(stored), tuple(diffs))
 
 
-def _same(a: Any, b: Any) -> bool:
+def same_value(a: Any, b: Any) -> bool:
     if a is None or b is None:
         return a is None and b is None
     if isinstance(a, float) and isinstance(b, float):

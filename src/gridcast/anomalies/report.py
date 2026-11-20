@@ -136,7 +136,7 @@ RUN_SQL = """
 SELECT run_id, batch_id::text AS batch_id, git_sha, config, artifact_path
 FROM model_runs
 WHERE model_kind = 'anomaly' AND region_id = :region AND status = 'success'
-  AND config->>'split' = 'dev' AND config->>'anomaly_config_hash' = :hash
+  AND config->>'split' = :split AND config->>'anomaly_config_hash' = :hash
 """
 EVENTS_SQL = """
 SELECT first_interval_end, last_interval_end, peak_interval_end, tier, detectors, min_p,
@@ -145,17 +145,20 @@ FROM anomalies WHERE run_id = :run ORDER BY first_interval_end
 """
 
 
-def load_run(engine: Engine, cfg: AppConfig, region_id: str, version: int = 1) -> StoredRun:
+def load_run(
+    engine: Engine, cfg: AppConfig, region_id: str, version: int = 1, split: str = "dev"
+) -> StoredRun:
+    """The one successful run of recipe ``version`` on ``split`` ("dev" or "holdout")."""
     record = cfg.anomalies if version == 1 else cfg.anomalies_v2
     frozen = record.frozen_config_hash
     if not frozen:
         raise ReportMismatch(f"no freeze recorded for recipe v{version}")
     with engine.connect() as conn:
-        rows = conn.execute(text(RUN_SQL), {"region": region_id, "hash": frozen}).all()
+        rows = conn.execute(
+            text(RUN_SQL), {"region": region_id, "hash": frozen, "split": split}
+        ).all()
         if len(rows) != 1:
-            raise ReportMismatch(
-                f"expected one development run for hash {frozen}, found {len(rows)}"
-            )
+            raise ReportMismatch(f"expected one {split} run for hash {frozen}, found {len(rows)}")
         row = rows[0]
         events = pd.read_sql(text(EVENTS_SQL), conn, params={"run": row.run_id})
     directory = Path(row.artifact_path)

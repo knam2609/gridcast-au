@@ -252,8 +252,19 @@ def a4_counts(out: DevOutputs, cfg: AppConfig) -> dict[str, int]:
     }
 
 
+def split_inputs(cfg: AppConfig, split: str) -> dict[str, Any]:
+    """The stored batches a run's D2/D3 band and masks come from. The holdout joins the
+    development and holdout batches by issue time (§1, step 4)."""
+    res, ex = cfg.anomalies.residual, cfg.anomalies.explain
+    if split == "holdout":
+        return {
+            "qr_batches": [res.dev_qr_batch, res.holdout_qr_batch],
+            "mask_batches": [ex.dev_batch, ex.holdout_batch],
+        }
+    return {"qr_batch": res.dev_qr_batch, "mask_batch": ex.dev_batch}
+
+
 def run_config(out: DevOutputs, cfg: AppConfig, state: FreezeState, region_id: str) -> dict:
-    a = cfg.anomalies
     det = out.detection
     events = det.events
     return {
@@ -273,8 +284,7 @@ def run_config(out: DevOutputs, cfg: AppConfig, state: FreezeState, region_id: s
             "last_end": str(out.series.ends[-1]),
         },
         "inputs": {
-            "qr_batch": a.residual.dev_qr_batch,
-            "mask_batch": a.explain.dev_batch,
+            **split_inputs(cfg, out.split.name),
             "band_issue_times": out.band_issue_times,
             "band_valid_pairs": out.band_valid_pairs,
             "checked_actuals": out.checked_actuals,
@@ -345,12 +355,14 @@ def store_dev(
     out: DevOutputs,
     state: FreezeState,
     batch_id: uuid.UUID | None = None,
+    extra_config: dict[str, Any] | None = None,
 ) -> tuple[int, uuid.UUID, Path]:
-    """Write the files, then the run row and its events in one transaction."""
+    """Write the files, then the run row and its events in one transaction
+    (``extra_config``: more run-record sections, e.g. the holdout's reproduction)."""
     batch_id = batch_id or uuid.uuid4()
     directory = cfg.data_path(cfg.anomalies.output_dir) / str(batch_id)
     save_files(directory, out)
-    config = run_config(out, cfg, state, region_id)
+    config = run_config(out, cfg, state, region_id) | (extra_config or {})
     eval_start = nem_midnight_utc(str(out.split.market_first_day))
     eval_end = nem_midnight_utc(str(out.split.end_day))
     try:

@@ -1322,6 +1322,56 @@ def anomalies_reproduce(
         raise typer.Exit(1)
 
 
+@app.command("evaluate-holdout-anomalies")
+def evaluate_holdout_anomalies(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    version: Annotated[int, typer.Option(help="Anomaly recipe version (1 or 2)")] = 1,
+    check_only: Annotated[
+        bool,
+        typer.Option("--check-only", help="Run the refusals and input checks only; score nothing"),
+    ] = False,
+) -> None:
+    """M4 step 6: the holdout anomaly run, scored ONCE per recipe hash (A6). It reproduces the
+    version's development run, checks the continuous run's development part, then scores and
+    stores the holdout; `gridcast report-m4-holdout` computes the criteria."""
+    import time
+
+    from gridcast.anomalies.holdout import (
+        HoldoutRefused,
+        HoldoutReproductionFailed,
+        check_lines,
+        preflight,
+        run_holdout,
+        summary_lines,
+    )
+    from gridcast.database.engine import get_engine
+    from gridcast.explainability.treeshap import GateError
+
+    cfg = load_config()
+    engine = get_engine()
+    t0 = time.perf_counter()
+    try:
+        pre = preflight(engine, cfg, region, version)
+        if check_only:
+            for line in check_lines(engine, cfg, region, pre):
+                typer.echo(line)
+            typer.echo("checks pass; nothing was scored")
+            return
+        stored = run_holdout(engine, cfg, region, version)
+    except HoldoutRefused as exc:
+        typer.echo(f"REFUSED: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except HoldoutReproductionFailed as exc:
+        typer.echo(f"STOPPED, nothing stored: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except GateError as exc:
+        typer.echo(f"E1 failed at a holdout demand peak, nothing stored: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    for line in summary_lines(stored):
+        typer.echo(line)
+    typer.echo(f"took {(time.perf_counter() - t0) / 60:.1f} min")
+
+
 @app.command("anomalies-diagnose-v1")
 def anomalies_diagnose_v1(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
     """Write docs/m4_v1_diagnosis.md: why v1's D1, D4 and D6 failed (reported only; recomputes
