@@ -308,6 +308,32 @@ anomalies_v2:
   frozen_config_hash: "44abbf4b24cf6ac8"
   frozen_commit: "04da607"
 
+explain_report:
+  # M4 step 5 (m4_plan.md §1 "Clarified in step 5", §2.6-2.7; user 2026-11-20). Reported
+  # only. Outside both anomaly hashes, which cover all of `anomalies`; the global sample's
+  # own settings stay in anomalies.explain (frozen).
+  shap:
+    question5_band: [73, 288]       # 6-24 h
+    top_share: 0.05                 # top 5% of each group's own targets
+    seasons:                        # by the target's local month
+      summer: [12, 1, 2]
+      winter: [6, 7, 8]
+    weather_bin_c: 1.0              # weather contribution vs forecast temperature
+    weather_min_pairs: 100
+    weather_range: [0.1, 0.9]
+  associations:
+    # NEM days anomalies.market_first_day -> backtest.holdout_start (by interval start).
+    high_price: 300                 # P(price > $300/MWh)
+    low_price: 0                    # P(price < $0/MWh)
+    quantile_bins: 10               # right-closed deciles of development values (solar:
+                                    # a zero-output bin plus deciles of positive output)
+    two_way_bins: 3                 # demand tercile x wind tercile
+    temperature_bin_c: 5            # ERA5 population-weighted, fixed bins [5k, 5k + 5)
+    bootstrap_resamples: 1000       # NEM-day blocks, percentile intervals
+    ci_level: 0.95
+    seed_stream: 201                # draws from (anomalies.seed, 201)
+  report: reports/m4_explainability.md
+
 aemo:
   # AEMO's own demand forecasts: every run of 30-minute pre-dispatch and 5-minute
   # pre-dispatch (MMSDM "all runs" archives, ~50 MB a month each, cached under raw/).

@@ -1252,6 +1252,19 @@ def explain_dev(
         typer.echo(line)
 
 
+@app.command("report-m4-explain")
+def report_m4_explain(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+) -> None:
+    """M4 step 5: reports/m4_explainability.md from the stored global SHAP sample and the
+    development price associations (reported only; E1 on the global sample)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.explainability.report import write_report as write_explain
+
+    path = write_explain(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
 @app.command("report-m4")
 def report_m4(
     region: Annotated[str, typer.Option(help="Region id")] = "VIC1",

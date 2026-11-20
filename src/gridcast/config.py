@@ -527,6 +527,43 @@ class AnomaliesV2Config(BaseModel):
     frozen_commit: str | None = None
 
 
+class ShapReportConfig(BaseModel):
+    """Global SHAP summaries (m4_plan.md §2.6; §1 "Clarified in step 5")."""
+
+    question5_band: tuple[int, int]  # lead band (steps) of question 5: 6-24 h
+    top_share: float = Field(gt=0, lt=1)  # top 5%, taken within each group
+    seasons: dict[str, list[int]]  # name -> local months of the target
+    weather_bin_c: float = Field(gt=0)
+    weather_min_pairs: int = Field(gt=0)  # bins with fewer pairs are not drawn
+    weather_range: tuple[float, float]  # quantiles drawn around the mean
+
+
+class PriceAssociationsConfig(BaseModel):
+    """Descriptive price associations (m4_plan.md §2.7; §1 "Clarified in step 5").
+
+    The period is the market development period (anomalies.market_first_day to
+    backtest.holdout_start). Bin edges come from development data; step 6 reuses them.
+    """
+
+    high_price: float  # P(price > high_price)
+    low_price: float  # P(price < low_price)
+    quantile_bins: int = Field(gt=1)  # deciles
+    two_way_bins: int = Field(gt=1)  # demand tercile x wind tercile
+    temperature_bin_c: float = Field(gt=0)  # fixed bins at multiples of this width
+    bootstrap_resamples: int = Field(gt=0)  # day blocks (NEM days)
+    ci_level: float = Field(gt=0, lt=1)
+    seed_stream: int  # the bootstrap draws (anomalies.seed, seed_stream)
+
+
+class ExplainReportConfig(BaseModel):
+    """M4 step 5's report settings. Reported only, and outside both anomaly hashes (they
+    cover all of ``anomalies``)."""
+
+    shap: ShapReportConfig
+    associations: PriceAssociationsConfig
+    report: Path = Path("reports/m4_explainability.md")
+
+
 class WeatherVariableConfig(BaseModel):
     unit: str  # unit string Open-Meteo must report (checked on every response)
     kind: Literal["instant", "preceding_hour_mean"]
@@ -655,6 +692,7 @@ class AppConfig(BaseModel):
     intervals: IntervalsConfig
     anomalies: AnomaliesConfig
     anomalies_v2: AnomaliesV2Config
+    explain_report: ExplainReportConfig
 
     @model_validator(mode="after")
     def _weather_regions_known(self) -> AppConfig:
