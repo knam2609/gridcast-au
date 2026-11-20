@@ -2,6 +2,13 @@
 
 Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff.md`](m3_handoff.md) and [`m3_plan.md`](m3_plan.md).
 
+> **Update, 2026-11-20 (twenty-first session, later: step 5 done):**
+> - **5a `f128f19`:** `gridcast explain-dev` stored run 2's global SHAP sample (48 fits, 957,568 pairs, 10.9 min, under `<data root>/explain/dev/`). **E1 passes on every pair.**
+> - **5b `f4c3723` + `77cf85d`:** `gridcast report-m4-explain` (`explainability/summary.py`, `associations.py`, `report.py`; config `explain_report`). The code was committed before any output was read. `77cf85d` fixed presentation faults in the first draft and changed no number.
+> - **[`reports/m4_explainability.md`](../../reports/m4_explainability.md)** (`e618084`, reported only). Details and numbers are in [`m4_plan.md`](m4_plan.md), step 5 outcome.
+> - **Correction to the question round:** the plan's "3.6% of development intervals above $300" covers 2021-10-01 → 2025-09-30, not the market development period (where the rate is 4.23%). The question had said otherwise. The decision stands, and the plan records the correction.
+> - **Next: step 6**, the holdout, scored once per version (v1, then v2). Each run first reproduces its own development batch (run 104 / run 106). It also covers holdout SHAP (`explain` for the holdout split, still refused by `run_global`) and the holdout associations on the stored development edges (`<data root>/explain/association_edges_dev.json`). Run a question round first. Open points: the holdout command's shape (one command per version, or one for both); whether the holdout SHAP run needs a once-only lock like A6; and the README rewrite.
+
 > **Update, 2026-11-20 (twenty-first session: the step-5 question round):** the user chose every recommendation. The decisions are recorded in [`m4_plan.md`](m4_plan.md) §1, "Clarified in step 5", before any global SHAP value or association rate existed:
 > - **Global SHAP decomposes the whole forecast.** Run 2's fits mix target forms (6–24 h: 5 direct, 4 residual, 2 anchored, 1 latest). Each fit's anchor goes to its own features as x − x̄ (an exact linear Shapley term), so fits of any form can be pooled. The raw tree-only values are shown by form beside the headline.
 > - **Question 5:** the top 5% is taken within each group (overall, summer, winter).

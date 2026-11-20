@@ -518,6 +518,23 @@ These apply on the **development period** (§2.1) unless stated. *Calibrated det
 **Step 5. Explanations report.**
 - `gridcast explain-dev` (the global SHAP sample and the E1 gate).
 - `gridcast report-m4-explain` → `reports/m4_explainability.md`: global SHAP, stability, question 5 for demand, and price associations on development data.
+- *Outcome (2026-11-20, step 5):*
+  - **Question round** (`bc88804`), every recommendation chosen; see §1, "Clarified in step 5".
+    - **Correction to the question round:** the option "market development period" was described as the span of "the plan's '3.6% of intervals above $300'". That was wrong. The 3.6% (§2.4) and the 19.0% negative (§3.3) were computed over all pre-holdout data, NEM days 2021-10-01 → 2025-09-30 (3.64% and 19.02% by SQL on 2026-11-20). Over the market development period the rates are 4.23% and 19.59%, as the report shows.
+    - The decision's main reason, the same span as the market detectors and the price lines, still holds, so the decision stands. The user was told.
+  - **5a `f128f19`:** `explainability/global_run.py` and `gridcast explain-dev` (`make explain-dev`). It ran once from a clean tree at `f128f19` in 10.9 min: 48 fits, 957,568 pairs (one 5–30 min fit had fewer than 20,000 eligible), 329 MB under `<data root>/explain/dev/`.
+    - **E1 passes on every pair:** 0 forecast mismatches, largest SHAP-sum error 6.0 × 10⁻¹¹.
+  - **5b `f4c3723` + `77cf85d`:** `explainability/summary.py`, `associations.py` and `report.py`; `gridcast report-m4-explain` (`make report-m4-explain`); the `explain_report` config section (both anomaly hashes unchanged). The code was committed before any SHAP value or association rate was read. While it was written, `explain-dev`'s progress log was read once; it shows only each fit's E1 result, pair count and time.
+    - The first draft of the report showed presentation faults: UTC dates for the period, an unescaped table header, hyphens for minus signs, and a 2-interval temperature bin at 100%. `77cf85d` fixed them and added a *Days* column, with hollow markers for bins seen on fewer than 10 NEM days. No number changed, and the report discloses the additions.
+  - **[`reports/m4_explainability.md`](../../reports/m4_explainability.md)** (`e618084`), reported only:
+    - **Largest family (mean |SHAP|, whole forecast):** demand at the issue time at 5–30 min (757 MW) and 35 min–2 h (674 MW). Demand yesterday and last week at 2–6 h (345 MW, against 340 MW for demand at the issue time) and 6–24 h (525 MW).
+    - **Stability:** the median Spearman correlation of consecutive retrains is 0.96, 0.96, 0.78 and 0.94 by band. Where the target form stayed the same it is 0.94–0.98; where the form changed, 0.66–0.82.
+    - **Question 5, demand (6–24 h):** the top 5% of actual demand (above 6,818 MW) averages +2,164 MW of forecast over all targets. The largest family difference is demand yesterday and last week (+1,019 MW), then calendar (+423 MW) and weather (+408 MW). In summer, weather is +743 MW; in winter, +231 MW.
+    - **Price associations** (NEM days 2022-05-01 → 2025-09-30): P(price > $300) is 4.23% (3.37–5.08) and P(price < $0) is 19.59% (18.48–20.73).
+      - Above $300: 19.92% in the top demand decile; 16.44% with high demand and low wind.
+      - Negative: 79.78% in the lowest demand decile; 53.07% with low demand and high wind.
+  - 485 unit tests pass.
+  - **Next: step 6**, the holdout once per version (v1, then v2), with holdout SHAP and associations on the step-5 bin edges (`<data root>/explain/association_edges_dev.json`). Run a question round first.
 
 **Step 6. Holdout, once per recipe version (v1 and v2; §1).**
 - `gridcast evaluate-holdout-anomalies` (the A6 lock, per recipe hash): one continuous run per version that must first reproduce that version's development batch exactly (for v1, the reproduction that also carries its code freeze).
