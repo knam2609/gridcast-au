@@ -4,11 +4,12 @@
 
 GridCast-AU is a production-style data-science system for Australia's National Electricity Market (NEM). It ingests official AEMO market data and archived weather forecasts into PostgreSQL, checks data quality, and evaluates 24-hour-ahead forecasts of regional **demand** and **wholesale spot price** with a leakage-safe, walk-forward backtest.
 
-> **Status: milestones 1–3 of 7 are complete.**
+> **Status: milestones 1–4 of 7 are complete.**
 > - Milestone 1 delivered a reproducible Victorian data pipeline and correctly evaluated baseline forecasts for demand and price.
 > - Milestone 2 added weather-aware machine-learning forecasts of **demand**. They were judged against success criteria written before any result existed, compared with AEMO's own forecasts, and scored once on a holdout year that was set aside before the model was built.
 > - Milestone 3 added **prediction intervals** for demand: conformalised quantile regression on the milestone-2 model. They were judged against pre-registered criteria, compared with AEMO's probabilistic forecasts, and scored once on the same holdout year.
-> - Price models, anomaly detection, the API and the dashboard are planned and **not built yet**; the sections below say so explicitly.
+> - Milestone 4 added **market anomaly detection** with a stated false-alarm rate and fact-only evidence for every alert, **SHAP explanations** of the milestone-2 demand model, and a descriptive analysis of when high and negative prices occur. The detectors were frozen before their development run. A disclosed revision of two detectors followed, and both versions were scored once on the holdout year.
+> - Price models, the API and the dashboard are planned and **not built yet**; the sections below say so explicitly.
 >
 > Every number in this README comes from a generated report:
 > - [`reports/m1_baseline.md`](reports/m1_baseline.md): the M1 baselines.
@@ -18,6 +19,10 @@ GridCast-AU is a production-style data-science system for Australia's National E
 > - [`reports/m3_intervals.md`](reports/m3_intervals.md): prediction intervals, development period.
 > - [`reports/m3_aemo.md`](reports/m3_aemo.md): intervals against AEMO's probabilistic band (development part).
 > - [`reports/m3_holdout.md`](reports/m3_holdout.md): intervals on the holdout, scored once.
+> - [`reports/m4_anomalies.md`](reports/m4_anomalies.md): anomaly detection, development, the pre-registered recipe (v1).
+> - [`reports/m4_anomalies_v2.md`](reports/m4_anomalies_v2.md): the disclosed revision (v2), development, post hoc.
+> - [`reports/m4_holdout.md`](reports/m4_holdout.md): both anomaly recipes on the holdout, scored once each.
+> - [`reports/m4_explainability.md`](reports/m4_explainability.md) and [`reports/m4_explainability_holdout.md`](reports/m4_explainability_holdout.md): SHAP and price associations, development and holdout.
 
 ---
 
@@ -33,7 +38,7 @@ GridCast-AU answers five questions for Victoria (`VIC1`):
 4. When is the market behaving abnormally?
 5. Which factors are associated with unusually high demand or price?
 
-Milestone 1 answers the question that has to come first: **what does a forecast need to beat?** Milestone 2 answers question 1 for demand. It also tests whether the answer holds up on a year the model never saw, and how it compares with the operator's own forecast. Milestone 3 answers question 3 for demand: how wide the uncertainty is, and whether an interval's stated level can be trusted.
+Milestone 1 answers the question that has to come first: **what does a forecast need to beat?** Milestone 2 answers question 1 for demand. It also tests whether the answer holds up on a year the model never saw, and how it compares with the operator's own forecast. Milestone 3 answers question 3 for demand: how wide the uncertainty is, and whether an interval's stated level can be trusted. Milestone 4 answers questions 4 and 5. It flags abnormal market intervals at a stated false-alarm rate, with the observable facts around each one. It also describes which conditions are associated with high demand and extreme prices, without claiming causes.
 
 ## Why electricity forecasting matters
 
@@ -49,7 +54,7 @@ Milestone 1 answers the question that has to come first: **what does a forecast 
 
 | Source | Used for | Licence / terms |
 |---|---|---|
-| AEMO MMSDM monthly archive (NEMWeb): `DISPATCHREGIONSUM`, `DISPATCHPRICE` | 5-minute demand and price | AEMO Copyright Permissions: use with attribution |
+| AEMO MMSDM monthly archive (NEMWeb): `DISPATCHREGIONSUM`, `DISPATCHPRICE` | 5-minute demand and price; *(milestone 4)* wind, solar, dispatchable and battery output, and AEMO's price flags as reference events (never detector inputs) | AEMO Copyright Permissions: use with attribution |
 | `holidays` Python package (VIC) | Public-holiday calendar | MIT |
 | AEMC schedule of reliability settings | Price cap/floor, used only for data-quality bounds | Public |
 | Open-Meteo Previous Runs (GFS) and Historical Weather (ERA5) APIs *(milestone 2)* | Hourly archived weather forecasts and reanalysis for 5 Victorian sites | CC BY 4.0, non-commercial free tier |
@@ -87,6 +92,12 @@ flowchart LR
     L --> Q
     Q --> I[Prediction intervals<br/>conformal, QR, CQR]
     I -->|model_runs<br/>forecast_metrics| E
+    E --> AN[Anomaly detectors<br/>p-values, events, evidence]
+    Q --> AN
+    I --> AN
+    AN -->|anomalies<br/>model_runs| E
+    Q --> SH[TreeSHAP of the<br/>stored models]
+    SH --> AN
     E --> R[Generated reports<br/>reports/*.md]
 ```
 
@@ -94,11 +105,13 @@ flowchart LR
 |---|---|
 | Storage | PostgreSQL 17 (Docker Compose). Schema managed by **Alembic, with migration bodies in plain SQL** (`sql/schema/`) |
 | ETL | `src/gridcast/ingestion/`: NEMWeb client, streaming MMS parser, standardisation, Open-Meteo client, AEMO forecast and daily-report loaders, per-month lineage in `ingestion_runs` |
-| Validation | pandera schemas (structural) + 23 SQL data-quality checks (`sql/checks/`) stored in `dq_results` |
+| Validation | pandera schemas (structural) + 27 SQL data-quality checks (`sql/checks/`) stored in `dq_results` |
 | Features | `features/`: DST-aware local calendar, demand history known at the issue time, population-weighted weather taken from the latest forecast run published by the issue time (`weather/`). Listed in [`docs/feature_catalogue.md`](docs/feature_catalogue.md) |
 | Forecasting | `forecasting/origins.py` (leakage-safe geometry), `models/baselines.py`, `models/ml.py`, `forecasting/walkforward.py` (quarterly retrains, per-retrain selection) |
 | Evaluation | Metrics by lead time and segment, pre-registered success criteria, AEMO benchmark, the holdout lock (`evaluation/holdout.py`), provenance (git SHA, config hash, batch id) |
 | Intervals | `intervals/`: rolling conformal calibration with exact rolling order statistics, quantile LightGBM, CQR, the half-hour recalibration for the AEMO comparison, the recipe freeze and the holdout lock (`intervals/holdout.py`) |
+| Anomalies | `anomalies/`: six detectors with rolling conformal p-values (milestone 3's order statistics), the event merge, evidence and fact-only summaries, synthetic injection, the recipe freeze per version and the holdout lock (`anomalies/holdout.py`) |
+| Explanations | `explainability/`: TreeSHAP of the stored milestone-2 boosters behind the E1 reproduction gate, the whole-forecast decomposition, and the price associations |
 | Tooling | uv, Python 3.12, ruff, mypy, pytest + hypothesis, structlog, typer CLI, LightGBM, scikit-learn |
 
 The schema keys every table by `region_id`, so adding another NEM region is a configuration change (`configs/base.yaml`), not a migration.
@@ -120,6 +133,7 @@ The data covers October 2021 (the start of 5-minute settlement) to September 202
   - A lenient parser would have silently mislabelled those intervals.
 - **AEMO's table versions changed during the period** (`DISPATCHREGIONSUM` v5 → v8 → v9). Columns are matched by name, never by position, so no code change was needed.
 - **Intervention runs appear in 6 months.** The *pricing* run (`INTERVENTION = 0`) is kept for both demand and price, so the two targets stay consistent.
+- **Supply data (milestone 4).** Wind and solar output, AEMO's unconstrained intermittent generation forecast (UIGF), dispatchable and battery output were re-parsed from the cached `DISPATCHREGIONSUM` files. Wind's cleared output exceeds its UIGF in 655 intervals and solar's in 33 (a warn-level check); the values are kept as published (`docs/data_sources.md` §8).
 - **One more day for the holdout (milestone 2).** 1 October 2026 was loaded from NEMWeb's daily dispatch reports, because its monthly archive was not yet published. First, a whole month already in the archive was read from the daily reports and compared. September 2026 matched exactly: demand was identical at all 8,640 intervals. The details are in `docs/data_sources.md` §7.
 
 ## Forecasting methodology
@@ -237,9 +251,121 @@ Together these baselines form the **baseline envelope**: the lowest error at eac
 
 ## Anomaly detection
 
-*Planned for milestone 4. Not implemented.* The plan is robust z-scores, forecast-residual thresholds and Isolation Forest. Each anomaly will come with observable evidence, and the system will not claim to know causes.
+**Milestone 4: detectors with a stated false-alarm rate, and evidence instead of causes.** The detectors, their settings and the criteria were fixed in [`docs/plans/m4_plan.md`](docs/plans/m4_plan.md) before any detector code or score existed. Every score at a 5-minute interval uses only data known by that interval's end, so the same code can run live.
+
+| # | Detector | Score |
+|---|---|---|
+| D1 | Unusual demand | Robust z against the same local half-hour of the previous 28 days, business days and weekends apart |
+| D2 | Unexpected demand, 5–30 min ahead | How far demand falls outside milestone 3's raw 2.5–97.5% quantile band from the latest forecast, scaled by the band's width |
+| D3 | Unexpected demand, day ahead | The same, against the forecast issued 23.5–24 h earlier |
+| D4 | Unusual price | Robust z of asinh(price / $10) against its half-hour profile, both directions (v2: $100) |
+| D5 | Volatility change | Log ratio of the last hour's price volatility to its 7-day median, both directions |
+| D6 | Multivariate | An Isolation Forest on nine signed features (the detectors' own z-scores, supply and interchange), refitted each month (v2: a robust Mahalanobis distance) |
+
+Two fixed price lines, $300 and $5,000/MWh, flag high prices whatever the recent past. Their events are counted separately.
+
+**Calibrated alerts.**
+- Each score becomes a conformal p-value against the detector's own trailing 26 weeks (52,416 intervals). It is computed with milestone 3's exact rolling order statistics.
+- *Notable* means p ≤ 0.001, about 2 intervals a week per detector. *Severe* means p ≤ 0.0001.
+- Alerts less than 30 minutes apart merge into one event.
+
+**Evidence, not causes.**
+- Each event carries 47 labelled facts. They cover values against their profiles, the model's forecasts and bands, AEMO's own forecasts, supply, weather and operator flags. For a demand event they also include the SHAP breakdown of the demand forecast at its peak.
+- Each fact is marked *known at the time* or *retrospective*.
+- A three-sentence summary is written from fixed templates. A test bans causal wording such as "because", "due to" and "driven by".
+
+**Pre-registered criteria:**
+- **A1, alert budget:** for every detector, the share of intervals at p ≤ 0.01 must lie in [0.5%, 2%], and at p ≤ 0.001 in [0.05%, 0.2%].
+- **A2, reference events:** every AEMO-flagged *class-P* event is caught (price at a cap, floor or administered limit; the flags are never inputs).
+- **A3, detection power:** ≥ 90% of synthetic injections detected at each detector's largest size, e.g. ±2,000 MW of demand for an hour, or $15,000/MWh for 30 minutes.
+- **A4, evidence:** complete, with no banned phrase.
+- **A5, causality tests:** truncating or randomising the future changes nothing, and a deliberately leaky control fails.
+- **E1, SHAP:** every explanation reproduces the stored forecast.
+- **A6, holdout:** scored once.
+
+**How the evaluation was protected:**
+- **Frozen before development, too.** No setting was tuned: every one was fixed in the plan. The recipe (hash `2ce8b3fc523ae81c`) was frozen before its development run, so even the development verdicts are blind.
+- **A disclosed revision.** The pre-registered recipe, v1, failed three development criteria.
+  - A read-only diagnosis ([`docs/m4_v1_diagnosis.md`](docs/m4_v1_diagnosis.md)) found design defects in two detectors. D4's asinh(price / $10) makes a move from −$50 to +$50 as large as a 95-fold spike. D6's Isolation Forest saturates, so a one-feature extreme can't stand out.
+  - v2 changes only D4 and D6, and was frozen separately (`44abbf4b24cf6ac8`). Its development verdicts are labelled post hoc.
+  - Milestones 5 and 6 serve v2. That was decided before any holdout score, so the holdout chooses nothing.
+- **One holdout run per version.** Each first reproduced its own development run exactly. It then checked that its continuous run's development part equals the stored development batch, and only then scored the holdout.
+
+**Explanations.**
+- SHAP values come from LightGBM's built-in TreeSHAP on the stored milestone-2 models, never refitted.
+- Each fit's anchor (e.g. the latest demand) is credited to the features it is built from, so every forecast decomposes exactly into a constant plus feature contributions.
+- E1 requires each recomputed forecast to equal the stored one bit for bit.
+
+**Price associations** are the rates of prices above $300/MWh and below $0 by same-interval conditions, with day-block bootstrap intervals. They are associations only.
 
 ## Results
+
+### Market anomalies (milestone 4)
+
+From [`reports/m4_anomalies.md`](reports/m4_anomalies.md) and [`reports/m4_anomalies_v2.md`](reports/m4_anomalies_v2.md) (development: NEM days 1 May 2022 → 30 Sep 2025; from 1 Jun 2023 for D2 and D3), and [`reports/m4_holdout.md`](reports/m4_holdout.md) (holdout: 1 Oct 2025 → 30 Sep 2026, 105,120 intervals).
+
+| # | Pre-registered criterion | v1, development (pre-registered) | v1, holdout | v2, development (post hoc) | v2, holdout (blind) |
+|---|---|---|---|---|---|
+| A1 | Alert budget (12 checks) | **FAIL**: 11 of 12; D6 0.259% at p ≤ 0.001 | **does not hold**: 10 of 12; D6 2.33% / 0.381% | **PASS**: 12 of 12 | **holds**: 12 of 12 |
+| A2 | Every class-P AEMO event caught | **FAIL**: 6 of 7; missed 5 Aug 2024 ($17,500/MWh for 10 minutes) | none in the holdout | **PASS**: 7 of 7 | none in the holdout |
+| A3 | ≥ 90% power at the largest injection (11 checks) | **FAIL**: 3 of 11 | **does not hold**: 3 of 11 | **FAIL**: 5 of 11 | **does not hold**: 5 of 11 |
+| A4 | Complete evidence, no causal phrase | **PASS**: 1,102 events | **holds**: 195 events | **PASS**: 994 events | **holds**: 133 events |
+| A5 | Causality tests | **PASS** | **holds** | **PASS** | **holds** |
+| E1 | SHAP reproduces the stored forecasts | **PASS**: 422 demand peaks; 957,568 sampled pairs | **holds**: 182; 386,496 | **PASS**: 424; 957,568 | **holds**: 182; 386,496 |
+| A6 | Holdout scored once | n/a | **PASS** | n/a | **PASS** |
+
+On the holdout, A1, A3, A4, A5 and E1 were recomputed as written and reported as replication. A6 is the only holdout criterion. v1's development verdicts stand as published.
+
+- **v2's alert budget holds in a year it never saw.**
+  - At p ≤ 0.01, every v2 detector flagged between 0.80% and 1.27% of holdout intervals. At p ≤ 0.001, the shares ranged from 0.060% to 0.185%.
+  - v1's Isolation Forest overshot by more on the holdout than in development: 0.381% at p ≤ 0.001, against the bound of 0.2%.
+- **The revision improved both revised detectors on unseen data, though D4 is still short of the bar.** On the holdout:
+  - D6 caught ±2,000 MW demand shapes in 100% of injections (v1's Isolation Forest: 3.3% and 1.4%);
+  - D4 caught a 30-minute $15,000 price in 88.5% (v1: 22.4%) and a −$1,000 price in 68.5% (v1: 35.8%). That is still below the 90% bar.
+- **What v2 can and cannot see (holdout injections):**
+  - A short-term demand surprise: D2 caught ±500 MW in 99.8–100% of injections and ±250 MW in about two-thirds (65.5% and 67.3%).
+  - A price oscillation: D5 caught ±$1,000 in 100%.
+  - A multivariate shift: D6 caught ±1,000 MW in 90.7% and 89.9%.
+  - A sustained shift in demand level: D1 caught ±2,000 MW for an hour in only 32.6–32.9%. Demand at the same half-hour varies that much from day to day (see *Failure cases*).
+  - A day-ahead miss: D3 caught ±2,000 MW in 77.0–77.1%.
+- **The calm holdout year had fewer events.** v2 raised 118 calibrated events (22 severe) in the holdout year, against 388 (76 severe) over the 41 development months. Price-line-only events numbered 606 in development and 15 in the holdout: prices above $300/MWh occurred in 4.23% of development intervals and 0.20% of holdout intervals.
+- **Examples from the case studies:**
+  - v2's top holdout event was the evening of 8 July 2026, flagged by D4, D6 and both price lines.
+  - On 6 November 2025, demand fell from 4,546 to 2,788 MW within 5 minutes. D2 and D6 flagged it at their lowest possible p.
+
+### Explanations: what the demand model leans on, and when prices are extreme (milestone 4)
+
+From [`reports/m4_explainability.md`](reports/m4_explainability.md) (development) and [`reports/m4_explainability_holdout.md`](reports/m4_explainability_holdout.md) (holdout). Reported only; E1 is the one criterion, and it passes on every sampled pair.
+
+| Mean \|SHAP\| of LightGBM C (MW), development → holdout | 5–30 min | 35 min–2 h | 2–6 h | 6–24 h |
+|---|---:|---:|---:|---:|
+| Demand at the issue time | 757 → 795 | 674 → 705 | 340 → 283 | 110 → 45 |
+| Demand yesterday and last week | 5 → 5 | 75 → 126 | 345 → 447 | 525 → 595 |
+| Calendar at the target | 48 → 51 | 238 → 230 | 324 → 297 | 243 → 214 |
+| Weather at the target | 8 → 7 | 46 → 46 | 158 → 151 | 206 → 197 |
+
+- **Recent demand carries the short-range forecast. Yesterday's and last week's demand carry the day-ahead one.** Weather moves the 6–24 h forecast by about 200 MW on average.
+- **The rankings are stable across retrains.**
+  - The median Spearman correlation between consecutive retrains' feature rankings is 0.96, 0.96, 0.78 and 0.94 by band in development, and 0.98, 0.93, 0.90 and 0.88 in the holdout.
+  - It is lower where the model's target form changed between retrains: 0.66–0.82 in development.
+- **High-demand targets (question 5, 6–24 h):**
+  - For the top 5% of actual demand (above 6,818 MW in development, 7,106 MW in the holdout), the forecast sits 2,164 MW above the average target in development and 2,344 MW in the holdout.
+  - The family that contributes most to that gap is demand yesterday and last week: +1,019 MW in development, +1,127 MW in the holdout.
+  - In summer, weather is next: +743 MW in development, +901 MW in the holdout. In winter it adds only +231 and +251 MW.
+  - These numbers describe the model's arithmetic, not the grid's physics.
+
+| Share of 5-minute intervals (95% day-block interval) | Development | Holdout |
+|---|---:|---:|
+| Price above $300/MWh, all intervals | 4.23% (3.37–5.08) | 0.20% (0.07–0.38) |
+| … in the top demand decile (above 6,321 MW) | 19.92% | 1.36% |
+| … with high demand and low wind (terciles) | 16.44% | 1.07% |
+| Price below $0/MWh, all intervals | 19.59% (18.48–20.73) | 25.87% (23.45–28.53) |
+| … in the lowest demand decile (3,598 MW or less) | 79.78% | 86.36% |
+| … with low demand and high wind (terciles) | 53.07% | 63.98% |
+
+- **High prices were more frequent with high demand and low wind; negative prices with low demand and high wind.** That held in both periods. The bins are development's deciles and terciles.
+- **The holdout was calm.** Prices above $300 were far rarer at every level of demand, and negative prices more common.
+- **These are associations in the same 5 minutes, not causes.**
 
 ### Demand uncertainty: 80% prediction intervals (milestone 3)
 
@@ -390,6 +516,23 @@ These M1 numbers cover a longer period than M2's development period, which start
 
 ## Failure cases
 
+### Anomaly detection (milestone 4)
+
+- **D1 cannot reliably see a large shift in demand level.**
+  - A ±2,000 MW shift for an hour was caught in about a third of injections, in both periods: 33.2–33.4% in development and 32.6–32.9% in the holdout.
+  - The diagnosis shows why. Its robust scale follows the real day-to-day spread of demand at each half-hour. Where that spread is tightest, D1 caught 78.4–83.6% of these injections; where it is widest, 0.8%.
+  - That is a property of the data, not a coding fault, so D1 was not revised. Sudden changes against the forecast are D2's job.
+- **D3 falls short of the bar:** 77.0–77.1% at ±2,000 MW in the holdout, and 79.6–80.4% in development.
+- **v1's D4 and D6 failed for design reasons, and failed again on the holdout.**
+  - D4 caught 22.4% of $15,000 injections and 35.8% of −$1,000 ones.
+  - D6 caught 3.3% and 1.4% of ±2,000 MW injections, and alerted at p ≤ 0.001 on 0.381% of intervals.
+  - v2 fixes most of this, but **v2's D4 is still below 90%**: 88.5% at $15,000 and 68.5% at −$1,000 in the holdout.
+- **D4's power varied through the holdout year.** v2 caught a $15,000 price in 56% of injections starting in Oct–Dec 2025, and in 99% from January 2026.
+  - That is consistent with the risk the plan named: an extreme period raises the next 26 weeks' thresholds.
+  - It is not verified.
+- **Operator flags are not always visible in the data.** The holdout's one flagged day (23 March 2026, a loss-factor flag with prices of $45–95/MWh) raised no calibrated alert; it is reported, not judged. In development, v1 missed the 5 August 2024 spike to $17,500/MWh (A2); v2 catches it, but v2 was designed after that miss was known.
+- **The budget holds over the year, not month by month.** Monthly alert rates swing well outside A1's band in both directions; the holdout report plots them.
+
 ### Prediction intervals (milestone 3)
 
 - **Hot days.**
@@ -462,7 +605,13 @@ These M1 numbers cover a longer period than M2's development period, which start
   - On days forecast to reach 35 °C they covered 73.1% (holdout) and 71.5% (development). Those days need a wider band or a flag.
 - **AEMO's POE90–POE10 band is not an 80% interval.** Used as one, it would surprise its user more often than stated: in the holdout, actual demand was outside it on 15.1% + 15.7% of half-hours. It is narrower around a better centre, so a combined product (AEMO's centre with calibrated widths) is the obvious next experiment. It is not tested here.
 - **CQR buys little over conformal intervals around the point forecast.** The simpler method has nearly the same weighted interval score and needs no quantile models (6.7 hours of fitting for the holdout alone).
-- **Price: good forecasting is mostly a question of *when* the market is risky, not a better average.** Price intervals, spike probability and anomaly flags (after a price model, and milestone 4) are likely to be worth more to a trader or battery operator than a slightly lower MAE.
+- **Price: good forecasting is mostly a question of *when* the market is risky, not a better average.** Price intervals and spike probability (after a price model) and the milestone-4 anomaly flags are likely to be worth more to a trader or battery operator than a slightly lower MAE.
+- **Anomaly alerts: plan around the stated rate, and know what each detector misses.**
+  - v2 is the version to serve. Each of its detectors alerted at p ≤ 0.001 on 0.06–0.19% of holdout intervals, inside the pre-registered band. A monitor can therefore budget its alert volume in advance.
+  - It reliably catches a short-term demand surprise against the forecast (D2), a large multivariate shift (D6) and a volatility burst (D5).
+  - It often misses a sustained demand-level shift (D1) and a day-ahead miss (D3).
+  - Any price at or above $300/MWh is flagged by the fixed lines by definition. D4 adds whether a price is unusual for its time of day.
+- **Every alert comes with facts, not a story.** The evidence lists what was observed and what was known at the time. For a demand event it also shows what the model expected, and the SHAP breakdown of how it arrived there. It deliberately does not say why the market moved. That judgement stays with an analyst.
 - **Holdout comparisons need context.**
   - Price errors are lower in the holdout year for every baseline: the median profile's MAE is $40.4/MWh versus $62.9/MWh in development. The market was calmer; no model improved.
   - For demand it went the other way: every baseline did worse in the holdout. Model comparisons must always be made against baselines evaluated on the same period.
@@ -484,6 +633,13 @@ These M1 numbers cover a longer period than M2's development period, which start
 - **Development numbers are slightly optimistic.** Two development runs looked at the same period. The holdout numbers are not optimistic in this way.
 - **Intervals for demand only**, at fixed 50%, 80% and 95% levels. Price intervals need a price model. Intervals are stored with each run but not yet served: the `forecasts` table and the API come in milestone 5.
 - **The interval design was not blind.** Its candidate grid, including the adaptive steps, was designed after milestone 2's development and holdout point errors had been seen. Settings are re-selected from past data only, and the holdout was scored once, but the holdout is new for intervals only.
+- **The anomaly detectors were not designed blind.**
+  - They were designed after milestones 2 and 3, and the planning saw some holdout facts: the price calm, 8 July 2026, and the demand jumps of 6 and 10 November 2025.
+  - v2 was designed after v1's development results, so its development verdicts are post hoc. The holdout is its only blind test.
+- **Few real anomalies to judge against.**
+  - A2 rests on 7 AEMO-flagged development events, and the holdout has no such event.
+  - Detection power is measured on synthetic injections of fixed shapes, which real disturbances need not resemble.
+- **SHAP describes the model, and the price tables describe co-occurrence.** Neither identifies a cause. Correlated inputs share SHAP credit, which is why the summaries use feature families.
 - **Market cap values** for some financial years come from secondary sources. They are used only as data-quality bounds.
 
 ## Reproduction
@@ -524,6 +680,17 @@ make report-m3-aemo        # M3: regenerates reports/m3_aemo.md (development par
 make backtest-qr-holdout   # M3: quantile LightGBM C over the holdout, stored unscored (took 6.7 h)
 make evaluate-holdout-intervals  # M3: the single holdout interval run (15 min); refuses to run twice
 make report-m3-holdout     # M3: regenerates reports/m3_holdout.md and figures
+make ingest-generation     # M4: wind, solar, dispatchable and battery output from the cached DISPATCHREGIONSUM files
+make anomaly-reference-events  # M4: docs/m4_reference_events.md from AEMO's price flags
+make anomalies-freeze-check VERSION=2  # M4: a recipe version against its freeze record
+make anomalies-dev VERSION=2           # M4: the development run (~3 min); refuses a second run
+make report-m4 VERSION=2               # M4: reports/m4_anomalies(_v2).md (runs the causality tests)
+make explain-dev           # M4: global SHAP sample of the development models, E1 on every pair (~11 min)
+make report-m4-explain     # M4: reports/m4_explainability.md
+make explain-holdout       # M4: the same for the holdout models (~5 min)
+make evaluate-holdout-anomalies VERSION=2  # M4: the holdout run of one version (~7 min); refuses to run twice
+make report-m4-holdout     # M4: reports/m4_holdout.md (both versions)
+make report-m4-explain-holdout  # M4: reports/m4_explainability_holdout.md
 ```
 
 `make evaluate-holdout` checks before it starts, and refuses to run unless all of these hold:
@@ -541,6 +708,8 @@ On a fresh database it would score the holdout once; on this one it refuses, bec
 - step 6a's unscored QR batch must exist;
 - no holdout interval result may exist yet.
 
+`make evaluate-holdout-anomalies` refuses unless the version's recipe matches its freeze, the working tree is clean, the version's development run is stored, and no holdout run exists for its hash. Before scoring, it recomputes the stored development run and requires every value to match exactly.
+
 Quality gates:
 
 ```bash
@@ -550,7 +719,8 @@ make test-integration      # against a dedicated *_test database
 
 The backtests are deterministic: re-running them reproduces every metric exactly. Both holdout runs checked this. Before scoring anything:
 - milestone 2's run reproduced the development run's stored forecasts and model fits for Aug–Sep 2025 exactly;
-- milestone 3's run reproduced every stored development interval exactly.
+- milestone 3's run reproduced every stored development interval exactly;
+- milestone 4's runs reproduced their development anomaly runs exactly: every per-interval value, injection, event, evidence field and summary.
 
 Each run records its git commit, configuration and batch id in `model_runs`.
 
@@ -560,8 +730,8 @@ Each run records its git commit, configuration and batch id in `model_runs`.
 configs/            base.yaml (regions, windows, forecast and ML setup, frozen config hash), market_limits.yaml
 sql/schema/         migration bodies (plain SQL)     sql/migrations/  Alembic env + revisions
 sql/checks/         data-quality queries
-src/gridcast/       ingestion/ validation/ database/ features/ weather/ forecasting/ models/ evaluation/ intervals/
+src/gridcast/       ingestion/ validation/ database/ features/ weather/ forecasting/ models/ evaluation/ intervals/ anomalies/ explainability/
 tests/              unit/ (no DB) and integration/ (PostgreSQL)
-docs/               data_sources.md, feature_catalogue.md, m2_data_spike.md, m3_data_spike.md, m3_prescoring_spike.md, plans/ (milestone plans)
+docs/               data_sources.md, feature_catalogue.md, m2_data_spike.md, m3_data_spike.md, m3_prescoring_spike.md, m4_reference_events.md, m4_v1_diagnosis.md, plans/ (milestone plans)
 reports/            generated milestone reports + figures
 ```
