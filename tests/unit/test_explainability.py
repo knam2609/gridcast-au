@@ -400,3 +400,28 @@ def test_anchor_terms_are_m2_baselines() -> None:
     for form in TARGET_FORMS:
         model = LightGBMModel(columns, form, "l1", 7, _cfg().ml.lightgbm, 0)
         np.testing.assert_array_equal(anchor_from_features(frame, form), model.baseline(X))
+
+
+def test_a_replaced_global_sample_keeps_its_run_history(tmp_path: Path) -> None:
+    """explain-dev/-holdout reruns are allowed with replace; the manifest lists the runs
+    they superseded, oldest first (m4_plan.md §1, "Clarified in step 6")."""
+    import json
+
+    from gridcast.explainability.global_run import MANIFEST, run_history
+
+    assert run_history(tmp_path) == []
+    first = {"commit": "aaa", "created_at": "t1", "gate": {"n": 1}, "seconds": 2.0, "fits": []}
+    (tmp_path / MANIFEST).write_text(json.dumps(first))
+    assert run_history(tmp_path) == [
+        {"commit": "aaa", "created_at": "t1", "gate": {"n": 1}, "seconds": 2.0}
+    ]
+    second = {**first, "commit": "bbb", "created_at": "t2", "previous_runs": run_history(tmp_path)}
+    (tmp_path / MANIFEST).write_text(json.dumps(second))
+    assert [r["commit"] for r in run_history(tmp_path)] == ["aaa", "bbb"]
+
+
+def test_the_global_run_knows_only_the_two_splits() -> None:
+    from gridcast.explainability.global_run import run_global
+
+    with pytest.raises(ValueError, match="unknown split"):
+        run_global(None, load_config(), "VIC1", "smoke")  # type: ignore[arg-type]

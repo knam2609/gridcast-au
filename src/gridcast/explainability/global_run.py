@@ -2,10 +2,11 @@
 step 5").
 
 ``gridcast explain-dev`` draws §2.6's seeded sample (``anomalies.explain.sample_pairs`` per
-fit) for every fit of run 2. It rebuilds the feature rows with M2's builder, runs TreeSHAP
-on the stored booster, and checks E1's gate on every pair. It uses the frozen functions of
-:mod:`~gridcast.explainability.sample` and :mod:`~gridcast.explainability.treeshap`, the
-same path as the evidence's demand peaks.
+fit) for every fit of run 2. ``gridcast explain-holdout`` (step 6) does the same for
+``holdout_main``'s fits on holdout issue times only. Each rebuilds the feature rows with M2's
+builder, runs TreeSHAP on the stored booster, and checks E1's gate on every pair. It uses
+the frozen functions of :mod:`~gridcast.explainability.sample` and
+:mod:`~gridcast.explainability.treeshap`, the same path as the evidence's demand peaks.
 
 * **Stored** under ``<data root>/<explain.output_dir>/<split>/``: one parquet file per fit
   (the pairs, their feature rows, actuals, stored and recomputed forecasts, anchors, base
@@ -14,6 +15,8 @@ same path as the evidence's demand peaks.
 * **Withheld:** if E1 fails for any pair, nothing is stored (:class:`GateError`).
 * **Preconditions:** a clean tree on which both anomaly freezes hold (``explainability/``
   is under both). Reported only and deterministic, so a rerun is allowed with ``replace``.
+  The manifest lists the runs a rerun superseded (``previous_runs``), so the report can say
+  how many runs there were.
 
 The **whole-forecast** decomposition (user decision 2026-11-20) is :func:`whole_forecast`.
 """
@@ -53,6 +56,7 @@ log = get_logger(__name__)
 
 MANIFEST = "manifest.json"
 FITS_DIR = "fits"
+SPLITS = ("dev", "holdout")
 
 # Each target form's anchor (M2's ``MlModel.baseline``) as model features with weight 1.
 ANCHOR_TERMS: dict[str, tuple[str, ...]] = {
@@ -178,6 +182,18 @@ def output_dir(cfg: AppConfig, split: str) -> Path:
     return cfg.data_path(Path(cfg.anomalies.explain.output_dir)) / split
 
 
+def run_history(directory: Path) -> list[dict[str, Any]]:
+    """The runs a ``replace`` supersedes, oldest first (their commit, time and gate), so the
+    report can state how many runs there were (§1, "Clarified in step 6")."""
+    path = directory / MANIFEST
+    if not path.exists():
+        return []
+    old = json.loads(path.read_text())
+    previous = list(old.get("previous_runs", []))
+    keys = ("commit", "created_at", "gate", "seconds")
+    return [*previous, {k: old.get(k) for k in keys}]
+
+
 def check_preconditions(cfg: AppConfig, split: str, replace: bool) -> str:
     """The commit to record; refuses a dirty tree, a broken freeze or existing outputs."""
     states = [freeze_state(cfg, version=v) for v in (1, 2)]
@@ -230,8 +246,8 @@ def fit_manifest(s: FitSample, columns: list[str]) -> dict[str, Any]:
 def run_global(
     engine: Engine, cfg: AppConfig, region_id: str, split: str = "dev", replace: bool = False
 ) -> GlobalRun:
-    if split != "dev":
-        raise ValueError("only the development sample is computed here; the holdout is step 6's")
+    if split not in SPLITS:
+        raise ValueError(f"unknown split {split!r}")
     ex = cfg.anomalies.explain
     sha = check_preconditions(cfg, split, replace)
     t0 = time.perf_counter()
@@ -240,7 +256,7 @@ def run_global(
         raise ValueError(f"split {split} has no end")
     period = Period(split, start, end)
     fits = stored_fits(engine, cfg, split)
-    batch_id = ex.dev_batch
+    batch_id = ex.dev_batch if split == "dev" else ex.holdout_batch
     batch = read_stored_batch(cfg.data_path(cfg.paths.backtest_dir), batch_id, "demand")
     mask = batch.common_mask()
     stored_all = batch.forecasts[ex.model]
@@ -253,6 +269,7 @@ def run_global(
     log.info("explain-%s: %d fits, inputs loaded in %.0f s", split, len(fits), load_seconds)
 
     final = output_dir(cfg, split)
+    history = run_history(final)
     partial = final.with_name(final.name + ".partial")
     if partial.exists():
         shutil.rmtree(partial)
@@ -323,6 +340,7 @@ def run_global(
         "load_seconds": load_seconds,
         "seconds": seconds,
         "fits": [fit_manifest(s, columns) for s in samples],
+        "previous_runs": history,
     }
     (partial / MANIFEST).write_text(json.dumps(manifest, indent=1) + "\n")
     if final.exists():
