@@ -18,6 +18,14 @@ import pytest
 
 from gridcast.config import AppConfig, LightGBMConfig, load_config
 from gridcast.explainability.families import families
+from gridcast.explainability.global_run import (
+    ANCHOR_TERMS,
+    anchor_from_features,
+    explain_fit,
+    shap_col,
+    whole_forecast,
+    x_col,
+)
 from gridcast.explainability.pairs import ModelCache, explain_pairs
 from gridcast.explainability.sample import (
     Period,
@@ -33,12 +41,13 @@ from gridcast.explainability.stored import (
     parse_band,
 )
 from gridcast.explainability.treeshap import GateError, explain, gate, require
+from gridcast.features import catalogue
 from gridcast.features.builder import FeatureBuilder
 from gridcast.forecasting import walkforward as wf
 from gridcast.forecasting.origins import ForecastSetup, nem_midnight_utc
 from gridcast.forecasting.origins import origin_positions as op
 from gridcast.models.baselines import DAY_STEPS
-from gridcast.models.ml import TARGET_FORMS
+from gridcast.models.ml import TARGET_FORMS, LightGBMModel
 from tests.feature_fixtures import hourly_weather, weather_inputs
 from tests.forecast_fixtures import make_ctx
 
@@ -307,3 +316,87 @@ def test_folds_are_clipped_to_the_batch_period(tmp_path: Path) -> None:
     assert fits[-1].fold_end == period[1]
     sep = pd.DatetimeIndex([nem_midnight_utc("2025-09-15")])
     assert locate(fits, sep, np.array([1]))[0] == -1
+
+
+# --------------------------------------------------------------------------- global sample (step 5)
+
+
+def _fit_pairs(run: _Run, form: str, n: int = 300) -> tuple[StoredFit, np.ndarray, np.ndarray]:
+    """``n`` stored pairs of the first fit of ``form`` (rows of the run, leads)."""
+    fit = _fits(run, form)[0]
+    stored = run.result.predictions[f"lgbm_C_{form}"]
+    rows, cols = np.nonzero(np.isfinite(stored))
+    leads = cols + 1
+    inside = fit.covers(run.times[rows], leads)
+    rows, leads = rows[inside], leads[inside]
+    take = np.sort(np.random.default_rng(4).choice(len(rows), size=n, replace=False))
+    return fit, rows[take], leads[take]
+
+
+@pytest.mark.parametrize("form", TARGET_FORMS)
+def test_explain_fit_stores_pairs_that_decompose_the_whole_forecast(run: _Run, form: str) -> None:
+    cfg = _cfg()
+    fit, rows, leads = _fit_pairs(run, form)
+    stored = run.result.predictions[f"lgbm_C_{form}"][rows, leads - 1]
+    actual = np.linspace(4000, 6000, len(rows))
+    model = ModelCache(cfg).get(fit)
+    s = explain_fit(fit, model, _builder(), "C", run.times[rows], leads, stored, actual, 1e-6, 999)
+    assert s.gate.passed and s.gate.n == len(rows) and s.eligible == 999
+    f = s.frame
+    columns = list(model.columns)
+    assert len(f) == len(rows) and np.array_equal(f["lead"], leads)
+    assert (f["target_end"] - f["issue_time"] == pd.to_timedelta(leads * 5, unit="min")).all()
+    np.testing.assert_array_equal(f["stored"], stored.astype(np.float64))
+    np.testing.assert_array_equal(f["actual"], actual)
+    np.testing.assert_array_equal(f["forecast"].astype(np.float32), stored)
+    np.testing.assert_array_equal(anchor_from_features(f, form), f["anchor"])
+    assert all(f[x_col(c)].dtype == np.float32 for c in columns)
+    assert s.gain.shape == (len(columns),) and s.gain.sum() > 0
+    raw = f[[shap_col(c) for c in columns]].to_numpy()
+    np.testing.assert_allclose(f["base"] + raw.sum(axis=1), f["raw"], rtol=0, atol=1e-6)
+
+    whole = whole_forecast(f, form, columns)
+    np.testing.assert_allclose(
+        whole.constant + whole.contributions.sum(axis=1), f["forecast"], rtol=0, atol=1e-6
+    )
+    terms = ANCHOR_TERMS[form]
+    others = [j for j, c in enumerate(columns) if c not in terms]
+    np.testing.assert_array_equal(whole.contributions[:, others], raw[:, others])
+    for term in terms:  # the anchor's share has mean zero over the fit's sample
+        j = columns.index(term)
+        np.testing.assert_allclose((whole.contributions[:, j] - raw[:, j]).mean(), 0, atol=1e-6)
+    if form == "direct":
+        np.testing.assert_array_equal(whole.constant, f["base"])
+    else:
+        np.testing.assert_allclose(whole.constant, f["base"] + f["anchor"].mean())
+
+
+def test_explain_fit_refuses_a_pair_outside_its_fold_or_band(run: _Run) -> None:
+    cfg = _cfg()
+    fit, rows, leads = _fit_pairs(run, "latest", n=20)
+    model = ModelCache(cfg).get(fit)
+    stored = run.result.predictions["lgbm_C_latest"][rows, leads - 1]
+    out_of_band = leads.copy()
+    out_of_band[0] = fit.band[1] + 1 if fit.band[1] < SETUP.horizon_steps else fit.band[0] - 1
+    with pytest.raises(ValueError, match="outside its fold or band"):
+        explain_fit(
+            fit,
+            model,
+            _builder(),
+            "C",
+            run.times[rows],
+            out_of_band,
+            stored,
+            np.zeros(20),
+            1e-6,
+            20,
+        )
+
+
+def test_anchor_terms_are_m2_baselines() -> None:
+    columns = catalogue.feature_names("C")
+    X = np.random.default_rng(3).normal(1000, 300, size=(50, len(columns))).astype(np.float32)
+    frame = pd.DataFrame({x_col(c): X[:, j] for j, c in enumerate(columns)})
+    for form in TARGET_FORMS:
+        model = LightGBMModel(columns, form, "l1", 7, _cfg().ml.lightgbm, 0)
+        np.testing.assert_array_equal(anchor_from_features(frame, form), model.baseline(X))

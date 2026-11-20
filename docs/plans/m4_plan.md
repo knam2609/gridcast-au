@@ -121,7 +121,7 @@
     - If E1 fails for any pair, it stores nothing (explanations withheld). It refuses a dirty tree, or a tree where either anomaly freeze does not hold (`explainability/` is under both).
     - It is deterministic and reported only, so a rerun is allowed with `--replace`. It is not a once-only score.
   - **Pooling:** the summaries pool a band's fits with one weight per pair. A family's contribution is the sum of its features' contributions; its mean |SHAP| is the mean of the absolute family sum.
-  - **Stability:** per band, the Spearman correlation of consecutive retrains' rankings of the 25 features by mean |SHAP| (whole forecast), 11 per band. Each pair's two target forms are shown beside it.
+  - **Stability:** per band, the Spearman correlation of consecutive retrains' rankings of the 26 features by mean |SHAP| (whole forecast), 11 per band. Each pair's two target forms are shown beside it.
   - **Weather dependence:** per band, the weather family's contribution against `wx_temp` (the population-weighted GFS forecast temperature at the target), in 1 °C bins: mean and 10–90% range. Bins with fewer than 100 pairs are not drawn.
   - **Gain importance:** M2's split gain per feature, as a share of each fit's total, averaged over the band's fits. It is labelled tree-only, i.e. relative to the anchor.
   - **Question 5:** the 6–24 h band (leads 73–288), the pooled global sample of its 12 fits. A target is in the top 5% if its value is above its group's 95th percentile. Seasons go by the target's local month. The table shows mean contributions by family in the top 5% and in all targets, their difference, and the pair counts. No interval is attached: it describes the model's arithmetic on a sample.

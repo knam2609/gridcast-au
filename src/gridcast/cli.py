@@ -1227,6 +1227,31 @@ def anomalies_dev(
         typer.echo(line)
 
 
+@app.command("explain-dev")
+def explain_dev(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    replace: Annotated[
+        bool, typer.Option(help="Replace a stored sample (the run is deterministic)")
+    ] = False,
+) -> None:
+    """M4 step 5: the global SHAP sample of run 2's LightGBM C fits, with E1 on every pair
+    (stored under <data root>/explain/dev/; nothing is stored if E1 fails)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.explainability.global_run import GlobalRefused, run_global, summary_lines
+    from gridcast.explainability.treeshap import GateError
+
+    try:
+        run = run_global(get_engine(), load_config(), region, "dev", replace)
+    except GlobalRefused as exc:
+        typer.echo(f"refused: {exc}")
+        raise typer.Exit(1) from exc
+    except GateError as exc:
+        typer.echo(f"E1 failed, nothing stored: {exc}")
+        raise typer.Exit(1) from exc
+    for line in summary_lines(run):
+        typer.echo(line)
+
+
 @app.command("report-m4")
 def report_m4(
     region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
