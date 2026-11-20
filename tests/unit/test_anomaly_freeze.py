@@ -51,11 +51,20 @@ UNFROZEN_ANOMALIES = {
     "diagnosis",
     "freeze",
     "holdout",
+    "holdout_report",
     "report",
     "reproduce",
     "smoke",
 }
-UNFROZEN_EXPLAIN = {"__init__", "associations", "global_run", "report", "smoke", "summary"}
+UNFROZEN_EXPLAIN = {
+    "__init__",
+    "associations",
+    "global_run",
+    "holdout_report",
+    "report",
+    "smoke",
+    "summary",
+}
 
 
 def _modules(package: str) -> set[str]:

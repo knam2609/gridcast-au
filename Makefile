@@ -8,7 +8,7 @@ VERSION ?= 1
 DAYS ?= 2026-10-01
 CHECK_MONTH ?= 2026-09
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe ingest-generation weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout anomaly-reference-events anomalies-smoke explain-smoke evidence-smoke anomalies-freeze-check anomalies-dev report-m4 anomalies-diagnose-v1 anomalies-reproduce evaluate-holdout-anomalies explain-dev explain-holdout report-m4-explain catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe ingest-generation weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout anomaly-reference-events anomalies-smoke explain-smoke evidence-smoke anomalies-freeze-check anomalies-dev report-m4 anomalies-diagnose-v1 anomalies-reproduce evaluate-holdout-anomalies report-m4-holdout explain-dev explain-holdout report-m4-explain report-m4-explain-holdout catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -146,6 +146,9 @@ report-m4: ## M4 step 4: reports/m4_anomalies.md from the stored development run
 evaluate-holdout-anomalies: ## M4 step 6: the holdout anomaly run, ONCE per recipe hash (VERSION=1|2; CHECK=1 for the refusals and input checks only)
 	$(UV) run gridcast evaluate-holdout-anomalies --region $(firstword $(REGIONS)) --version $(VERSION) $(if $(CHECK),--check-only,)
 
+report-m4-holdout: ## M4 step 6: reports/m4_holdout.md from both stored holdout runs (v1 and v2, development beside)
+	$(UV) run gridcast report-m4-holdout --region $(firstword $(REGIONS))
+
 explain-dev: ## M4 step 5: global SHAP sample of run 2's LightGBM C fits with E1 on every pair (REPLACE=1 to redo)
 	$(UV) run gridcast explain-dev --region $(firstword $(REGIONS)) $(if $(REPLACE),--replace,)
 
@@ -154,6 +157,9 @@ explain-holdout: ## M4 step 6: global SHAP sample of holdout_main's fits on hold
 
 report-m4-explain: ## M4 step 5: reports/m4_explainability.md (global SHAP, question 5, price associations; development)
 	$(UV) run gridcast report-m4-explain --region $(firstword $(REGIONS))
+
+report-m4-explain-holdout: ## M4 step 6: reports/m4_explainability_holdout.md (holdout SHAP and price associations, development beside)
+	$(UV) run gridcast report-m4-explain-holdout --region $(firstword $(REGIONS))
 
 anomalies-diagnose-v1: ## M4 after step 4: docs/m4_v1_diagnosis.md, why v1's D1, D4 and D6 failed (reported only)
 	$(UV) run gridcast anomalies-diagnose-v1 --region $(firstword $(REGIONS))

@@ -1291,6 +1291,19 @@ def report_m4_explain(
     typer.echo(f"wrote {path}")
 
 
+@app.command("report-m4-explain-holdout")
+def report_m4_explain_holdout(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+) -> None:
+    """M4 step 6: reports/m4_explainability_holdout.md from the stored holdout SHAP sample and
+    the holdout price associations on the development bins (development beside)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.explainability.holdout_report import write_report as write_explain_holdout
+
+    path = write_explain_holdout(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
 @app.command("report-m4")
 def report_m4(
     region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
@@ -1302,6 +1315,19 @@ def report_m4(
     from gridcast.database.engine import get_engine
 
     path = write_m4(get_engine(), load_config(), region, version=version)
+    typer.echo(f"wrote {path}")
+
+
+@app.command("report-m4-holdout")
+def report_m4_holdout(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+) -> None:
+    """M4 step 6: reports/m4_holdout.md from both stored holdout runs (v1 and v2 side by side,
+    development beside; runs the causality suite for each version)."""
+    from gridcast.anomalies.holdout_report import write_report as write_holdout
+    from gridcast.database.engine import get_engine
+
+    path = write_holdout(get_engine(), load_config(), region)
     typer.echo(f"wrote {path}")
 
 

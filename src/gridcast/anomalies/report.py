@@ -46,7 +46,7 @@ from gridcast.anomalies.events import Event, merge_events
 from gridcast.anomalies.evidence import banned_in, missing_fields
 from gridcast.anomalies.freeze import freeze_state
 from gridcast.anomalies.pvalues import tiers as tiers_from_p
-from gridcast.anomalies.recipe import case_studies, dev_split, recipe_for
+from gridcast.anomalies.recipe import case_studies, dev_split, holdout_split, recipe_for
 from gridcast.anomalies.reference import CLASS_O, CLASS_P, ReferenceEvent, reference_events
 from gridcast.anomalies.run import Split, gap_intervals
 from gridcast.config import PROJECT_ROOT, AppConfig
@@ -565,6 +565,12 @@ class Results:
     causality: CausalityOutcome
     cut_differences: int
     forest_leaks: list[str]
+    split: str = "dev"
+
+    @property
+    def period(self) -> str:
+        """``development`` or ``holdout``, as the reference events name them."""
+        return "development" if self.split == "dev" else "holdout"
 
 
 def compute(
@@ -573,16 +579,24 @@ def compute(
     region_id: str,
     causality: CausalityOutcome | None = None,
     version: int = 1,
+    split: str = "dev",
 ) -> Results:
-    run = load_run(engine, cfg, region_id, version)
+    """Everything a report needs from recipe ``version``'s stored run on ``split``."""
+    run = load_run(engine, cfg, region_id, version, split)
     if int(run.config.get("recipe_version", 1)) != version:
         raise ReportMismatch(f"the stored run is not recipe v{version}")
+    if run.config.get("split") != split:
+        raise ReportMismatch(f"the stored run is not a {split} run")
     detectors = recipe_for(cfg, version).detectors
     ends = pd.DatetimeIndex(pd.to_datetime(run.intervals["interval_end"], utc=True))
-    rc = recompute(run, load_prices(engine, region_id, ends), cfg, detectors=detectors)
+    the_split = dev_split(cfg) if split == "dev" else holdout_split(cfg)
+    rc = recompute(
+        run, load_prices(engine, region_id, ends), cfg, split=the_split, detectors=detectors
+    )
     market = load_market_frame(engine, region_id)
     market = market[market["interval_end"] <= ends[-1]]
-    refs = [r for r in reference_events(market, cfg) if r.period == "development"]
+    period = "development" if split == "dev" else "holdout"
+    refs = [r for r in reference_events(market, cfg) if r.period == period]
     margin = cfg.anomalies.reference_events.alert_margin_minutes
     power = power_table(run.injections)
     leaks = forest_leaks(run.forests)
@@ -604,6 +618,7 @@ def compute(
         causality=causality or run_causality_tests(version),
         cut_differences=int(run.cuts["n_differences"].sum()),
         forest_leaks=leaks,
+        split=split,
     )
 
 
@@ -654,8 +669,8 @@ def criteria(res: Results) -> list[Criterion]:
         ),
         Criterion(
             "A4",
-            "every development event has every evidence field filled or marked unavailable with "
-            "a reason, and no summary has a banned phrase",
+            f"every {res.period} event has every evidence field filled or marked unavailable "
+            "with a reason, and no summary has a banned phrase",
             f"{n_events - incomplete} of {n_events} complete; {banned} with a banned phrase"
             + (f" ({', '.join(phrases)})" if phrases else ""),
             incomplete == 0 and banned == 0,
@@ -876,9 +891,9 @@ def _overlap(res: Results) -> str:
     return _md_table(["", *(SHORT[d] for d in dets)], rows)
 
 
-def _case_studies(res: Results, cfg: AppConfig, tz: str) -> str:
+def _case_studies(res: Results, cfg: AppConfig, tz: str, named: bool = True) -> str:
     ev = res.run.events
-    picks = case_studies(res.rc.events, res.rc.ends, cfg.anomalies, named=True)
+    picks = case_studies(res.rc.events, res.rc.ends, cfg.anomalies, named=named)
     parts = []
     for k, pick in enumerate(picks, start=1):
         if pick.event is None:
@@ -886,7 +901,7 @@ def _case_studies(res: Results, cfg: AppConfig, tz: str) -> str:
             continue
         row = ev.iloc[pick.event]
         e = res.rc.events[pick.event]
-        named = (
+        also = (
             f" (also the named day {', '.join(d.isoformat() for d in pick.also_named)})"
             if pick.also_named
             else ""
@@ -896,7 +911,7 @@ def _case_studies(res: Results, cfg: AppConfig, tz: str) -> str:
             for d, p in zip(e.detectors, e.detector_min_p, strict=True)
         )
         parts.append(
-            f"**{k}. {pick.reason}{named}:** {local(row.first_interval_end - INTERVAL, tz)} → "
+            f"**{k}. {pick.reason}{also}:** {local(row.first_interval_end - INTERVAL, tz)} → "
             f"{local(row.last_interval_end, tz)} local, peak interval ending "
             f"{local(row.peak_interval_end, tz)}; "
             f"{row.tier}; {', '.join(row.categories)}; detectors {dets}.\n\n> {row.summary}"
