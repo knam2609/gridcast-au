@@ -50,6 +50,12 @@ MARKET_CHECKS: tuple[DQCheck, ...] = (
     DQCheck("rows_per_month", "fail", "Months with row count != 288 x days"),
     DQCheck("duplicate_intervals", "fail", "Duplicate intervals in the database", "n"),
     DQCheck("implausible_timestamps", "fail", "Off-grid / future / out-of-window timestamps"),
+    DQCheck(
+        "daily_report_days",
+        "warn",
+        "Days after the window loaded from NEMWeb daily reports",
+        "n_intervals",
+    ),
     DQCheck("null_values", "fail", "Intervals missing demand or price"),
     DQCheck("demand_out_of_range", "fail", "Demand outside plausible bounds"),
     DQCheck("price_out_of_bounds", "fail", "Price below floor / above FY market price cap"),
@@ -104,7 +110,24 @@ AEMO_CHECKS: tuple[DQCheck, ...] = (
     DQCheck("aemo_out_of_range", "fail", "AEMO forecast demand outside plausible bounds"),
 )
 
-ALL_CHECKS: tuple[DQCheck, ...] = MARKET_CHECKS + WEATHER_CHECKS + AEMO_CHECKS
+GENERATION_CHECKS: tuple[DQCheck, ...] = (
+    DQCheck(
+        "generation_missing",
+        "fail",
+        "Missing supply rows: wind, solar, dispatchable; battery after its first row",
+        "n_missing",
+    ),
+    DQCheck("generation_negative", "fail", "Negative supply values", "n"),
+    DQCheck(
+        "generation_above_uigf",
+        "warn",
+        "Wind or solar cleared above UIGF or availability by more than 1 MW",
+        "n_intervals",
+        params={"tolerance_mw": 1.0},
+    ),
+)
+
+ALL_CHECKS: tuple[DQCheck, ...] = MARKET_CHECKS + WEATHER_CHECKS + AEMO_CHECKS + GENERATION_CHECKS
 
 
 @dataclass(slots=True)

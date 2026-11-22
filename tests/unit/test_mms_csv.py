@@ -63,3 +63,22 @@ def test_absent_section_raises(tmp_path: Path) -> None:
     path = _zip(tmp_path, mms_lines("DISPATCH", "PRICE", "4", ["SETTLEMENTDATE"], []))
     with pytest.raises(MmsFormatError, match=r"no DISPATCH\.REGIONSUM section"):
         read_mms_report(path, KEY, ["SETTLEMENTDATE"])
+
+
+def test_optional_columns_blank_when_absent_from_the_header(tmp_path: Path) -> None:
+    rows = regionsum_rows(START, 2)
+    path = _zip(tmp_path, mms_lines("DISPATCH", "REGIONSUM", "5", REGIONSUM_COLS, rows))
+    frame, stats = read_mms_report(
+        path, KEY, ["TOTALDEMAND"], {"VIC1"}, optional=["NETINTERCHANGE", "SS_WIND_AVAILABILITY"]
+    )
+    assert list(frame.columns) == ["TOTALDEMAND", "NETINTERCHANGE", "SS_WIND_AVAILABILITY"]
+    assert frame["NETINTERCHANGE"].tolist() == ["-50.5", "-50.5"]
+    assert frame["SS_WIND_AVAILABILITY"].tolist() == ["", ""]
+    assert stats.absent_optional == {"SS_WIND_AVAILABILITY"}
+
+
+def test_optional_does_not_relax_required_columns(tmp_path: Path) -> None:
+    rows = regionsum_rows(START, 2)
+    path = _zip(tmp_path, mms_lines("DISPATCH", "REGIONSUM", "5", REGIONSUM_COLS, rows))
+    with pytest.raises(MmsFormatError, match="lacks"):
+        read_mms_report(path, KEY, ["SS_WIND_UIGF"], optional=["SS_WIND_AVAILABILITY"])

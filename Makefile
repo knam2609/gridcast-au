@@ -3,10 +3,12 @@ UV ?= uv
 START ?= 2021-10
 END ?= 2026-09
 REGIONS ?= VIC1
+# M4 anomaly recipe version (1 or 2)
+VERSION ?= 1
 DAYS ?= 2026-10-01
 CHECK_MONTH ?= 2026-09
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe ingest-generation weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout anomaly-reference-events anomalies-smoke explain-smoke evidence-smoke anomalies-freeze-check anomalies-dev report-m4 anomalies-diagnose-v1 anomalies-reproduce evaluate-holdout-anomalies report-m4-holdout explain-dev explain-holdout report-m4-explain report-m4-explain-holdout catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -52,6 +54,9 @@ ingest-aemo: ## Download and load AEMO pre-dispatch + 5-min pre-dispatch forecas
 
 ingest-aemo-poe: ## Download and load AEMO's PDPASA POE demand forecasts (M3 benchmark; LOR runs; ~1.6 GB cached)
 	$(UV) run gridcast ingest-aemo-poe --regions $(REGIONS)
+
+ingest-generation: ## M4 step 1b: load wind, solar, dispatchable and battery totals from the cached DISPATCHREGIONSUM months, then DAYS from the daily reports after an exact match over CHECK_MONTH
+	$(UV) run gridcast ingest-generation --start $(START) --end $(END) $(foreach d,$(DAYS),--day $(d)) --check-month $(CHECK_MONTH) --regions $(REGIONS)
 
 weather: ## Download, validate and load Open-Meteo weather (GFS forecasts + ERA5; START/END overridable)
 	$(UV) run gridcast ingest-weather --start $(START) --end $(END)
@@ -117,10 +122,55 @@ report-m3-holdout: ## Generate reports/m3_holdout.md from the stored holdout int
 report-holdout: ## Generate reports/m2_holdout.md from the stored holdout run (S5, replication, AEMO holdout part)
 	$(UV) run gridcast report-holdout --region $(firstword $(REGIONS))
 
+anomaly-reference-events: ## M4 step 1a: write docs/m4_reference_events.md (AEMO-flagged events for A2) from the stored flags
+	$(UV) run gridcast anomaly-reference-events --region $(firstword $(REGIONS))
+
+anomalies-smoke: ## M4 step 2: detectors, events and injections on the warm-up periods only (bugs, no writes; minutes)
+	$(UV) run gridcast anomalies-smoke --region $(firstword $(REGIONS)) --version $(VERSION)
+
+evidence-smoke: ## M4 step 3b: evidence and summaries of the warm-up smoke events (completeness, banned phrases, E1, 5 examples; no writes)
+	$(UV) run gridcast evidence-smoke --region $(firstword $(REGIONS)) --version $(VERSION)
+
+explain-smoke: ## M4 step 3: SHAP of run 2's retrain 2022-11-01 (E1 results and timings only, no writes)
+	$(UV) run gridcast explain-smoke --region $(firstword $(REGIONS))
+
+anomalies-freeze-check: ## M4 step 4: the anomaly recipe against its freeze record (exit 1 on any difference)
+	$(UV) run gridcast anomalies-freeze-check --version $(VERSION)
+
+anomalies-dev: ## M4 step 4: the one development run of the frozen anomaly recipe (clean tree; stores the batch)
+	$(UV) run gridcast anomalies-dev --region $(firstword $(REGIONS)) --version $(VERSION)
+
+report-m4: ## M4 step 4: reports/m4_anomalies.md from the stored development run (runs the causality suite)
+	$(UV) run gridcast report-m4 --region $(firstword $(REGIONS)) --version $(VERSION)
+
+evaluate-holdout-anomalies: ## M4 step 6: the holdout anomaly run, ONCE per recipe hash (VERSION=1|2; CHECK=1 for the refusals and input checks only)
+	$(UV) run gridcast evaluate-holdout-anomalies --region $(firstword $(REGIONS)) --version $(VERSION) $(if $(CHECK),--check-only,)
+
+report-m4-holdout: ## M4 step 6: reports/m4_holdout.md from both stored holdout runs (v1 and v2, development beside)
+	$(UV) run gridcast report-m4-holdout --region $(firstword $(REGIONS))
+
+explain-dev: ## M4 step 5: global SHAP sample of run 2's LightGBM C fits with E1 on every pair (REPLACE=1 to redo)
+	$(UV) run gridcast explain-dev --region $(firstword $(REGIONS)) $(if $(REPLACE),--replace,)
+
+explain-holdout: ## M4 step 6: global SHAP sample of holdout_main's fits on holdout issue times, E1 on every pair (REPLACE=1 to redo)
+	$(UV) run gridcast explain-holdout --region $(firstword $(REGIONS)) $(if $(REPLACE),--replace,)
+
+report-m4-explain: ## M4 step 5: reports/m4_explainability.md (global SHAP, question 5, price associations; development)
+	$(UV) run gridcast report-m4-explain --region $(firstword $(REGIONS))
+
+report-m4-explain-holdout: ## M4 step 6: reports/m4_explainability_holdout.md (holdout SHAP and price associations, development beside)
+	$(UV) run gridcast report-m4-explain-holdout --region $(firstword $(REGIONS))
+
+anomalies-diagnose-v1: ## M4 after step 4: docs/m4_v1_diagnosis.md, why v1's D1, D4 and D6 failed (reported only)
+	$(UV) run gridcast anomalies-diagnose-v1 --region $(firstword $(REGIONS))
+
+anomalies-reproduce: ## M4 step 4f: recompute the stored development run with the current code; exit 1 on any difference
+	$(UV) run gridcast anomalies-reproduce --region $(firstword $(REGIONS)) --version $(VERSION)
+
 catalogue: ## Regenerate docs/feature_catalogue.md from the feature catalogue in code
 	$(UV) run gridcast feature-catalogue
 
 feature-audit: ## Generate reports/m2_feature_audit.md (feature coverage on the stored data)
 	$(UV) run gridcast feature-audit --region $(firstword $(REGIONS))
 
-pipeline: db-up migrate ingest weather calendar dq backtest report ## Full pipeline end to end
+pipeline: db-up migrate ingest ingest-generation weather calendar dq backtest report ## Full pipeline end to end

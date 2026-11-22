@@ -11,6 +11,7 @@ Each source used by GridCast-AU is documented below: where it comes from, its li
 | Open-Meteo Previous Runs API (GFS) | Archived weather forecasts (variant C) | Milestone 2 |
 | Open-Meteo Historical Weather API (ERA5) | Reanalysis "actual" weather (variant D, oracle) | Milestone 2 |
 | ABS Regional population 2024-25 | Population weights for weather sites | Milestone 2 |
+| AEMO MMSDM `DISPATCHREGIONSUM` supply columns (cached files, re-parsed) | Wind, solar, dispatchable and battery totals for anomaly evidence (§8) | Milestone 4 |
 | AEMO MMSDM `DISPATCH_UNIT_SCADA` / `ROOFTOP_PV_ACTUAL` | Generation mix | *planned* |
 | AEMO MMSDM `PREDISPATCHREGIONSUM` / `P5MIN_REGIONSOLUTION` (all runs) | Benchmark vs AEMO's own forecasts | *planned (M2 step 5)* |
 
@@ -265,4 +266,34 @@ Timing ranges are over the 25 loaded months (`aemo_run_timing` passes, and every
 - **Content:** `DISPATCH.REGIONSUM` v9 and `DISPATCH.PRICE` v5, the same records the monthly `DISPATCHREGIONSUM` / `DISPATCHPRICE` tables are built from. They are parsed by the same code (nested zips are read member by member, each with its own footer check) and validated the same way. A day must have all 288 intervals for each region.
 - **Match check before loading:** every day of the check month, already loaded from MMSDM, is read from the daily archive and compared column by column. `total_demand_mw` must be identical at every interval, and no interval may be missing on either side; otherwise nothing is loaded. The other columns are reported. The result is written to `<data root>/interim/nemweb_daily/check_<YYYY-MM>.json`. Days already loaded from MMSDM are never overwritten; re-ingesting the month from MMSDM later replaces any changed value.
 - **Result (2026-11-09, check month September 2026, VIC1):** 8,640 intervals compared, none missing on either side. Demand, price, net interchange, available generation and both flags are identical at every interval. `price_status` differs at 79 intervals, which were `NOT FIRM` at dispatch time and are `FIRM` in MMSDM with an unchanged price. 1 Oct 2026 was then loaded (288 intervals, all `FIRM`).
+- **Data quality:** days after `ingestion.end_month` loaded by a successful `nemweb_daily` run are there on purpose, so `implausible_timestamps` does not flag them as outside the window (grid, duration and future checks still apply). The `daily_report_days` warning lists them instead, one row per NEM day: 1 Oct 2026, 288 intervals. A day re-ingested from MMSDM leaves that list and is flagged again unless `ingestion.end_month` is extended.
+- **Licence:** as §1 (AEMO copyright permissions).
+
+## 8. `DISPATCHREGIONSUM` supply totals (M4 anomaly evidence)
+
+- **Use:** evidence for anomaly events and inputs of the Isolation Forest (D6), never a demand-model input (`docs/plans/m4_plan.md` §2.3, §2.5). Loaded by `gridcast ingest-generation` (`make ingest-generation`) into `generation_intervals`, one row per (region, interval end, kind), with lineage in `ingestion_runs` (dataset `generation_intervals`).
+- **Files:** the same cached `DISPATCHREGIONSUM` months as §1a, re-parsed for other columns, so nothing new is downloaded. 1 Oct 2026 comes from the daily reports (§7) after an exact match with MMSDM over September 2026.
+- **Columns** (definitions from Global-Roam's mirror of the MMS Data Model, `DISPATCHREGIONSUM` page; AEMO's own Data Model pages returned 404 on 2026-11-15):
+
+  | Column | Kind, stored as | Definition |
+  |---|---|---|
+  | `SS_WIND_CLEAREDMW`, `SS_SOLAR_CLEAREDMW` | wind, solar: `cleared_mw` | Semi-scheduled cleared MW |
+  | `SS_WIND_UIGF`, `SS_SOLAR_UIGF` | wind, solar: `uigf_mw` | Unconstrained intermittent generation forecast: what the units could produce. Curtailment is measured against it (m4_plan.md §1, step-1b clarification) |
+  | `SS_WIND_AVAILABILITY`, `SS_SOLAR_AVAILABILITY` | wind, solar: `available_mw` | Aggregate energy availability. Table version 8 on (May 2024); `NULL` before |
+  | `DISPATCHABLEGENERATION` | dispatchable: `cleared_mw` | "Dispatched Generation" |
+  | `BDU_CLEAREDMW_GEN`, `BDU_CLEAREDMW_LOAD` | battery: `cleared_mw`, `load_mw` | Bidirectional units' cleared generation and load. Rows exist only where the source has values |
+
+  `TOTALINTERMITTENTGENERATION` is an allowance for non-scheduled generation in AEMO's demand forecast, **not** an output, and is not loaded. `AVAILABLEGENERATION` and `NETINTERCHANGE` are already in `market_intervals` (§1a).
+- **Table versions:** v5 for Oct 2021 → Apr 2024 (31 months), v8 for May 2024 → May 2025 (13), v9 from Jun 2025 (16). The loader requires each version's own columns: v5 has no availability or battery columns; v8 and v9 must carry both, with availability non-blank on every row. Any other version fails the month.
+- **Result (2026-11-15, VIC1, 60 months + 1 Oct 2026):** every month loaded. 529,375 rows parsed; 3,487 intervention-run rows dropped; no duplicates. Wind, solar and dispatchable each have 526,176 rows (525,888 from MMSDM + 288 on 1 Oct 2026); battery has 248,403. September 2026 from the daily reports matched MMSDM exactly in all 34,560 rows and every column.
+- **Data-quality checks** (`gridcast dq`, in `dq_results`):
+  - `generation_missing` (fail): no gaps in wind, solar or dispatchable over Oct 2021 → Sep 2026, and none in battery after its first row. **Pass.**
+  - `generation_negative` (fail): no negative output, UIGF, availability or load. **Pass.**
+  - `generation_above_uigf` (warn, tolerance 1 MW): wind cleared above UIGF in 655 intervals (573 of them in Dec 2022) and above availability in 11; solar above UIGF in 33 and above availability in 19. The largest excess is 293.7 MW (wind, May 2026). The values are kept as published. Availability was never more than 1 MW above UIGF.
+
+### Known limitations
+
+- **Battery coverage.** The bidirectional-unit columns are blank before 22 May 2024 11:50 NEM time and 0 MW at every Victorian interval until 6 Aug 2024 11:35. Batteries not registered as bidirectional units are counted inside the dispatchable totals instead, so the battery columns cover bidirectional units only. The anomaly evidence marks battery output as unavailable before the first non-zero interval (m4_plan.md §1).
+- **Semi-scheduled only.** Wind and solar here are semi-scheduled units. Rooftop PV and small non-scheduled generation are not included (as for demand, §1a).
+- **Region totals, not units.** No fuel mix beyond wind, solar, dispatchable and battery; unit-level output (`DISPATCH_UNIT_SCADA`) is out of scope for M4.
 - **Licence:** as §1 (AEMO copyright permissions).

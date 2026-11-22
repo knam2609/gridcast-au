@@ -168,6 +168,174 @@ intervals:
   frozen_qr_config_hash: "8767a8948966637c"
   frozen_commit: "bc5337e"
 
+anomalies:
+  # Milestone 4: market anomalies and demand-model explanations (docs/plans/m4_plan.md).
+  # Not part of the M2 or M3 hashes. Development ends at backtest.holdout_start; the holdout
+  # runs to backtest.holdout_end.
+  market_first_day: "2022-05-01"    # first scored NEM day: D1, D4, D5, D6 and the price lines
+  residual_first_day: "2023-06-01"  # first scored NEM day: D2, D3 (QR quantiles from 2022-11-01)
+  reference_events:
+    # Criterion A2 (m4_plan.md §3.1): AEMO's own DISPATCHPRICE flags, never detector inputs.
+    # APCFLAG bits (MMS Data Model): 1 APC/APF binding, 2 VoLL override, 4 MPC/MPF binding,
+    # 8 price manually overwritten, 16 price scaling via the inter-regional loss factor.
+    class_p_apc_bits: [1, 2, 4]     # price at a cap, floor or administered limit
+    class_o_apc_bits: [8, 16]       # with market suspension: may leave no visible trace
+    merge_gap_hours: 24             # flagged intervals of a class closer than this: one event
+    alert_margin_minutes: 30        # A2 counts alerts from 30 min before start to 30 min after end
+  # Detector settings, all fixed in m4_plan.md §2 before any detector code or score existed
+  # (no tuning spike). A change needs a recorded reason, a new hash and a disclosed rerun.
+  seed: 2609                        # Isolation Forest trees and injection placement
+  pvalues:
+    # §2.2: conformal p-value of each score against the detector's valid scores of the
+    # intervals ending in [t - window, t); ties count against the alert.
+    window_weeks: 26
+    notable: 0.001
+    severe: 0.0001
+  profile:
+    # §2.3: median and MAD of the same local half-hour over the previous `days` local days
+    # (ending before t's own local day). Robust scale = max(mad_consistency * MAD, floor).
+    days: 28
+    slot_minutes: 30
+    mad_consistency: 1.4826
+  demand_level:                     # D1: profile split by day type (business vs weekend/holiday)
+    floor_mw: 50
+  residual:
+    # D2/D3: distance outside M3's raw quantile LightGBM C 2.5-97.5% band, over its width.
+    width_floor_mw: 50
+    short_leads: [1, 6]             # D2: the latest issue time (5-30 min ahead)
+    dayahead_leads: [283, 288]      # D3: 23.5-24 h ahead
+    lower_quantile: q025
+    upper_quantile: q975
+    dev_qr_batch: "4bab11d7-4301-4c74-9f32-ddd9644f3921"      # M3 step 2 (run 85)
+    holdout_qr_batch: "b226706b-0bed-476c-b4fc-6c283786a8cc"  # M3 step 6a (run 92)
+  price_level:                      # D4: x = asinh(price / scale_aud), all day types
+    scale_aud: 10
+    floor: 0.25
+  price_volatility:
+    # D5: v = RMS of the 5-minute changes in x over window_intervals; b = median of v over
+    # baseline_days ending baseline_lag_intervals before t; score |ln((v + eps)/(b + eps))|.
+    window_intervals: 12
+    baseline_days: 7
+    baseline_lag_intervals: 12
+    epsilon: 0.01
+  isolation_forest:
+    # D6: refitted at each NEM-month start on the previous train_weeks; p-value against the
+    # training window's own scores. Features: D1 z, D4 z, D5 log ratio, the 5-minute demand
+    # change over the robust scale of the previous `profile.days` days' changes, z of net
+    # interchange, dispatchable generation and available generation minus demand (plain
+    # profiles: all day types, user 2026-11-17), wind and solar curtailment against UIGF.
+    n_estimators: 200
+    max_samples: 256
+    train_weeks: 26
+    z_floor_mw: 50
+    change_floor_mw: 10
+    curtailment_min_uigf_mw: 100
+  price_lines:                      # L1/L2: fixed lines, not calibrated (A1 does not apply)
+    notable_aud: 300
+    severe_aud: 5000
+  events:
+    merge_gap_minutes: 30           # alerts at most this far apart form one event
+  injection:
+    # §2.9 (A3): 1,000 seeded starts per detector, shared by every size and sign (user
+    # 2026-11-17), where the unmodified detector raised no alert within the span +- guard.
+    n_starts: 1000
+    guard_minutes: 60
+    demand_level: {minutes: 60, sizes: [-2000, -1000, -500, -250, 250, 500, 1000, 2000]}
+    demand_residual_short: {minutes: 30, sizes: [-1000, -500, -250, -100, 100, 250, 500, 1000]}
+    demand_residual_dayahead: {minutes: 120, sizes: [-2000, -1000, -500, -250, 250, 500, 1000, 2000]}
+    price_level: {minutes: 30, sizes: [-1000, -300, -100, 300, 1000, 5000, 15000]}  # set to $
+    price_volatility: {minutes: 60, sizes: [50, 200, 1000, 5000]}  # alternate +- A $/MWh
+    isolation_forest: {minutes: 60, sizes: [-2000, -1000, -500, -250, 250, 500, 1000, 2000]}
+    flat_price_minutes: 180         # reported only: price held at its value at the start
+  evidence:
+    # §2.5: facts with times and sources, each labelled known at the time or retrospective;
+    # three-sentence summaries (user 2026-11-19). A4: no summary contains a banned phrase
+    # (case-insensitive, on word boundaries).
+    change_minutes: [5, 30, 60]     # demand and price changes before the peak
+    supply_change_minutes: 60       # wind and solar output change before the peak
+    banned_phrases: ["because", "cause", "caused", "causes", "due to", "driven by", "drove",
+                     "led to", "leads to", "resulted in", "as a result", "triggered",
+                     "explains", "explained by", "the reason"]
+  explain:
+    # §2.6: TreeSHAP (LightGBM pred_contrib) of the stored M2 LightGBM C boosters; no refit.
+    # E1 (user 2026-11-19): the recomputed forecast, cast to float32 as M2 stored it, equals
+    # the stored one exactly; base value + sum of contributions equals the raw prediction
+    # within sum_tolerance (float64).
+    model: lgbm_C
+    variant: C
+    dev_batch: "6d783932-5834-4e18-a9e8-0e3567db46e6"      # M2 run 2 (main)
+    holdout_batch: "fcb6abb6-49a3-4923-9d79-64e05a44d75f"  # M2 step 6 (holdout_main)
+    sample_pairs: 20000             # global sample per (retrain, lead band), seeded
+    sum_tolerance: 1.0e-6
+    output_dir: explain             # under the data root
+  cases:
+    # §3.2 (ties: user 2026-11-19): the n events with the lowest p from a calibrated detector;
+    # ties by more calibrated detectors firing, then a seeded draw. The named NEM days are
+    # added on top in development (a rule pick that is also named is shown once).
+    n: 5
+    named_days: ["2024-02-13", "2024-12-09"]
+  causality:
+    # A5 on real data (user 2026-11-19): besides the synthetic suite run by the report, the
+    # development run reruns detection on the real series truncated at this many seeded
+    # cut times in its scored period; everything at or before each cut must be identical.
+    real_cuts: 3
+  output_dir: anomalies             # under the data root; not hashed
+  # The freeze (step 4, 2026-11-19), recorded after the recipe commit and before the
+  # development run; not hashed. Every scored run must match both (anomalies-freeze-check).
+  # v1's code was frozen at 2dc58fa. After the frozen modules were generalised for v2, it
+  # was carried to 04da607 (v2's frozen commit) by reproducing development run 104 exactly
+  # from a clean tree there (gridcast anomalies-reproduce, 2026-11-20).
+  frozen_config_hash: "2ce8b3fc523ae81c"
+  frozen_commit: "04da607"
+
+anomalies_v2:
+  # M4 v2, decided after v1's development verdicts (m4_plan.md §1 "Decided after the
+  # development verdicts", §2.10; user 2026-11-20). Only what differs from `anomalies` (v1):
+  # every other setting, D6's nine features included, is read from `anomalies`. D5 keeps
+  # anomalies.price_level.scale_aud ($10).
+  price_level:
+    scale_aud: 100                  # D4: x = asinh(price / $100); profile and floor as v1
+  robust_distance:
+    # D6 v2: sqrt((f - m)' S^-1 (f - m)) of the nine features f (D4's z from v2), m the
+    # coordinate-wise median and S the Ledoit-Wolf covariance about m of the previous
+    # train_weeks' complete rows, refitted at each NEM-month start if at least
+    # min_train_rows; p-value against the trailing anomalies.pvalues window of its own
+    # (out-of-sample) scores, as D1-D5.
+    train_weeks: 26
+    min_train_rows: 256
+  # v2's freeze (2026-11-20), recorded after the v2 code commit and before v2's development
+  # run; not hashed. v2's hash covers `anomalies`, `anomalies_v2` and the splits.
+  frozen_config_hash: "44abbf4b24cf6ac8"
+  frozen_commit: "04da607"
+
+explain_report:
+  # M4 step 5 (m4_plan.md §1 "Clarified in step 5", §2.6-2.7; user 2026-11-20). Reported
+  # only. Outside both anomaly hashes, which cover all of `anomalies`; the global sample's
+  # own settings stay in anomalies.explain (frozen).
+  shap:
+    question5_band: [73, 288]       # 6-24 h
+    top_share: 0.05                 # top 5% of each group's own targets
+    seasons:                        # by the target's local month
+      summer: [12, 1, 2]
+      winter: [6, 7, 8]
+    weather_bin_c: 1.0              # weather contribution vs forecast temperature
+    weather_min_pairs: 100
+    weather_range: [0.1, 0.9]
+  associations:
+    # NEM days anomalies.market_first_day -> backtest.holdout_start (by interval start).
+    high_price: 300                 # P(price > $300/MWh)
+    low_price: 0                    # P(price < $0/MWh)
+    quantile_bins: 10               # right-closed deciles of development values (solar:
+                                    # a zero-output bin plus deciles of positive output)
+    two_way_bins: 3                 # demand tercile x wind tercile
+    temperature_bin_c: 5            # ERA5 population-weighted, fixed bins [5k, 5k + 5)
+    bootstrap_resamples: 1000       # NEM-day blocks, percentile intervals
+    ci_level: 0.95
+    seed_stream: 201                # draws from (anomalies.seed, 201)
+    few_days: 10                    # figures only: bins seen on fewer NEM days drawn hollow
+                                    # (added after the first draft; changes no number)
+  report: reports/m4_explainability.md
+
 aemo:
   # AEMO's own demand forecasts: every run of 30-minute pre-dispatch and 5-minute
   # pre-dispatch (MMSDM "all runs" archives, ~50 MB a month each, cached under raw/).

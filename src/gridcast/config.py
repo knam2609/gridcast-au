@@ -280,6 +280,291 @@ WEATHER_VARIABLES: tuple[str, ...] = (
 )
 
 
+class ReferenceEventsConfig(BaseModel):
+    """AEMO-flagged reference events for criterion A2 (m4_plan.md §3.1).
+
+    Class P: intervals with any of ``class_p_apc_bits`` set in DISPATCHPRICE.APCFLAG (the
+    price was at a cap, floor or administered limit). Class O: other flagged intervals
+    (``class_o_apc_bits``, or the market suspended). The flags are never detector inputs.
+    """
+
+    class_p_apc_bits: list[int]
+    class_o_apc_bits: list[int]
+    merge_gap_hours: float = Field(24.0, gt=0)
+    alert_margin_minutes: int = Field(30, ge=0)
+
+    @model_validator(mode="after")
+    def _bits(self) -> ReferenceEventsConfig:
+        bits = self.class_p_apc_bits + self.class_o_apc_bits
+        if any(b not in (1, 2, 4, 8, 16) for b in bits):
+            raise ValueError("APCFLAG bits must be among 1, 2, 4, 8, 16")
+        if set(self.class_p_apc_bits) & set(self.class_o_apc_bits):
+            raise ValueError("a bit cannot be in both class P and class O")
+        if not self.class_p_apc_bits:
+            raise ValueError("class P needs at least one bit")
+        return self
+
+
+class AnomalyPValueConfig(BaseModel):
+    """Conformal p-values against a trailing window of the detector's own scores (§2.2)."""
+
+    window_weeks: int = Field(gt=0)
+    notable: float = Field(gt=0, lt=1)
+    severe: float = Field(gt=0, lt=1)
+
+    @model_validator(mode="after")
+    def _order(self) -> AnomalyPValueConfig:
+        if self.severe >= self.notable:
+            raise ValueError("anomalies.pvalues: severe must be below notable")
+        return self
+
+
+class AnomalyProfileConfig(BaseModel):
+    """Same-local-half-hour median and MAD over the previous days (§2.3)."""
+
+    days: int = Field(gt=0)
+    slot_minutes: int = Field(gt=0)
+    mad_consistency: float = Field(gt=0)
+
+    @field_validator("slot_minutes")
+    @classmethod
+    def _divides_day(cls, v: int) -> int:
+        if v % 5 or (24 * 60) % v:
+            raise ValueError("profile.slot_minutes must be a multiple of 5 dividing a day")
+        return v
+
+
+class DemandLevelConfig(BaseModel):
+    floor_mw: float = Field(gt=0)
+
+
+class ResidualDetectorConfig(BaseModel):
+    """D2/D3: the actual outside M3's raw quantile LightGBM C band, over its width."""
+
+    width_floor_mw: float = Field(gt=0)
+    short_leads: tuple[int, int]
+    dayahead_leads: tuple[int, int]
+    lower_quantile: str
+    upper_quantile: str
+    dev_qr_batch: str
+    holdout_qr_batch: str
+
+    @field_validator("short_leads", "dayahead_leads")
+    @classmethod
+    def _one_issue_period(cls, v: tuple[int, int]) -> tuple[int, int]:
+        # Issue times are 30 min apart: six consecutive leads give each target exactly one.
+        if v[0] < 1 or v[1] - v[0] != 5:
+            raise ValueError("residual leads must be six consecutive leads from 1 up")
+        return v
+
+
+class PriceLevelConfig(BaseModel):
+    scale_aud: float = Field(gt=0)
+    floor: float = Field(gt=0)
+
+
+class PriceVolatilityConfig(BaseModel):
+    window_intervals: int = Field(gt=0)
+    baseline_days: int = Field(gt=0)
+    baseline_lag_intervals: int = Field(ge=0)
+    epsilon: float = Field(gt=0)
+
+
+class IsolationForestConfig(BaseModel):
+    n_estimators: int = Field(gt=0)
+    max_samples: int = Field(gt=0)
+    train_weeks: int = Field(gt=0)
+    z_floor_mw: float = Field(gt=0)
+    change_floor_mw: float = Field(gt=0)
+    curtailment_min_uigf_mw: float = Field(gt=0)
+
+
+class PriceLinesConfig(BaseModel):
+    notable_aud: float
+    severe_aud: float
+
+    @model_validator(mode="after")
+    def _order(self) -> PriceLinesConfig:
+        if self.severe_aud <= self.notable_aud:
+            raise ValueError("price_lines: severe_aud must be above notable_aud")
+        return self
+
+
+class AnomalyEventsConfig(BaseModel):
+    merge_gap_minutes: int = Field(ge=0)
+
+
+class InjectionSetting(BaseModel):
+    """One detector's injections: span length and signed sizes (§2.9)."""
+
+    minutes: int = Field(gt=0)
+    sizes: list[float] = Field(min_length=1)
+
+    @field_validator("minutes")
+    @classmethod
+    def _whole_intervals(cls, v: int) -> int:
+        if v % 5:
+            raise ValueError("injection minutes must be a multiple of 5")
+        return v
+
+
+class InjectionConfig(BaseModel):
+    """Synthetic injection for detection power (A3, m4_plan.md §2.9)."""
+
+    n_starts: int = Field(gt=0)
+    guard_minutes: int = Field(ge=0)
+    demand_level: InjectionSetting
+    demand_residual_short: InjectionSetting
+    demand_residual_dayahead: InjectionSetting
+    price_level: InjectionSetting
+    price_volatility: InjectionSetting
+    isolation_forest: InjectionSetting
+    flat_price_minutes: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _shapes(self) -> InjectionConfig:
+        if self.demand_residual_short.minutes != 30:
+            raise ValueError("demand_residual_short injections span one issue period (30 min)")
+        if any(a <= 0 for a in self.price_volatility.sizes):
+            raise ValueError("price_volatility sizes are positive amplitudes")
+        return self
+
+
+class EvidenceConfig(BaseModel):
+    """Event evidence and summaries (m4_plan.md §2.5, criterion A4)."""
+
+    change_minutes: list[int] = Field(min_length=1)
+    supply_change_minutes: int = Field(gt=0)
+    banned_phrases: list[str] = Field(min_length=1)
+
+    @field_validator("change_minutes")
+    @classmethod
+    def _whole_intervals(cls, v: list[int]) -> list[int]:
+        if any(m <= 0 or m % 5 for m in v):
+            raise ValueError("change minutes must be positive multiples of 5")
+        return v
+
+
+class ExplainConfig(BaseModel):
+    """SHAP of the stored M2 LightGBM C boosters and the E1 gate (m4_plan.md §2.6)."""
+
+    model: str
+    variant: str
+    dev_batch: str
+    holdout_batch: str
+    sample_pairs: int = Field(gt=0)
+    sum_tolerance: float = Field(gt=0)
+    output_dir: str
+
+
+class CaseStudiesConfig(BaseModel):
+    """Case studies chosen by a fixed rule (m4_plan.md §3.2; ties: user 2026-11-19)."""
+
+    n: int = Field(gt=0)  # events with the lowest p from a calibrated detector
+    named_days: list[dt.date]  # NEM days named in advance (development only)
+
+
+class CausalityConfig(BaseModel):
+    """A5 on real data (user 2026-11-19): seeded cuts of the development run."""
+
+    real_cuts: int = Field(gt=0)
+
+
+class AnomaliesConfig(BaseModel):
+    """Milestone 4: market anomalies and demand-model explanations (docs/plans/m4_plan.md).
+
+    Not part of the M2 or M3 hashes. Development ends at ``backtest.holdout_start``.
+    Every detector setting is fixed in the plan's §2 (no tuning spike).
+    """
+
+    market_first_day: dt.date  # first scored NEM day for D1, D4, D5, D6 and the price lines
+    residual_first_day: dt.date  # first scored NEM day for D2 and D3
+    reference_events: ReferenceEventsConfig
+    seed: int
+    pvalues: AnomalyPValueConfig
+    profile: AnomalyProfileConfig
+    demand_level: DemandLevelConfig
+    residual: ResidualDetectorConfig
+    price_level: PriceLevelConfig
+    price_volatility: PriceVolatilityConfig
+    isolation_forest: IsolationForestConfig
+    price_lines: PriceLinesConfig
+    events: AnomalyEventsConfig
+    injection: InjectionConfig
+    evidence: EvidenceConfig
+    explain: ExplainConfig
+    cases: CaseStudiesConfig
+    causality: CausalityConfig
+    # Not part of the anomaly config hash: where runs are stored, and the freeze record
+    # (step 4): the hash and the commit whose recipe code (anomalies.freeze.FROZEN_PATHS)
+    # every scored run must use.
+    output_dir: Path = Path("anomalies")  # under the data root
+    frozen_config_hash: str | None = None
+    frozen_commit: str | None = None
+
+
+class V2PriceLevelConfig(BaseModel):
+    scale_aud: float = Field(gt=0)
+
+
+class RobustDistanceConfig(BaseModel):
+    """M4 v2's D6: distance from the training median under a Ledoit–Wolf covariance."""
+
+    train_weeks: int = Field(gt=0)
+    min_train_rows: int = Field(gt=0)
+
+
+class AnomaliesV2Config(BaseModel):
+    """M4 v2 (m4_plan.md §2.10): only the settings that differ from ``anomalies`` (v1).
+
+    Decided after v1's development verdicts, so v2's development verdicts are post hoc.
+    """
+
+    price_level: V2PriceLevelConfig  # D4's transform; D5 keeps anomalies.price_level
+    robust_distance: RobustDistanceConfig  # D6
+    # Not hashed: v2's freeze record.
+    frozen_config_hash: str | None = None
+    frozen_commit: str | None = None
+
+
+class ShapReportConfig(BaseModel):
+    """Global SHAP summaries (m4_plan.md §2.6; §1 "Clarified in step 5")."""
+
+    question5_band: tuple[int, int]  # lead band (steps) of question 5: 6-24 h
+    top_share: float = Field(gt=0, lt=1)  # top 5%, taken within each group
+    seasons: dict[str, list[int]]  # name -> local months of the target
+    weather_bin_c: float = Field(gt=0)
+    weather_min_pairs: int = Field(gt=0)  # bins with fewer pairs are not drawn
+    weather_range: tuple[float, float]  # quantiles drawn around the mean
+
+
+class PriceAssociationsConfig(BaseModel):
+    """Descriptive price associations (m4_plan.md §2.7; §1 "Clarified in step 5").
+
+    The period is the market development period (anomalies.market_first_day to
+    backtest.holdout_start). Bin edges come from development data; step 6 reuses them.
+    """
+
+    high_price: float  # P(price > high_price)
+    low_price: float  # P(price < low_price)
+    quantile_bins: int = Field(gt=1)  # deciles
+    two_way_bins: int = Field(gt=1)  # demand tercile x wind tercile
+    temperature_bin_c: float = Field(gt=0)  # fixed bins at multiples of this width
+    bootstrap_resamples: int = Field(gt=0)  # day blocks (NEM days)
+    ci_level: float = Field(gt=0, lt=1)
+    seed_stream: int  # the bootstrap draws (anomalies.seed, seed_stream)
+    few_days: int = Field(gt=0)  # figures: a bin seen on fewer NEM days is drawn hollow
+
+
+class ExplainReportConfig(BaseModel):
+    """M4 step 5's report settings. Reported only, and outside both anomaly hashes (they
+    cover all of ``anomalies``)."""
+
+    shap: ShapReportConfig
+    associations: PriceAssociationsConfig
+    report: Path = Path("reports/m4_explainability.md")
+
+
 class WeatherVariableConfig(BaseModel):
     unit: str  # unit string Open-Meteo must report (checked on every response)
     kind: Literal["instant", "preceding_hour_mean"]
@@ -406,6 +691,9 @@ class AppConfig(BaseModel):
     ml: MlConfig
     aemo: AemoBenchmarkConfig
     intervals: IntervalsConfig
+    anomalies: AnomaliesConfig
+    anomalies_v2: AnomaliesV2Config
+    explain_report: ExplainReportConfig
 
     @model_validator(mode="after")
     def _weather_regions_known(self) -> AppConfig:
@@ -428,6 +716,14 @@ class AppConfig(BaseModel):
             raise ValueError("ml.lead_bands must end at forecast.horizon_steps")
         if not self.ml.first_issue < self.intervals.first_issue < self.backtest.holdout_start:
             raise ValueError("expected ml.first_issue < intervals.first_issue < holdout_start")
+        an = self.anomalies
+        if not an.market_first_day < an.residual_first_day < self.backtest.holdout_start:
+            raise ValueError(
+                "expected anomalies.market_first_day < anomalies.residual_first_day "
+                "< backtest.holdout_start"
+            )
+        if an.residual_first_day <= self.ml.first_issue:
+            raise ValueError("anomalies.residual_first_day must follow ml.first_issue (QR warm-up)")
         return self
 
     def resolve(self, path: Path) -> Path:

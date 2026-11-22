@@ -2,6 +2,8 @@
 
 Read this, then [`m3_plan.md`](m3_plan.md). For the M2 history, see [`m2_handoff.md`](m2_handoff.md) and [`m2_plan.md`](m2_plan.md).
 
+> **Update, 2026-11-15 (M3 closed, M4 started):** the note below says "nothing is pushed", but it was written before the push. **M3 was pushed and merged into `main` on 2026-11-14** (merge commit: PR #3 → `c5fd5d3`). The remote branch `m3-prediction-intervals` is kept. M4 continues on `m4-anomalies-explainability`, branched from `main`; start from [`m4_handoff.md`](m4_handoff.md).
+
 > **Update, 2026-11-13 (thirteenth session, evening: step 6 done, M3 complete):**
 > - **6a:** QR holdout batch `b226706b-0bed-476c-b4fc-6c283786a8cc` (run 92), 6.7 h, first retrain reproduced exactly, stored unscored. The worktree was removed.
 > - **6b, the one look:** `evaluate-holdout-intervals` from `074e900`, 14.9 min. All 10 development interval runs reproduced exactly. It stored holdout batch `2744fd09-4e6d-41c5-9579-a13c8fe9a5b0` (runs 93–103), so the command now refuses (U5 lock).

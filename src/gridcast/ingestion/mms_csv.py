@@ -42,6 +42,7 @@ class ParseStats:
     data_rows_kept: int = 0
     versions: set[str] = field(default_factory=set)
     members: int = 0
+    absent_optional: set[str] = field(default_factory=set)  # optional columns some header lacked
 
 
 def _zip_members(zf: zipfile.ZipFile, label: str) -> Iterator[tuple[str, Iterator[list[str]]]]:
@@ -80,6 +81,7 @@ def read_mms_report(
     columns: Collection[str],
     region_filter: Collection[str] | None = None,
     region_column: str = "REGIONID",
+    optional: Collection[str] = (),
 ) -> tuple[pd.DataFrame, ParseStats]:
     """Read one report section from an MMS file, keeping only ``columns`` (as strings).
 
@@ -87,9 +89,15 @@ def read_mms_report(
     Raises :class:`MmsFormatError` if required columns are missing, the section is absent,
     or the ``END OF REPORT`` footer is missing / disagrees with the number of rows read
     (a truncated download).
+
+    ``optional`` columns (added in later table versions) follow ``columns`` in the frame;
+    where a header lacks one, its values are blank and it is listed in
+    ``ParseStats.absent_optional``, so callers can check what each version must carry.
     """
     stats = ParseStats()
-    wanted = list(columns)
+    required = list(columns)
+    wanted = [*required, *(c for c in optional if c not in required)]
+    blank = -1  # index marker: optional column absent from this header
     regions = set(region_filter) if region_filter is not None else None
     out: list[list[str]] = []
 
@@ -113,13 +121,14 @@ def read_mms_report(
                     section_found = True
                     stats.versions.add(row[3])
                     header = row[4:]
-                    missing = [c for c in wanted if c not in header]
+                    missing = [c for c in required if c not in header]
                     if missing:
                         raise MmsFormatError(
                             f"{member}: {key.package}.{key.report} v{row[3]} lacks {missing}"
                         )
+                    stats.absent_optional |= {c for c in wanted if c not in header}
                     # +4 offsets the record-type/package/report/version prefix.
-                    idx = [header.index(c) + 4 for c in wanted]
+                    idx = [header.index(c) + 4 if c in header else blank for c in wanted]
                     region_idx = header.index(region_column) + 4 if regions is not None else None
             elif kind == "D":
                 if not in_section:
@@ -131,7 +140,7 @@ def read_mms_report(
                     and row[region_idx] not in regions
                 ):
                     continue
-                out.append([row[i] for i in idx])
+                out.append([row[i] if i != blank else "" for i in idx])
             elif kind == "C" and len(row) >= 3 and row[1] == "END OF REPORT":
                 try:
                     footer = int(row[2])

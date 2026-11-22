@@ -249,6 +249,85 @@ def ingest_aemo_poe(start: StartOpt = None, end: EndOpt = None, regions: Regions
         raise typer.Exit(code=1)
 
 
+@app.command("ingest-generation")
+def ingest_generation(
+    start: StartOpt = None,
+    end: EndOpt = None,
+    regions: RegionsOpt = None,
+    day: Annotated[
+        list[str] | None,
+        typer.Option("--day", help="NEM-time day YYYY-MM-DD from the daily reports (repeatable)"),
+    ] = None,
+    check_month: Annotated[
+        str | None,
+        typer.Option("--check-month", help="Month YYYY-MM compared with the daily reports"),
+    ] = None,
+) -> None:
+    """Load regional supply totals (wind, solar, dispatchable, battery) from the cached
+    DISPATCHREGIONSUM months, then any --day from the daily reports after an exact match with
+    MMSDM over --check-month (M4 step 1b; evidence only, never a model input)."""
+    import datetime as dt
+
+    from gridcast.database.engine import get_engine
+    from gridcast.ingestion.generation import (
+        GenerationCheckFailed,
+        ingest_generation_daily,
+        ingest_generation_range,
+    )
+    from gridcast.ingestion.pipeline import parse_month_arg
+
+    if day and not check_month:
+        raise typer.BadParameter("--day needs --check-month")
+    try:
+        days = [dt.date.fromisoformat(d) for d in day or []]
+    except ValueError as exc:
+        raise typer.BadParameter(f"--day must be YYYY-MM-DD: {exc}") from exc
+    cfg = load_config()
+    engine = get_engine()
+    region_list = _regions(regions)
+    first = parse_month_arg(start or cfg.ingestion.start_month)
+    last = parse_month_arg(end or cfg.ingestion.end_month)
+    results = ingest_generation_range(engine, cfg, first, last, region_list)
+    rows = [
+        [f"{r.period:%Y-%m}", r.status, r.rows_parsed, r.duplicates_dropped, r.rows_loaded]
+        for r in results
+    ]
+    typer.echo(
+        tabulate(
+            rows, headers=["month", "status", "parsed", "duplicates", "loaded"], tablefmt="github"
+        )
+    )
+    failed = [r for r in results if r.status != "success"]
+    for r in failed:
+        typer.echo(f"FAILED {r.period:%Y-%m}: {r.error}", err=True)
+    if failed:
+        raise typer.Exit(code=1)
+    if not days:
+        return
+    assert check_month is not None
+    try:
+        daily = ingest_generation_daily(
+            engine, cfg, days, parse_month_arg(check_month), region_list
+        )
+    except GenerationCheckFailed as exc:
+        typer.echo(f"FAILED: {exc}\n{exc.check.as_dict()}", err=True)
+        raise typer.Exit(code=1) from exc
+    c = daily.check
+    typer.echo(
+        f"match check {c.month} ({c.days} days; loaded from {', '.join(c.loaded_sources)}): "
+        f"{c.compared} rows compared, only daily {c.only_daily}, only loaded {c.only_loaded}, "
+        f"differing {c.differing}; passed: {c.passed}"
+    )
+    typer.echo(
+        tabulate(
+            [[d, n] for d, n in daily.loaded.items()],
+            headers=["day (NEM)", "rows loaded"],
+            tablefmt="github",
+        )
+    )
+    typer.echo(f"check written to {daily.report_path}")
+
+
 @app.command()
 def dq(start: StartOpt = None, end: EndOpt = None, regions: RegionsOpt = None) -> None:
     """Run market and weather data-quality checks over the window and store results."""
@@ -1034,6 +1113,299 @@ def report_m3_holdout(region: Annotated[str, typer.Option(help="Region id")] = "
     from gridcast.intervals.holdout_report import write_report as write_m3_holdout
 
     path = write_m3_holdout(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
+@app.command("anomaly-reference-events")
+def anomaly_reference_events(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+) -> None:
+    """Write docs/m4_reference_events.md: AEMO-flagged reference events for A2 (M4 step 1a)."""
+    from gridcast.anomalies.reference import CLASS_P, DOC_PATH, write_reference_events
+    from gridcast.database.engine import get_engine
+
+    events = write_reference_events(get_engine(), load_config(), region)
+    judged = [e.event_id for e in events if e.judged_by_a2]
+    n_p = sum(e.cls == CLASS_P for e in events)
+    typer.echo(
+        f"{len(events)} events ({n_p} class P); A2 judges {len(judged)}: " + ", ".join(judged)
+    )
+    typer.echo(f"wrote {DOC_PATH}")
+
+
+@app.command("anomalies-smoke")
+def anomalies_smoke(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    weeks: Annotated[int, typer.Option(help="Pseudo-scored weeks at each warm-up's end")] = 8,
+    starts: Annotated[int, typer.Option(help="Injection starts per detector")] = 200,
+    version: Annotated[int, typer.Option(help="Anomaly recipe version (1 or 2)")] = 1,
+) -> None:
+    """M4 step 2 smoke run on the warm-up periods only (bugs, never tuning; no writes)."""
+    from gridcast.anomalies.smoke import market_pass, residual_pass, summarise
+    from gridcast.database.engine import get_engine
+
+    cfg = load_config()
+    engine = get_engine()
+    for run_pass in (market_pass, residual_pass):
+        sp = run_pass(engine, cfg, region, weeks, starts, version=version)
+        for line in summarise(sp, cfg):
+            typer.echo(line)
+
+
+@app.command("evidence-smoke")
+def evidence_smoke(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    weeks: Annotated[int, typer.Option(help="Pseudo-scored weeks at each warm-up's end")] = 8,
+    version: Annotated[int, typer.Option(help="Anomaly recipe version (1 or 2)")] = 1,
+) -> None:
+    """M4 step 3b: evidence and summaries of the warm-up smoke events (completeness,
+    banned phrases, E1, 5 example summaries; no writes)."""
+    from gridcast.anomalies.smoke import evidence_lines, market_pass, residual_pass
+    from gridcast.database.engine import get_engine
+
+    cfg = load_config()
+    engine = get_engine()
+    for run_pass in (market_pass, residual_pass):
+        sp = run_pass(engine, cfg, region, weeks, 0, inject=False, version=version)
+        for line in evidence_lines(engine, cfg, region, sp):
+            typer.echo(line)
+
+
+@app.command("explain-smoke")
+def explain_smoke(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    retrain: Annotated[
+        str, typer.Option(help="Run 2 retrain (its issue times must lie in D2/D3's warm-up)")
+    ] = "2022-11-01",
+) -> None:
+    """M4 step 3 SHAP smoke run on one retrain: E1 results and timings only (no writes)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.explainability.smoke import run_explain_smoke, summarise
+
+    cfg = load_config()
+    for line in summarise(run_explain_smoke(get_engine(), cfg, region, retrain)):
+        typer.echo(line)
+
+
+@app.command("anomalies-freeze-check")
+def anomalies_freeze_check(
+    version: Annotated[int, typer.Option(help="Anomaly recipe version (1 or 2)")] = 1,
+) -> None:
+    """M4 step 4: the anomaly recipe against its freeze record; exit 1 on any difference."""
+    from gridcast.anomalies.freeze import freeze_state
+
+    state = freeze_state(load_config(), version=version)
+    typer.echo(
+        f"recipe v{version}: anomaly config hash {state.config_hash} "
+        f"(frozen {state.frozen_config_hash}); "
+        f"HEAD {state.sha}{' (dirty)' if state.dirty else ''}, "
+        f"frozen commit {state.frozen_commit}"
+    )
+    for problem in state.problems:
+        typer.echo(f"problem: {problem}")
+    if state.problems:
+        raise typer.Exit(1)
+    typer.echo("the freeze holds")
+
+
+@app.command("anomalies-dev")
+def anomalies_dev(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    version: Annotated[int, typer.Option(help="Anomaly recipe version (1 or 2)")] = 1,
+) -> None:
+    """M4 step 4: the one development run of the frozen anomaly recipe (scores, injections,
+    real-data cuts, evidence; stored). Refuses unless the freeze holds and the tree is clean."""
+    from gridcast.anomalies.dev import DevRefused, run_dev, summary_lines
+    from gridcast.database.engine import get_engine
+
+    try:
+        run = run_dev(get_engine(), load_config(), region, version)
+    except DevRefused as exc:
+        typer.echo(f"refused: {exc}")
+        raise typer.Exit(1) from exc
+    for line in summary_lines(run):
+        typer.echo(line)
+
+
+@app.command("explain-dev")
+def explain_dev(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    replace: Annotated[
+        bool, typer.Option(help="Replace a stored sample (the run is deterministic)")
+    ] = False,
+) -> None:
+    """M4 step 5: the global SHAP sample of run 2's LightGBM C fits, with E1 on every pair
+    (stored under <data root>/explain/dev/; nothing is stored if E1 fails)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.explainability.global_run import GlobalRefused, run_global, summary_lines
+    from gridcast.explainability.treeshap import GateError
+
+    try:
+        run = run_global(get_engine(), load_config(), region, "dev", replace)
+    except GlobalRefused as exc:
+        typer.echo(f"refused: {exc}")
+        raise typer.Exit(1) from exc
+    except GateError as exc:
+        typer.echo(f"E1 failed, nothing stored: {exc}")
+        raise typer.Exit(1) from exc
+    for line in summary_lines(run):
+        typer.echo(line)
+
+
+@app.command("explain-holdout")
+def explain_holdout(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    replace: Annotated[
+        bool, typer.Option(help="Replace a stored sample (the run is deterministic)")
+    ] = False,
+) -> None:
+    """M4 step 6: the global SHAP sample of holdout_main's LightGBM C fits on holdout issue
+    times, with E1 on every pair (stored under <data root>/explain/holdout/; nothing is
+    stored if E1 fails). Prints only the gates and timings."""
+    from gridcast.database.engine import get_engine
+    from gridcast.explainability.global_run import GlobalRefused, run_global, summary_lines
+    from gridcast.explainability.treeshap import GateError
+
+    try:
+        run = run_global(get_engine(), load_config(), region, "holdout", replace)
+    except GlobalRefused as exc:
+        typer.echo(f"refused: {exc}")
+        raise typer.Exit(1) from exc
+    except GateError as exc:
+        typer.echo(f"E1 failed, nothing stored: {exc}")
+        raise typer.Exit(1) from exc
+    for line in summary_lines(run):
+        typer.echo(line)
+
+
+@app.command("report-m4-explain")
+def report_m4_explain(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+) -> None:
+    """M4 step 5: reports/m4_explainability.md from the stored global SHAP sample and the
+    development price associations (reported only; E1 on the global sample)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.explainability.report import write_report as write_explain
+
+    path = write_explain(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
+@app.command("report-m4-explain-holdout")
+def report_m4_explain_holdout(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+) -> None:
+    """M4 step 6: reports/m4_explainability_holdout.md from the stored holdout SHAP sample and
+    the holdout price associations on the development bins (development beside)."""
+    from gridcast.database.engine import get_engine
+    from gridcast.explainability.holdout_report import write_report as write_explain_holdout
+
+    path = write_explain_holdout(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
+@app.command("report-m4")
+def report_m4(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    version: Annotated[int, typer.Option(help="Anomaly recipe version (1 or 2)")] = 1,
+) -> None:
+    """Write reports/m4_anomalies.md (v2: m4_anomalies_v2.md, post hoc, beside v1) from the
+    stored development run (A1-A5, E1 at peaks)."""
+    from gridcast.anomalies.report import write_report as write_m4
+    from gridcast.database.engine import get_engine
+
+    path = write_m4(get_engine(), load_config(), region, version=version)
+    typer.echo(f"wrote {path}")
+
+
+@app.command("report-m4-holdout")
+def report_m4_holdout(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+) -> None:
+    """M4 step 6: reports/m4_holdout.md from both stored holdout runs (v1 and v2 side by side,
+    development beside; runs the causality suite for each version)."""
+    from gridcast.anomalies.holdout_report import write_report as write_holdout
+    from gridcast.database.engine import get_engine
+
+    path = write_holdout(get_engine(), load_config(), region)
+    typer.echo(f"wrote {path}")
+
+
+@app.command("anomalies-reproduce")
+def anomalies_reproduce(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    version: Annotated[int, typer.Option(help="Anomaly recipe version (1 or 2)")] = 1,
+) -> None:
+    """Recompute the stored development run with the current code and compare everything it
+    stored (nothing is written); exit 1 on any difference."""
+    from gridcast.anomalies.reproduce import reproduce, summary_lines
+    from gridcast.database.engine import get_engine
+
+    rep = reproduce(get_engine(), load_config(), region, version)
+    for line in summary_lines(rep):
+        typer.echo(line)
+    if not rep.ok:
+        raise typer.Exit(1)
+
+
+@app.command("evaluate-holdout-anomalies")
+def evaluate_holdout_anomalies(
+    region: Annotated[str, typer.Option(help="Region id")] = "VIC1",
+    version: Annotated[int, typer.Option(help="Anomaly recipe version (1 or 2)")] = 1,
+    check_only: Annotated[
+        bool,
+        typer.Option("--check-only", help="Run the refusals and input checks only; score nothing"),
+    ] = False,
+) -> None:
+    """M4 step 6: the holdout anomaly run, scored ONCE per recipe hash (A6). It reproduces the
+    version's development run, checks the continuous run's development part, then scores and
+    stores the holdout; `gridcast report-m4-holdout` computes the criteria."""
+    import time
+
+    from gridcast.anomalies.holdout import (
+        HoldoutRefused,
+        HoldoutReproductionFailed,
+        check_lines,
+        preflight,
+        run_holdout,
+        summary_lines,
+    )
+    from gridcast.database.engine import get_engine
+    from gridcast.explainability.treeshap import GateError
+
+    cfg = load_config()
+    engine = get_engine()
+    t0 = time.perf_counter()
+    try:
+        pre = preflight(engine, cfg, region, version)
+        if check_only:
+            for line in check_lines(engine, cfg, region, pre):
+                typer.echo(line)
+            typer.echo("checks pass; nothing was scored")
+            return
+        stored = run_holdout(engine, cfg, region, version)
+    except HoldoutRefused as exc:
+        typer.echo(f"REFUSED: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except HoldoutReproductionFailed as exc:
+        typer.echo(f"STOPPED, nothing stored: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except GateError as exc:
+        typer.echo(f"E1 failed at a holdout demand peak, nothing stored: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    for line in summary_lines(stored):
+        typer.echo(line)
+    typer.echo(f"took {(time.perf_counter() - t0) / 60:.1f} min")
+
+
+@app.command("anomalies-diagnose-v1")
+def anomalies_diagnose_v1(region: Annotated[str, typer.Option(help="Region id")] = "VIC1") -> None:
+    """Write docs/m4_v1_diagnosis.md: why v1's D1, D4 and D6 failed (reported only; recomputes
+    v1's own state from the stored development run, scores no alternative)."""
+    from gridcast.anomalies.diagnosis import write_doc
+    from gridcast.database.engine import get_engine
+
+    path = write_doc(get_engine(), load_config(), region)
     typer.echo(f"wrote {path}")
 
 
