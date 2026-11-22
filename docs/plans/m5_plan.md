@@ -157,6 +157,11 @@ Every criterion is judged on the **Compose service** (Linux, arm64), because tha
      - `gridcast publish [--check-only]` (Make: `publish`, `publish-check`) and a `serving` config section (sources, period, sample sizes, latency limits; outside every frozen hash);
      - unit tests (reshape, missing pairs, a one-ulp difference is caught, rearrangement through the frozen function) and integration tests (tiny fixture parquet on the test database).
    - **1b (run):** check the Docker VM's disk, `make migrate`, `make publish`. Record P1 and P4 in the handoff.
+   - **Outcome (2026-11-23):** 1a `fe217fc`. 1b: the VM disk had 51 GB free of 63 GB; migration 0009 applied; `make publish` took 5.3 min (estimated 15–30), and all 8 publications succeeded.
+     - **P1 passes:** all 63,378,240 rows were read back and equal their parquet bit for bit. Before writing, the four 288-row samples (runs 39, 61, 11, 14) were found equal.
+     - **P4 passes:** 0 of 15,708,288 interval pairs are not nested. The sort repaired 1,522,159 development and 535,453 holdout pairs (M3's non-nesting shares, 14.3% and 10.6%).
+     - The interval metrics from Postgres equal those from the parquet. They are stored for runs 109 (development) and 110 (holdout), `cqr_lgbm_C_rearranged`. Pooled 80% coverage is 79.27% and 79.65%, matching the reports' 79.3% and 79.6%.
+     - The database grew from 1.6 to 10 GB (`forecasts` 7.1 GB, `forecast_intervals` 2.0 GB). `make publish-check` re-checks everything in 0.9 min, with no writes.
 2. **Stored endpoints:** `src/gridcast/api/` (app, settings, queries, response models), `/health`, `/v1/meta`, forecasts, evolution, price, actuals and anomalies; `docs/openapi.json` and its drift test; the invalid-input table and the hypothesis test; `make api`.
 3. **Model endpoints:** recompute and explain (§2.5), with integration tests on a few issue times from each split on the host.
 4. **Container:** `Dockerfile`, the Compose service, `make api-up` / `api-down`. Then `/health` and one recompute per split against the container (a smoke check, not P3).

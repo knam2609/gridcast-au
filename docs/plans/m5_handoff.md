@@ -2,6 +2,26 @@
 
 Read this, then [`m5_plan.md`](m5_plan.md). For the M4 history, see [`m4_handoff.md`](m4_handoff.md) and [`m4_plan.md`](m4_plan.md).
 
+> **Update, 2026-11-23 (twenty-fourth session): step 1 done** (local, not pushed). Numbers come from the `publications` rows and the publish log (`<data root>/logs/publish_20261123_031938.log`).
+> - **1a `fe217fc`:**
+>   - migration 0009 (`forecast_intervals` with nesting and finiteness CHECKs; `publications`);
+>   - `src/gridcast/serving/` (`sources.py` registry and refusals, `pgcopy.py` binary COPY, `publish.py`);
+>   - `gridcast publish [--check-only] [--product] [--split]`, `make publish` / `publish-check`;
+>   - a `serving` config section, outside every frozen hash (M2/M3/M4 hashes unchanged). It also fixes P2/P3/P5's sample sizes and limits before any measurement.
+>   - 513 unit and 94 integration tests pass.
+> - **1b:**
+>   - The Docker VM disk had 51 GB free of 63 GB (memory 4 GB). Migration 0009 is applied to the main database.
+>   - `make publish` took **5.3 min** (estimated 15–30). All 8 (product, split) publications succeeded.
+>   - **P1 passes:** 63,378,240 rows were read back and equal their parquet bit for bit. The four existing 288-row samples were equal before writing.
+>   - **P4 passes:** 0 of 15,708,288 interval pairs are non-nested.
+>   - New interval runs: **109** (development) and **110** (holdout), `cqr_lgbm_C_rearranged`. Their M3 metrics from Postgres equal those from the parquet and are stored. Pooled 80% coverage is 79.27% and 79.65% (reports: 79.3% and 79.6%).
+>   - The database grew from 1.6 to 10 GB; the VM disk now uses 18 of 63 GB, and the host has 35 GB free.
+>   - `make publish-check` passes in 0.9 min with no writes.
+> - **Next: step 2** (stored endpoints, `src/gridcast/api/`, adds `fastapi` and `uvicorn`). Points the plan leaves open, for a short question round:
+>   - the `/v1/anomalies` cursor format;
+>   - what `/health` counts as "publications complete" (proposed: the latest attempt of each of the 8 is `success`);
+>   - how much of the disclosure text `/v1/meta` carries.
+
 > **Update, 2026-11-22 (twenty-third session): M5 planned.** Branch `m5-api` from `main` at `e338672`. Nothing is pushed.
 > - **Three question rounds.** The user chose every recommendation except the storage layout:
 >   - stored outputs plus an exact recompute;
