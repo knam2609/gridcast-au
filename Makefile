@@ -8,7 +8,7 @@ VERSION ?= 1
 DAYS ?= 2026-10-01
 CHECK_MONTH ?= 2026-09
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe ingest-generation weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout anomaly-reference-events anomalies-smoke explain-smoke evidence-smoke anomalies-freeze-check anomalies-dev report-m4 anomalies-diagnose-v1 anomalies-reproduce evaluate-holdout-anomalies report-m4-holdout explain-dev explain-holdout report-m4-explain report-m4-explain-holdout catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe ingest-generation weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout anomaly-reference-events anomalies-smoke explain-smoke evidence-smoke anomalies-freeze-check anomalies-dev report-m4 anomalies-diagnose-v1 anomalies-reproduce evaluate-holdout-anomalies report-m4-holdout explain-dev explain-holdout report-m4-explain report-m4-explain-holdout publish publish-check catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -166,6 +166,12 @@ anomalies-diagnose-v1: ## M4 after step 4: docs/m4_v1_diagnosis.md, why v1's D1,
 
 anomalies-reproduce: ## M4 step 4f: recompute the stored development run with the current code; exit 1 on any difference
 	$(UV) run gridcast anomalies-reproduce --region $(firstword $(REGIONS)) --version $(VERSION)
+
+publish: ## M5 step 1: load forecasts, CQR rearranged intervals and price baselines into Postgres, read every row back (P1, P4); clean tree; ~15-30 min
+	$(UV) run gridcast publish
+
+publish-check: ## M5: check every published row against its parquet source again (no writes; exit 1 unless complete and exact)
+	$(UV) run gridcast publish --check-only
 
 catalogue: ## Regenerate docs/feature_catalogue.md from the feature catalogue in code
 	$(UV) run gridcast feature-catalogue

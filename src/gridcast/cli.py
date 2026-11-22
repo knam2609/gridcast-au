@@ -1409,6 +1409,57 @@ def anomalies_diagnose_v1(region: Annotated[str, typer.Option(help="Region id")]
     typer.echo(f"wrote {path}")
 
 
+@app.command("publish")
+def publish(
+    check_only: Annotated[
+        bool,
+        typer.Option("--check-only", help="Check what is stored against the sources; no writes"),
+    ] = False,
+    product: Annotated[
+        list[str] | None,
+        typer.Option(help="Only these products (repeatable; default: all four)"),
+    ] = None,
+    split: Annotated[
+        list[str] | None, typer.Option(help="Only these splits: dev, holdout (repeatable)")
+    ] = None,
+) -> None:
+    """M5: load the scored forecasts, intervals and price baselines into Postgres, then read
+    every row back and check it against its parquet source (P1, P4, interval metrics)."""
+    import time
+
+    from gridcast.config import SERVING_PRODUCTS, SERVING_SPLITS
+    from gridcast.database.engine import get_engine
+    from gridcast.provenance import git_sha
+    from gridcast.serving.publish import (
+        SUMMARY_HEADERS,
+        PublishRefused,
+        summary_rows,
+    )
+    from gridcast.serving.publish import (
+        publish as run_publish,
+    )
+
+    products = tuple(product or SERVING_PRODUCTS)
+    splits = tuple(split or SERVING_SPLITS)
+    unknown = (set(products) - set(SERVING_PRODUCTS)) | (set(splits) - set(SERVING_SPLITS))
+    if unknown:
+        raise typer.BadParameter(f"unknown product or split: {sorted(unknown)}")
+    t0 = time.perf_counter()
+    try:
+        results = run_publish(get_engine(), load_config(), check_only, git_sha(), products, splits)
+    except PublishRefused as exc:
+        typer.echo(f"refused, nothing written: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(tabulate(summary_rows(results), headers=SUMMARY_HEADERS, tablefmt="github"))
+    for r in results:
+        if r.after is not None and not r.after.complete:
+            typer.echo(f"{r.label}: {r.after.describe()}")
+    typer.echo(f"took {(time.perf_counter() - t0) / 60:.1f} min")
+    good = {"complete"} if check_only else {"success"}
+    if any(r.status not in good for r in results):
+        raise typer.Exit(code=1)
+
+
 @app.command("feature-catalogue")
 def feature_catalogue() -> None:
     """Write docs/feature_catalogue.md from the feature catalogue in code (no database)."""
