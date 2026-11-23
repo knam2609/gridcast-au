@@ -8,7 +8,7 @@ VERSION ?= 1
 DAYS ?= 2026-10-01
 CHECK_MONTH ?= 2026-09
 
-.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe ingest-generation weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout anomaly-reference-events anomalies-smoke explain-smoke evidence-smoke anomalies-freeze-check anomalies-dev report-m4 anomalies-diagnose-v1 anomalies-reproduce evaluate-holdout-anomalies report-m4-holdout explain-dev explain-holdout report-m4-explain report-m4-explain-holdout publish publish-check catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe ingest-generation weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout anomaly-reference-events anomalies-smoke explain-smoke evidence-smoke anomalies-freeze-check anomalies-dev report-m4 anomalies-diagnose-v1 anomalies-reproduce evaluate-holdout-anomalies report-m4-holdout explain-dev explain-holdout report-m4-explain report-m4-explain-holdout publish publish-check api api-schema catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -172,6 +172,12 @@ publish: ## M5 step 1: load forecasts, CQR rearranged intervals and price baseli
 
 publish-check: ## M5: check every published row against its parquet source again (no writes; exit 1 unless complete and exact)
 	$(UV) run gridcast publish --check-only
+
+api: ## M5: run the API locally on http://127.0.0.1:8000 (uvicorn; docs at /docs)
+	$(UV) run uvicorn gridcast.api.app:create_app --factory --host 127.0.0.1 --port 8000
+
+api-schema: ## M5: write docs/openapi.json from the app (the committed contract the tests check)
+	$(UV) run gridcast api-schema
 
 catalogue: ## Regenerate docs/feature_catalogue.md from the feature catalogue in code
 	$(UV) run gridcast feature-catalogue

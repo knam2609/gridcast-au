@@ -1460,6 +1460,15 @@ def publish(
         raise typer.Exit(code=1)
 
 
+@app.command("api-schema")
+def api_schema() -> None:
+    """Write docs/openapi.json, the API contract a unit test checks the app against."""
+    from gridcast.api.app import create_app
+    from gridcast.api.schema import write_schema
+
+    typer.echo(f"wrote {write_schema(create_app())}")
+
+
 @app.command("feature-catalogue")
 def feature_catalogue() -> None:
     """Write docs/feature_catalogue.md from the feature catalogue in code (no database)."""

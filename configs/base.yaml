@@ -359,6 +359,9 @@ serving:
     price_median_profile:
       dev: {run_id: 14, batch_id: "07acd3a0-8b48-43b1-8d23-908ba23ac0c6", model_name: median_profile}
       holdout: {run_id: 14, batch_id: "07acd3a0-8b48-43b1-8d23-908ba23ac0c6", model_name: median_profile}
+  anomaly_runs:                 # recipe v2 (M4: "M5 and M6 serve v2"); v1's runs are not served
+    dev: {run_id: 106, batch_id: "0ff972b0-9d46-4ca0-a84f-86d85c450be1", model_name: anomalies}
+    holdout: {run_id: 108, batch_id: "96ac5ebd-1220-4f5b-aec0-04f53c9963ca", model_name: anomalies}
   verify:
     # P2, P3 and P5 (m5_plan.md §3), fixed 2026-11-22 before any API code or measurement.
     seed: 505

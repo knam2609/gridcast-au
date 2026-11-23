@@ -167,6 +167,11 @@ Every criterion is judged on the **Compose service** (Linux, arm64), because tha
      - **`/v1/anomalies` pages with a keyset cursor.** Events are ordered by (first interval end, `event_id`). The response carries an opaque `next` cursor encoding the last event's pair, and `after=<cursor>` continues from it.
      - **`/health`'s "publications complete":** for each of the 8 (product, split), the most recent `publications` row has status `success`. A later failed or running attempt makes `/health` report degraded.
      - **`/v1/meta` disclosures:** one sentence for each disclosure of §3.3, each with the report it comes from. The text is kept in code, and a test checks that all five are present.
+   - **Outcome (2026-11-23):** done; see the handoff. Clarified while building:
+     - bounds are served as the exact float64 of the stored float32 (psycopg returns `real` as its shortest decimal);
+     - `/v1/actuals` returns the intervals lying inside [start, end];
+     - `/v1/anomalies` returns an empty page, not 404, when no event matches;
+     - the v2 anomaly runs are named in `serving.anomaly_runs` and checked at startup.
 3. **Model endpoints:** recompute and explain (§2.5), with integration tests on a few issue times from each split on the host.
 4. **Container:** `Dockerfile`, the Compose service, `make api-up` / `api-down`. Then `/health` and one recompute per split against the container (a smoke check, not P3).
 5. **Verification:**

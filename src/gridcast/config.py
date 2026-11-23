@@ -606,6 +606,8 @@ class ServingConfig(BaseModel):
     interval_levels: list[int]  # the published bounds, percent
     interval_model: str  # model_runs name of the published (rearranged) intervals
     sources: dict[str, dict[str, ServingSourceRun]]  # product -> split -> source run
+    # The served anomaly runs (recipe v2), by split; checked against anomalies_v2's freeze.
+    anomaly_runs: dict[str, ServingSourceRun]
     verify: ServingVerifyConfig
     output_dir: Path = Path("serving")  # under the data root: api-verify results
 
@@ -619,6 +621,13 @@ class ServingConfig(BaseModel):
         for product, splits in v.items():
             if set(splits) != set(SERVING_SPLITS):
                 raise ValueError(f"serving.sources.{product} must name {list(SERVING_SPLITS)}")
+        return v
+
+    @field_validator("anomaly_runs")
+    @classmethod
+    def _every_split(cls, v: dict[str, ServingSourceRun]) -> dict[str, ServingSourceRun]:
+        if set(v) != set(SERVING_SPLITS):
+            raise ValueError(f"serving.anomaly_runs must name {list(SERVING_SPLITS)}")
         return v
 
 

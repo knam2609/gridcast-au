@@ -2,6 +2,27 @@
 
 Read this, then [`m5_plan.md`](m5_plan.md). For the M4 history, see [`m4_handoff.md`](m4_handoff.md) and [`m4_plan.md`](m4_plan.md).
 
+> **Update, 2026-11-23 (twenty-fourth session, later): step 2 done** (local, not pushed). The stored endpoints are in `src/gridcast/api/`.
+> - **Modules:**
+>   - `app.py`: the `create_app` factory; `make api` runs it with uvicorn `--factory`.
+>   - `inputs.py`: timestamps, grids, the keyset cursor; errors map to 422/404/503.
+>   - `catalogue.py`: a read-only engine (`default_transaction_read_only`); the latest successful publication per (product, split); provenance; pooled metrics; the v2 anomaly runs, checked against `anomalies_v2.frozen_config_hash`.
+>   - `queries.py`, `models.py` (typed responses), `meta.py` (labels, the five disclosures, licences), `schema.py`.
+> - **Contract:**
+>   - `docs/openapi.json` is written by `gridcast api-schema` / `make api-schema`; a unit test fails on drift.
+>   - Every error is `{"detail": "<message>"}`, including FastAPI's own validation errors.
+>   - CORS is any origin, GET only.
+>   - `serving.anomaly_runs` (106, 108) was added to the config, outside every hash.
+> - **Exactness:** bounds come back from psycopg as their shortest float32 decimal. `queries.real` turns each into the exact float64 of the stored float32, as plan §1 says (points already were). A unit test checks the JSON round trip on 1,000 values.
+> - **Tests:**
+>   - unit: inputs, cursor, float exactness, schema drift, disclosures, the invalid-input table, database down → 503, GET only;
+>   - integration on the published fixtures: every demand forecast and its bounds, evolution, price, actuals, anomaly paging (v2 only, keyset order), each event against its row, read-only engine;
+>   - a hypothesis search over query parameters, 300 examples, with no 500;
+>   - 549 unit and 107 integration tests pass.
+> - **A bug found and fixed before commit:** the catalogue lock deadlocked (`Lock`, re-entered through the engine property). It is now an `RLock`.
+> - **Smoke run against the main database (in-process TestClient, informal, not P5):** every endpoint answered in 1–16 ms, and `/health` was `ok`.
+> - **Next: step 3** (recompute and explain, §2.5: feature context and fits loaded at startup, M2's code path, M4's `explain_pairs` with E1's gate, `/health` gains model-file and feature-context checks).
+
 > **Update, 2026-11-23 (twenty-fourth session): step 1 done** (local, not pushed). Numbers come from the `publications` rows and the publish log (`<data root>/logs/publish_20261123_031938.log`).
 > - **1a `fe217fc`:**
 >   - migration 0009 (`forecast_intervals` with nesting and finiteness CHECKs; `publications`);
