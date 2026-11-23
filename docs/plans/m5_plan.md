@@ -163,6 +163,10 @@ Every criterion is judged on the **Compose service** (Linux, arm64), because tha
      - The interval metrics from Postgres equal those from the parquet. They are stored for runs 109 (development) and 110 (holdout), `cqr_lgbm_C_rearranged`. Pooled 80% coverage is 79.27% and 79.65%, matching the reports' 79.3% and 79.6%.
      - The database grew from 1.6 to 10 GB (`forecasts` 7.1 GB, `forecast_intervals` 2.0 GB). `make publish-check` re-checks everything in 0.9 min, with no writes.
 2. **Stored endpoints:** `src/gridcast/api/` (app, settings, queries, response models), `/health`, `/v1/meta`, forecasts, evolution, price, actuals and anomalies; `docs/openapi.json` and its drift test; the invalid-input table and the hypothesis test; `make api`.
+   - **Decided in step 2's question round (2026-11-23; the user chose every recommendation):**
+     - **`/v1/anomalies` pages with a keyset cursor.** Events are ordered by (first interval end, `event_id`). The response carries an opaque `next` cursor encoding the last event's pair, and `after=<cursor>` continues from it.
+     - **`/health`'s "publications complete":** for each of the 8 (product, split), the most recent `publications` row has status `success`. A later failed or running attempt makes `/health` report degraded.
+     - **`/v1/meta` disclosures:** one sentence for each disclosure of §3.3, each with the report it comes from. The text is kept in code, and a test checks that all five are present.
 3. **Model endpoints:** recompute and explain (§2.5), with integration tests on a few issue times from each split on the host.
 4. **Container:** `Dockerfile`, the Compose service, `make api-up` / `api-down`. Then `/health` and one recompute per split against the container (a smoke check, not P3).
 5. **Verification:**

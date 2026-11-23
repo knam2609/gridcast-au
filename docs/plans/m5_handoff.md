@@ -17,10 +17,11 @@ Read this, then [`m5_plan.md`](m5_plan.md). For the M4 history, see [`m4_handoff
 >   - New interval runs: **109** (development) and **110** (holdout), `cqr_lgbm_C_rearranged`. Their M3 metrics from Postgres equal those from the parquet and are stored. Pooled 80% coverage is 79.27% and 79.65% (reports: 79.3% and 79.6%).
 >   - The database grew from 1.6 to 10 GB; the VM disk now uses 18 of 63 GB, and the host has 35 GB free.
 >   - `make publish-check` passes in 0.9 min with no writes.
-> - **Next: step 2** (stored endpoints, `src/gridcast/api/`, adds `fastapi` and `uvicorn`). Points the plan leaves open, for a short question round:
->   - the `/v1/anomalies` cursor format;
->   - what `/health` counts as "publications complete" (proposed: the latest attempt of each of the 8 is `success`);
->   - how much of the disclosure text `/v1/meta` carries.
+> - **Step 2 question round (same session):** the user chose every recommendation (plan §4, step 2):
+>   - a keyset cursor for `/v1/anomalies`;
+>   - `/health` checks that the latest publication attempt of each of the 8 succeeded;
+>   - `/v1/meta` carries one sentence per §3.3 disclosure, with its report.
+> - **Next: step 2** (stored endpoints, `src/gridcast/api/`, adds `fastapi` and `uvicorn`).
 
 > **Update, 2026-11-22 (twenty-third session): M5 planned.** Branch `m5-api` from `main` at `e338672`. Nothing is pushed.
 > - **Three question rounds.** The user chose every recommendation except the storage layout:
