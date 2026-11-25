@@ -12,7 +12,7 @@
           "service"
         ],
         "summary": "Health",
-        "description": "Database, publications (the latest attempt of each succeeded) and anomaly runs.",
+        "description": "Database, publications (the latest attempt of each succeeded), anomaly runs, and\nwhat recompute and explain need: the feature context and every model file.",
         "operationId": "health_health_get",
         "responses": {
           "200": {
@@ -217,6 +217,199 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/forecasts/demand/recompute": {
+      "get": {
+        "tags": [
+          "model"
+        ],
+        "summary": "Recompute",
+        "description": "One issue time's LightGBM C forecast rebuilt from the stored model (M2's code path)\nand compared with the stored forecast, lead by lead.",
+        "operationId": "recompute_v1_forecasts_demand_recompute_get",
+        "parameters": [
+          {
+            "name": "issue_time",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Issue time on the 30-minute grid",
+              "title": "Issue Time"
+            },
+            "description": "Issue time on the 30-minute grid"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "NEM region; only VIC1 is published",
+              "default": "VIC1",
+              "title": "Region"
+            },
+            "description": "NEM region; only VIC1 is published"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Recompute"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Valid input, nothing published there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database, the feature context or the model files are unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A published issue time has no stored fit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/forecasts/demand/explain": {
+      "get": {
+        "tags": [
+          "model"
+        ],
+        "summary": "Explain",
+        "description": "SHAP of the stored forecast, per lead: forecast = anchor + base value + Σ\ncontributions, by feature (with its value) and by family. Only leads with a stored\nforecast are explained; withheld (500) if E1's gate fails.",
+        "operationId": "explain_v1_forecasts_demand_explain_get",
+        "parameters": [
+          {
+            "name": "issue_time",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Issue time on the 30-minute grid",
+              "title": "Issue Time"
+            },
+            "description": "Issue time on the 30-minute grid"
+          },
+          {
+            "name": "lead",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One lead, 1…288 (default: every lead)",
+              "title": "Lead"
+            },
+            "description": "One lead, 1…288 (default: every lead)"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "NEM region; only VIC1 is published",
+              "default": "VIC1",
+              "title": "Region"
+            },
+            "description": "NEM region; only VIC1 is published"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Explanation"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Valid input, nothing published there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database, the feature context or the model files are unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "E1's gate failed (explanations withheld), or a server fault",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GateFailure"
                 }
               }
             }
@@ -744,6 +937,29 @@
           "intervals"
         ],
         "title": "Actuals"
+      },
+      "Anchor": {
+        "properties": {
+          "mw": {
+            "type": "number",
+            "title": "Mw",
+            "description": "The target form's fixed term (0 for direct)"
+          },
+          "terms": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Terms",
+            "description": "The features it adds up, each with weight 1"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mw",
+          "terms"
+        ],
+        "title": "Anchor"
       },
       "AnomalyEvent": {
         "properties": {
@@ -1413,6 +1629,337 @@
         ],
         "title": "EvolutionItem"
       },
+      "ExplainedLead": {
+        "properties": {
+          "lead": {
+            "type": "integer",
+            "title": "Lead"
+          },
+          "lead_minutes": {
+            "type": "integer",
+            "title": "Lead Minutes"
+          },
+          "target_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Target End"
+          },
+          "fit": {
+            "type": "integer",
+            "title": "Fit",
+            "description": "Index into `fits`"
+          },
+          "target_form": {
+            "type": "string",
+            "title": "Target Form"
+          },
+          "forecast_mw": {
+            "type": "number",
+            "title": "Forecast Mw",
+            "description": "The stored forecast (float32)"
+          },
+          "forecast_float64_mw": {
+            "type": "number",
+            "title": "Forecast Float64 Mw",
+            "description": "M2's forecast before the float32 cast: anchor + base value + Σ contributions (within the gate's tolerance)"
+          },
+          "anchor": {
+            "$ref": "#/components/schemas/Anchor"
+          },
+          "base_value_mw": {
+            "type": "number",
+            "title": "Base Value Mw",
+            "description": "The booster's expected raw prediction"
+          },
+          "families": {
+            "items": {
+              "$ref": "#/components/schemas/FamilyContribution"
+            },
+            "type": "array",
+            "title": "Families"
+          },
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureContribution"
+            },
+            "type": "array",
+            "title": "Features"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lead",
+          "lead_minutes",
+          "target_end",
+          "fit",
+          "target_form",
+          "forecast_mw",
+          "forecast_float64_mw",
+          "anchor",
+          "base_value_mw",
+          "families",
+          "features"
+        ],
+        "title": "ExplainedLead"
+      },
+      "Explanation": {
+        "properties": {
+          "region": {
+            "type": "string",
+            "title": "Region"
+          },
+          "issue_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Issue Time"
+          },
+          "split": {
+            "type": "string",
+            "enum": [
+              "dev",
+              "holdout"
+            ],
+            "title": "Split"
+          },
+          "unit": {
+            "type": "string",
+            "const": "MW",
+            "title": "Unit",
+            "default": "MW"
+          },
+          "point_run_id": {
+            "type": "integer",
+            "title": "Point Run Id"
+          },
+          "method": {
+            "type": "string",
+            "title": "Method"
+          },
+          "gate": {
+            "$ref": "#/components/schemas/Gate"
+          },
+          "leads_without_forecast": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Leads Without Forecast",
+            "description": "Requested leads with no stored forecast (not explained)"
+          },
+          "fits": {
+            "items": {
+              "$ref": "#/components/schemas/FitUsed"
+            },
+            "type": "array",
+            "title": "Fits"
+          },
+          "leads": {
+            "items": {
+              "$ref": "#/components/schemas/ExplainedLead"
+            },
+            "type": "array",
+            "title": "Leads"
+          }
+        },
+        "type": "object",
+        "required": [
+          "region",
+          "issue_time",
+          "split",
+          "point_run_id",
+          "method",
+          "gate",
+          "leads_without_forecast",
+          "fits",
+          "leads"
+        ],
+        "title": "Explanation"
+      },
+      "FamilyContribution": {
+        "properties": {
+          "family": {
+            "type": "string",
+            "title": "Family"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "contribution_mw": {
+            "type": "number",
+            "title": "Contribution Mw"
+          }
+        },
+        "type": "object",
+        "required": [
+          "family",
+          "title",
+          "contribution_mw"
+        ],
+        "title": "FamilyContribution"
+      },
+      "FeatureContribution": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "family": {
+            "type": "string",
+            "title": "Family"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value",
+            "description": "The float32 feature value the model saw"
+          },
+          "contribution_mw": {
+            "type": "number",
+            "title": "Contribution Mw"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "family",
+          "value",
+          "contribution_mw"
+        ],
+        "title": "FeatureContribution"
+      },
+      "FitUsed": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index",
+            "description": "Position in `fits`; leads refer to it"
+          },
+          "batch_id": {
+            "type": "string",
+            "title": "Batch Id"
+          },
+          "retrain": {
+            "type": "string",
+            "title": "Retrain",
+            "description": "NEM date of the retrain"
+          },
+          "first_lead": {
+            "type": "integer",
+            "title": "First Lead"
+          },
+          "last_lead": {
+            "type": "integer",
+            "title": "Last Lead"
+          },
+          "target_form": {
+            "type": "string",
+            "title": "Target Form",
+            "description": "direct, latest, residual or anchored (M2)"
+          },
+          "objective": {
+            "type": "string",
+            "title": "Objective"
+          },
+          "num_leaves": {
+            "type": "integer",
+            "title": "Num Leaves"
+          },
+          "n_trees": {
+            "type": "integer",
+            "title": "N Trees"
+          },
+          "model_file": {
+            "type": "string",
+            "title": "Model File",
+            "description": "Relative to the data root"
+          },
+          "leads_recomputed": {
+            "type": "integer",
+            "title": "Leads Recomputed",
+            "description": "Leads of this issue time it forecast"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "batch_id",
+          "retrain",
+          "first_lead",
+          "last_lead",
+          "target_form",
+          "objective",
+          "num_leaves",
+          "n_trees",
+          "model_file",
+          "leads_recomputed"
+        ],
+        "title": "FitUsed",
+        "description": "One stored LightGBM C fit (M2's retrain record) that forecast this issue time."
+      },
+      "Gate": {
+        "properties": {
+          "n": {
+            "type": "integer",
+            "title": "N"
+          },
+          "forecast_mismatches": {
+            "type": "integer",
+            "title": "Forecast Mismatches",
+            "description": "float32(recomputed) ≠ stored"
+          },
+          "max_forecast_diff_mw": {
+            "type": "number",
+            "title": "Max Forecast Diff Mw"
+          },
+          "sum_failures": {
+            "type": "integer",
+            "title": "Sum Failures",
+            "description": "|base value + Σ contributions − raw| > tolerance"
+          },
+          "max_sum_error": {
+            "type": "number",
+            "title": "Max Sum Error"
+          },
+          "tolerance": {
+            "type": "number",
+            "title": "Tolerance"
+          },
+          "passed": {
+            "type": "boolean",
+            "title": "Passed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "n",
+          "forecast_mismatches",
+          "max_forecast_diff_mw",
+          "sum_failures",
+          "max_sum_error",
+          "tolerance",
+          "passed"
+        ],
+        "title": "Gate",
+        "description": "Criterion E1's gate over the explained leads (m4_plan.md §3)."
+      },
+      "GateFailure": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "gate": {
+            "$ref": "#/components/schemas/Gate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail",
+          "gate"
+        ],
+        "title": "GateFailure",
+        "description": "HTTP 500: E1's gate failed, so the explanations are withheld."
+      },
       "Health": {
         "properties": {
           "status": {
@@ -1913,6 +2460,162 @@
           "metrics"
         ],
         "title": "PublishedSplit"
+      },
+      "Recompute": {
+        "properties": {
+          "region": {
+            "type": "string",
+            "title": "Region"
+          },
+          "issue_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Issue Time"
+          },
+          "split": {
+            "type": "string",
+            "enum": [
+              "dev",
+              "holdout"
+            ],
+            "title": "Split"
+          },
+          "unit": {
+            "type": "string",
+            "const": "MW",
+            "title": "Unit",
+            "default": "MW"
+          },
+          "point_run_id": {
+            "type": "integer",
+            "title": "Point Run Id"
+          },
+          "matches_stored": {
+            "type": "boolean",
+            "title": "Matches Stored",
+            "description": "Every lead matches: the same leads are null, the others are equal float32"
+          },
+          "leads_stored": {
+            "type": "integer",
+            "title": "Leads Stored"
+          },
+          "leads_recomputed": {
+            "type": "integer",
+            "title": "Leads Recomputed"
+          },
+          "leads_differing": {
+            "type": "integer",
+            "title": "Leads Differing"
+          },
+          "max_abs_diff_mw": {
+            "type": "number",
+            "title": "Max Abs Diff Mw",
+            "description": "Largest |recomputed − stored| (float32 values)"
+          },
+          "max_float64_diff_mw": {
+            "type": "number",
+            "title": "Max Float64 Diff Mw",
+            "description": "Largest |M2's float64 forecast − stored float32|, for information"
+          },
+          "fits": {
+            "items": {
+              "$ref": "#/components/schemas/FitUsed"
+            },
+            "type": "array",
+            "title": "Fits"
+          },
+          "leads": {
+            "items": {
+              "$ref": "#/components/schemas/RecomputeLead"
+            },
+            "type": "array",
+            "title": "Leads"
+          }
+        },
+        "type": "object",
+        "required": [
+          "region",
+          "issue_time",
+          "split",
+          "point_run_id",
+          "matches_stored",
+          "leads_stored",
+          "leads_recomputed",
+          "leads_differing",
+          "max_abs_diff_mw",
+          "max_float64_diff_mw",
+          "fits",
+          "leads"
+        ],
+        "title": "Recompute"
+      },
+      "RecomputeLead": {
+        "properties": {
+          "lead": {
+            "type": "integer",
+            "title": "Lead"
+          },
+          "lead_minutes": {
+            "type": "integer",
+            "title": "Lead Minutes"
+          },
+          "target_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Target End"
+          },
+          "recomputed_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recomputed Mw",
+            "description": "M2's code path on the rebuilt feature row, cast to float32 as M2 stored it; null where the row is incomplete (M2 forecast only complete rows)"
+          },
+          "stored_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stored Mw"
+          },
+          "matches": {
+            "type": "boolean",
+            "title": "Matches",
+            "description": "Both null, or equal float32 values"
+          },
+          "fit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fit",
+            "description": "Index into `fits`; null where nothing was recomputed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lead",
+          "lead_minutes",
+          "target_end",
+          "recomputed_mw",
+          "stored_mw",
+          "matches",
+          "fit"
+        ],
+        "title": "RecomputeLead"
       },
       "RunRef": {
         "properties": {

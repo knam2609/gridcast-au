@@ -100,7 +100,7 @@ It is idempotent, so a rerun inserts nothing new and checks again. `--check-only
 
 ### 2.5 Recompute and explain
 
-- **At startup** (FastAPI lifespan): the feature context and weather inputs are loaded once (3.9 s when measured during planning). So are the stored fits of both splits: run 2's (`explain.dev_batch`) and `holdout_main`'s (`explain.holdout_batch`). Boosters load on first use and are cached (132 MB of model files).
+- **At startup** (FastAPI lifespan): the feature context and weather inputs are loaded once (3.9 s when measured during planning). So are the stored fits of both splits: run 2's (`explain.dev_batch`) and `holdout_main`'s (`explain.holdout_batch`). Boosters load on first use and are cached (132 MB of model files). *Changed in step 3's question round: every booster loads at startup (step 3 below).*
 - **Recompute** goes through M2's own code path (`LightGBMModel`, anchor + `booster.predict`), casts to float32 as M2 stored it, and compares with the published row.
 - **Explain** reuses M4's `explainability.pairs.explain_pairs`: TreeSHAP and E1's gate (the forecast is float32-exact; base value + Σ contributions equals the raw prediction within `explain.sum_tolerance`). It groups contributions with M4's feature families.
 - Building one issue time's 288 feature rows took 2.6 ms during planning.
@@ -184,6 +184,13 @@ Every criterion is judged on the **Compose service** (Linux, arm64), because tha
      - **Boosters load at startup**, with the feature context (a change to §2.5, which loaded them on first use). `/health`'s model check means that every booster parsed and matched its record (trees, feature names). If the SSD is missing at startup, the next model request retries.
      - **Real-model tests** carry a new opt-in pytest marker, `host` (`make test-host`), skipped by default. They use the main database and the SSD: a few issue times per split, a gap, a fold boundary, and the `2025-08-01` fits that both batches hold. They are informal; P3 is judged in the container in step 5. Fixture tests on small synthetic walk-forward models run in the normal suites.
    - **Decided while planning the step (not asked):** model requests are serialized by one lock. They are CPU-bound, and LightGBM already uses `ml.lightgbm.num_threads` per call. Recompute serves the float32 M2 would have stored, as its exact float64, beside the stored value, and gives the largest float64 difference for information, as E1's gate does.
+   - **Outcome (2026-11-26):** done; see the handoff. Clarified while building:
+     - **Explain composes the frozen functions** that `explain_pairs` is made of (`locate`, `feature_rows`, `explain`, `gate`) instead of calling it, because `explain_pairs` does not return the feature rows the response now serves. `explainability/` is unchanged.
+     - **The API's fits** come from the same frozen functions as `stored_fits` (`batch_config`, `fits_from_records`, `split_period`), without its check that the data root exists. So an unmounted drive fails only the boosters, not the feature context. A host test checks that both give equal fits.
+     - **Errors:** recompute and explain answer 503 until both parts are loaded, with the reason and no host path. A server fault (a published issue time without a fit, or a stored value that is not float32) is a JSON 500. A failed gate is a 500 whose body carries the gate.
+     - **The published run must be the fits' batch** (checked per request against the catalogue), and `serving.sources.demand_point` must name `anomalies.explain`'s batches (checked at load).
+     - **`/health`** gains `feature_context` and `model_files`. When either fails the status is `degraded`, not 503, because the stored endpoints still work.
+     - **The explain body is about 1.05 MB** for all 288 leads (one lead: about 4.7 KB). In the question round I estimated about 0.3 MB; the per-feature objects and the full-precision values make it larger.
 4. **Container:** `Dockerfile`, the Compose service, `make api-up` / `api-down`. Then `/health` and one recompute per split against the container (a smoke check, not P3).
 5. **Verification:**
    - **5a:** `gridcast api-verify` and `gridcast report-m5`, committed before any run.

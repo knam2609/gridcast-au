@@ -79,9 +79,10 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers -m 'not integration'"
+addopts = "-ra --strict-markers -m 'not integration and not host'"
 markers = [
     "integration: requires the docker-compose PostgreSQL service (run with `make test-integration`)",
+    "host: reads the main database and the data root's model files, read-only (run with `make test-host`)",
 ]
 filterwarnings = [
     "error::FutureWarning",

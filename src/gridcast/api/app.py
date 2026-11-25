@@ -8,7 +8,11 @@ Run: ``uvicorn gridcast.api.app:create_app --factory`` (``make api``).
   nothing published, 503 when the database (or a product) is unavailable. User input never
   produces a 500.
 * ``/health`` answers 503 only when the stored endpoints cannot work (database down or a
-  publication incomplete); ``degraded`` means they work but something else does not.
+  publication incomplete); ``degraded`` means they work but something else does not (the
+  anomaly runs, or the feature context and model files that recompute and explain need).
+* Recompute and explain (step 3) answer 503 until the feature context and every booster are
+  loaded (:mod:`gridcast.api.runtime`), and 500 only for a server fault: a published issue
+  time without a stored fit, or E1's gate failing (the explanations are then withheld).
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
+import numpy as np
 import pandas as pd
 from fastapi import FastAPI, Path, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -29,6 +34,7 @@ from sqlalchemy.exc import OperationalError
 
 from gridcast.api import models as m
 from gridcast.api import queries as q
+from gridcast.api import runtime as rt
 from gridcast.api.catalogue import Catalogue, Published, latest_attempts, load_catalogue
 from gridcast.api.catalogue import read_only_engine as make_engine
 from gridcast.api.inputs import (
@@ -45,6 +51,7 @@ from gridcast.api.inputs import (
 )
 from gridcast.api.meta import API_VERSION, build_meta
 from gridcast.config import SERVING_PRODUCTS, SERVING_SPLITS, AppConfig, get_settings, load_config
+from gridcast.explainability.treeshap import GateError, GateResult, require
 from gridcast.logs import get_logger
 
 log = get_logger(__name__)
@@ -80,6 +87,28 @@ ERRORS: dict[int | str, dict[str, Any]] = {
     422: {"model": m.ErrorBody, "description": "Invalid input"},
     503: {"model": m.ErrorBody, "description": "The database or a product is unavailable"},
 }
+MODEL_ERRORS: dict[int | str, dict[str, Any]] = {
+    **ERRORS,
+    500: {"model": m.ErrorBody, "description": "A published issue time has no stored fit"},
+    503: {
+        "model": m.ErrorBody,
+        "description": "The database, the feature context or the model files are unavailable",
+    },
+}
+EXPLAIN_ERRORS: dict[int | str, dict[str, Any]] = {
+    **MODEL_ERRORS,
+    500: {
+        "model": m.GateFailure,
+        "description": "E1's gate failed (explanations withheld), or a server fault",
+    },
+}
+EXPLAIN_METHOD = (
+    "TreeSHAP (LightGBM's built-in pred_contrib, path-dependent) of the stored M2 booster, "
+    "which predicts its target form's correction to an anchor: forecast = anchor + base "
+    "value + sum of contributions. The anchor is fixed by the target form (0 for direct). "
+    "Contributions describe the model, not causes. E1's gate (m4_plan.md §3) must pass for "
+    "every explained lead."
+)
 
 
 def description(cfg: AppConfig) -> str:
@@ -95,16 +124,21 @@ def description(cfg: AppConfig) -> str:
 
 
 RegionQ = Annotated[str, Query(description="NEM region; only VIC1 is published")]
+LeadQ = Annotated[int | None, Query(ge=1, description="One lead, 1…288 (default: every lead)")]
 
 
 class ApiState:
-    """The configuration, the read-only engine and the catalogue (loaded once, lazily)."""
+    """The configuration, the read-only engine, the catalogue (loaded once, lazily) and the
+    model runtime of recompute and explain."""
 
-    def __init__(self, cfg: AppConfig, engine: Engine | None) -> None:
+    def __init__(
+        self, cfg: AppConfig, engine: Engine | None, models: rt.ModelRuntime | None = None
+    ) -> None:
         self.cfg = cfg
         self._engine = engine
         self._catalogue: Catalogue | None = None
         self._lock = threading.RLock()  # catalogue() takes it, then engine does
+        self.models = models if models is not None else rt.ModelRuntime(cfg, lambda: self.engine)
 
     @property
     def engine(self) -> Engine:
@@ -176,6 +210,67 @@ def _summary(r: Any) -> dict[str, Any]:
     }
 
 
+def _demand_point(cat: Catalogue, t: pd.Timestamp) -> tuple[str, Published]:
+    """The split and the demand point publication of issue time ``t`` (404 if none)."""
+    split = cat.split_of(t)
+    pub = _need(cat, "demand_point", split)
+    if not pub.covers(t):
+        pubs = [p for s in SERVING_SPLITS if (p := cat.get("demand_point", s))]
+        raise NotPublished(
+            f"no demand forecast issued at {t.isoformat()}; published: {_range_text(pubs)}"
+        )
+    return split, pub
+
+
+def _check_fits_batch(cat: Catalogue, cfg: AppConfig, split: str, pub: Published) -> str:
+    """The published run must be the one whose fits are loaded; returns its batch."""
+    ex = cfg.anomalies.explain
+    want = ex.dev_batch if split == "dev" else ex.holdout_batch
+    run = cat.runs.get(pub.run_id)
+    if run is None or run.batch_id != want or run.model_name != ex.model:
+        raise Unavailable(
+            f"the published {split} demand run {pub.run_id} is not {ex.model} of batch {want}, "
+            "whose fits are loaded"
+        )
+    return want
+
+
+def _fits_used(
+    cfg: AppConfig, rows: rt.Rows, batch: str, counted: np.ndarray
+) -> tuple[list[m.FitUsed], dict[int, int]]:
+    """The fits covering the issue time, each with how many of ``counted`` leads it made."""
+    ks = sorted({int(k) for k in rows.where})
+    index = {k: i for i, k in enumerate(ks)}
+    out = []
+    for k in ks:
+        f = rows.fits[k]
+        out.append(
+            m.FitUsed(
+                index=index[k],
+                batch_id=batch,
+                retrain=f.retrain,
+                first_lead=f.band[0],
+                last_lead=f.band[1],
+                target_form=f.target_form,
+                objective=f.objective,
+                num_leaves=f.num_leaves,
+                n_trees=f.n_trees,
+                model_file=rt.relative_file(cfg, f.path),
+                leads_recomputed=int((counted & (rows.where == k)).sum()),
+            )
+        )
+    return out, index
+
+
+def _gate(result: GateResult) -> m.Gate:
+    return m.Gate(**result.as_dict())  # type: ignore[arg-type]
+
+
+def _f(value: Any) -> float | None:
+    v = float(value)
+    return v if np.isfinite(v) else None
+
+
 def _validation_message(exc: RequestValidationError) -> str:
     parts = []
     for err in exc.errors():
@@ -191,9 +286,15 @@ def _handler(status: int) -> Callable[[Request, Exception], Any]:
     return handle
 
 
-def create_app(cfg: AppConfig | None = None, engine: Engine | None = None) -> FastAPI:
-    """The API. ``engine`` defaults to a read-only engine on ``GRIDCAST_DATABASE_URL``."""
-    state = ApiState(cfg or load_config(), engine)
+def create_app(
+    cfg: AppConfig | None = None,
+    engine: Engine | None = None,
+    models: rt.ModelRuntime | None = None,
+) -> FastAPI:
+    """The API. ``engine`` defaults to a read-only engine on ``GRIDCAST_DATABASE_URL``;
+    ``models`` (recompute and explain) to a runtime loading from that engine and the data root.
+    """
+    state = ApiState(cfg or load_config(), engine, models)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -201,6 +302,7 @@ def create_app(cfg: AppConfig | None = None, engine: Engine | None = None) -> Fa
             state.catalogue()
         except Unavailable as exc:  # the stored endpoints answer 503 until it loads
             log.warning("api.catalogue_unavailable", error=str(exc))
+        state.models.load()  # recompute and explain answer 503 until it succeeds
         yield
 
     app = FastAPI(
@@ -222,8 +324,15 @@ def create_app(cfg: AppConfig | None = None, engine: Engine | None = None) -> Fa
         assert isinstance(exc, RequestValidationError)
         return JSONResponse(status_code=422, content={"detail": _validation_message(exc)})
 
+    async def withheld(request: Request, exc: Exception) -> JSONResponse:
+        assert isinstance(exc, rt.ExplanationWithheld)
+        body = m.GateFailure(detail=str(exc), gate=_gate(exc.result))
+        return JSONResponse(status_code=500, content=body.model_dump())
+
     app.add_exception_handler(OperationalError, database_down)
     app.add_exception_handler(RequestValidationError, invalid_request)
+    app.add_exception_handler(rt.ModelFault, _handler(500))
+    app.add_exception_handler(rt.ExplanationWithheld, withheld)
 
     cfg_ = state.cfg
     step = cfg_.nem.dispatch_interval_minutes
@@ -239,7 +348,8 @@ def create_app(cfg: AppConfig | None = None, engine: Engine | None = None) -> Fa
         tags=["service"],
     )
     def health(request: Request, response: Response) -> m.Health:
-        """Database, publications (the latest attempt of each succeeded) and anomaly runs."""
+        """Database, publications (the latest attempt of each succeeded), anomaly runs, and
+        what recompute and explain need: the feature context and every model file."""
         st = _state(request)
         checks: dict[str, m.HealthCheck] = {}
         cat: Catalogue | None = None
@@ -266,6 +376,8 @@ def create_app(cfg: AppConfig | None = None, engine: Engine | None = None) -> Fa
             checks["database"] = m.HealthCheck(
                 ok=False, detail=f"unavailable: {type(exc).__name__}"
             )
+        for name, (ok, detail) in st.models.checks().items():
+            checks[name] = m.HealthCheck(ok=ok, detail=detail)
         core = ("database", "publications")
         if not all(k in checks and checks[k].ok for k in core):
             status = "unavailable"
@@ -311,14 +423,8 @@ def create_app(cfg: AppConfig | None = None, engine: Engine | None = None) -> Fa
         st = _state(request)
         cat = st.catalogue()
         _check_region(cat, region)
-        split = cat.split_of(t)
-        point_pub = _need(cat, "demand_point", split)
+        split, point_pub = _demand_point(cat, t)
         interval_pub = _need(cat, "demand_interval", split)
-        if not point_pub.covers(t):
-            pubs = [p for s in SERVING_SPLITS if (p := cat.get("demand_point", s))]
-            raise NotPublished(
-                f"no demand forecast issued at {t.isoformat()}; published: {_range_text(pubs)}"
-            )
         pts = q.points(st.engine, point_pub.run_id, t)
         bnd = q.bounds(st.engine, interval_pub.run_id, t) if interval_pub.covers(t) else {}
         leads = [
@@ -390,6 +496,153 @@ def create_app(cfg: AppConfig | None = None, engine: Engine | None = None) -> Fa
                 )
             )
         return m.DemandEvolution(region=cat.region, target_end=target.to_pydatetime(), items=items)
+
+    # ------------------------------------------------------------------ recompute and explain
+
+    def _model_request(
+        request: Request, issue_time: str, region: str
+    ) -> tuple[ApiState, pd.Timestamp, str, Published, str, dict[int, float], rt.ModelState]:
+        t = check_grid("issue_time", parse_instant("issue_time", issue_time), issue_every)
+        st = _state(request)
+        cat = st.catalogue()
+        _check_region(cat, region)
+        split, pub = _demand_point(cat, t)
+        batch = _check_fits_batch(cat, st.cfg, split, pub)
+        stored = q.points(st.engine, pub.run_id, t)
+        return st, t, split, pub, batch, stored, st.models.require()
+
+    @app.get(
+        "/v1/forecasts/demand/recompute",
+        response_model=m.Recompute,
+        responses=MODEL_ERRORS,
+        tags=["model"],
+    )
+    def recompute(
+        request: Request,
+        issue_time: Annotated[str, Query(description="Issue time on the 30-minute grid")],
+        region: RegionQ = "VIC1",
+    ) -> m.Recompute:
+        """One issue time's LightGBM C forecast rebuilt from the stored model (M2's code path)
+        and compared with the stored forecast, lead by lead."""
+        st, t, split, pub, batch, stored, state = _model_request(request, issue_time, region)
+        with st.models.lock:
+            try:
+                rc = rt.recompute(state, split, t, stored, n_leads)
+            except (LookupError, ValueError) as exc:  # a server fault, not the input
+                raise rt.ModelFault(str(exc)) from exc
+        done = np.isfinite(rc.recomputed)
+        fits, index = _fits_used(st.cfg, rc.rows, batch, done)
+        differs = rc.differs
+        return m.Recompute(
+            region=st.cfg.serving.region,
+            issue_time=t.to_pydatetime(),
+            split=split,  # type: ignore[arg-type]
+            point_run_id=pub.run_id,
+            matches_stored=rc.matches,
+            leads_stored=int(np.isfinite(rc.stored).sum()),
+            leads_recomputed=int(done.sum()),
+            leads_differing=int(differs.sum()),
+            max_abs_diff_mw=rc.max_abs_diff,
+            max_float64_diff_mw=rc.max_float64_diff,
+            fits=fits,
+            leads=[
+                m.RecomputeLead(
+                    lead=h,
+                    lead_minutes=h * step,
+                    target_end=(t + pd.Timedelta(minutes=h * step)).to_pydatetime(),
+                    recomputed_mw=_f(rc.recomputed[h - 1]),
+                    stored_mw=_f(rc.stored[h - 1]),
+                    matches=not bool(differs[h - 1]),
+                    fit=index[int(rc.rows.where[h - 1])] if done[h - 1] else None,
+                )
+                for h in range(1, n_leads + 1)
+            ],
+        )
+
+    @app.get(
+        "/v1/forecasts/demand/explain",
+        response_model=m.Explanation,
+        responses=EXPLAIN_ERRORS,
+        tags=["model"],
+    )
+    def explain(
+        request: Request,
+        issue_time: Annotated[str, Query(description="Issue time on the 30-minute grid")],
+        lead: LeadQ = None,
+        region: RegionQ = "VIC1",
+    ) -> m.Explanation:
+        """SHAP of the stored forecast, per lead: forecast = anchor + base value + Σ
+        contributions, by feature (with its value) and by family. Only leads with a stored
+        forecast are explained; withheld (500) if E1's gate fails."""
+        if lead is not None and lead > n_leads:
+            raise InputError(f"lead: must be at most {n_leads}, got {lead}")
+        st, t, split, pub, batch, stored, state = _model_request(request, issue_time, region)
+        wanted = [lead] if lead is not None else list(range(1, n_leads + 1))
+        have = [h for h in wanted if h in stored]
+        if not have:
+            where = f"lead {lead} of " if lead is not None else ""
+            raise NotPublished(f"no stored forecast at {where}{t.isoformat()} to explain")
+        with st.models.lock:
+            try:
+                ex = rt.explain_leads(
+                    state, split, t, stored, have, n_leads, st.cfg.anomalies.explain.sum_tolerance
+                )
+            except (LookupError, ValueError) as exc:  # a server fault, not the input
+                raise rt.ModelFault(str(exc)) from exc
+        try:
+            require(ex.gate, f"{t.isoformat()} ({len(have)} leads)")
+        except GateError as exc:
+            raise rt.ExplanationWithheld(str(exc), ex.gate) from exc
+        e, rows, fam = ex.explanation, ex.rows, state.families
+        if list(e.columns) != list(fam.columns):
+            raise rt.ModelFault("the explained columns are not the variant's feature columns")
+        counted = np.zeros(n_leads, dtype=bool)
+        counted[ex.idx] = True
+        fits, index = _fits_used(st.cfg, rows, batch, counted)
+        sums = fam.sums(e.contributions)
+        family_of = [fam.keys[int(k)] for k in fam.index]
+        leads = []
+        for i, j in enumerate(ex.idx):
+            k = int(rows.where[j])
+            fit = rows.fits[k]
+            x, c = rows.X[j], e.contributions[i]
+            leads.append(
+                m.ExplainedLead(
+                    lead=int(j) + 1,
+                    lead_minutes=(int(j) + 1) * step,
+                    target_end=(t + pd.Timedelta(minutes=(int(j) + 1) * step)).to_pydatetime(),
+                    fit=index[k],
+                    target_form=fit.target_form,
+                    forecast_mw=stored[int(j) + 1],
+                    forecast_float64_mw=float(e.forecast[i]),
+                    anchor=m.Anchor(mw=float(e.anchor[i]), terms=rt.anchor_terms(fit.target_form)),
+                    base_value_mw=float(e.base[i]),
+                    families=[
+                        m.FamilyContribution(family=key, title=title, contribution_mw=float(v))
+                        for key, title, v in zip(fam.keys, fam.titles, sums[i], strict=True)
+                    ],
+                    features=[
+                        m.FeatureContribution(
+                            name=name,
+                            family=family_of[p],
+                            value=float(x[p]),
+                            contribution_mw=float(c[p]),
+                        )
+                        for p, name in enumerate(fam.columns)
+                    ],
+                )
+            )
+        return m.Explanation(
+            region=st.cfg.serving.region,
+            issue_time=t.to_pydatetime(),
+            split=split,  # type: ignore[arg-type]
+            point_run_id=pub.run_id,
+            method=EXPLAIN_METHOD,
+            gate=_gate(ex.gate),
+            leads_without_forecast=[h for h in wanted if h not in stored],
+            fits=[f for f in fits if f.leads_recomputed > 0],
+            leads=leads,
+        )
 
     @app.get(
         "/v1/forecasts/price",

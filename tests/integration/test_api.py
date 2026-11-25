@@ -147,7 +147,15 @@ def _f32(value: float | None) -> np.float32 | None:
 
 def test_health_and_meta(env: Env) -> None:
     h = env.client.get("/health")
-    assert h.status_code == 200 and h.json()["status"] == "ok", h.json()
+    # The stored endpoints work; recompute and explain cannot (the fixture's batches are not
+    # the stored fits'), so the service is degraded and says why.
+    assert h.status_code == 200 and h.json()["status"] == "degraded", h.json()
+    checks = h.json()["checks"]
+    assert all(checks[k]["ok"] for k in ("database", "publications", "anomaly_runs"))
+    assert not checks["feature_context"]["ok"] and not checks["model_files"]["ok"]
+    assert "serving publishes lgbm_C of batch" in checks["feature_context"]["detail"]
+    r = env.client.get("/v1/forecasts/demand/recompute", params={"issue_time": "2023-08-31T00:00Z"})
+    assert r.status_code == 503 and "whose fits are loaded" in r.json()["detail"]
     meta = env.client.get("/v1/meta").json()
     products = {p["product"]: p for p in meta["products"]}
     assert set(products) == {
@@ -345,6 +353,9 @@ TEXT = st.one_of(
             ("/v1/anomalies", "after"),
             ("/v1/anomalies", "limit"),
             ("/v1/forecasts/demand", "region"),
+            ("/v1/forecasts/demand/recompute", "issue_time"),
+            ("/v1/forecasts/demand/explain", "issue_time"),
+            ("/v1/forecasts/demand/explain", "lead"),
         ]
     ),
     value=TEXT,
@@ -360,8 +371,11 @@ def test_no_query_produces_a_500(env: Env, path: tuple[str, str], value: str) ->
         "/v1/actuals": {"start": "2021-10-05T00:00:00Z", "end": "2021-10-06T00:00:00Z"},
         "/v1/anomalies": {"start": "2023-01-01T00:00:00Z", "end": "2026-10-01T00:00:00Z"},
     }.get(route, {})
+    if "/recompute" in route or "/explain" in route:  # the fixture has no stored fits: 503
+        params = {"issue_time": "2023-08-31T00:00:00Z"}
     r = env.client.get(route, params={**params, name: value})
-    assert r.status_code in (200, 404, 422), (route, name, value, r.text)
+    allowed = (404, 422, 503) if "/recompute" in route or "/explain" in route else (200, 404, 422)
+    assert r.status_code in allowed, (route, name, value, r.text)
     assert r.status_code == 200 or isinstance(r.json()["detail"], str)
 
 

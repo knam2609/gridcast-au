@@ -2,6 +2,34 @@
 
 Read this, then [`m5_plan.md`](m5_plan.md). For the M4 history, see [`m4_handoff.md`](m4_handoff.md) and [`m4_plan.md`](m4_plan.md).
 
+> **Update, 2026-11-26 (twenty-fifth session): step 3 done** (local, not pushed). Recompute and explain are in `src/gridcast/api/runtime.py` and two new endpoints.
+> - **Question round** (`48143d4`). The user chose every recommendation (plan §4, step 3):
+>   - gaps are reproduced;
+>   - feature values are served beside their contributions;
+>   - every booster loads at startup;
+>   - real-model tests carry a `host` marker.
+> - **Modules:**
+>   - `runtime.py`: `ModelRuntime` loads the feature context and fits (Postgres), then every booster (data root), and retries what failed at most every 10 s. `PathModelCache` keys boosters by file, so the `2025-08-01` fits that both batches hold name the right batch's file. It composes the frozen `explainability` functions and changes none of them.
+>   - `GET /v1/forecasts/demand/recompute` and `GET /v1/forecasts/demand/explain` (`lead` optional) in `app.py`. Their response models are in `models.py`. `docs/openapi.json` is regenerated.
+>   - `/health` gains `feature_context` and `model_files`. If either fails, the status is `degraded` (the stored endpoints still work).
+> - **Errors:**
+>   - 503 until both parts are loaded, with the reason and no host path;
+>   - 404 for explain where nothing is stored;
+>   - a JSON 500 for a server fault;
+>   - a 500 carrying the gate when E1 fails (explanations withheld).
+> - **Bugs found and fixed before commit:**
+>   - The `lead` bound referred to a local variable inside a postponed annotation, so FastAPI could not resolve it, and every explain request with `lead` was a 500. The bound is now checked in code (422).
+>   - A stored value that is not float32 would have been a plain-text 500. It is now JSON.
+> - **Measured** (host, in-process, informal; not P3 or P5):
+>   - startup 4.9 s (features 3.9 s, 68 boosters 0.78 s); peak RSS 1.12 GB;
+>   - warm medians: recompute 40 ms, explain of all 288 leads 174 ms;
+>   - the explain body is about 1.05 MB for 288 leads, against my question-round estimate of about 0.3 MB; one lead is about 4.7 KB.
+> - **Tests:**
+>   - 570 unit tests, 16 of them new on a synthetic walk-forward whose fits mix target forms. They cover exact recompute with gaps, a one-ulp change, a misplaced gap, the decomposition and feature values, a failed gate (500), a missing model file (503, then recovery), an unmounted data root, the cache keyed by file, and batch checks.
+>   - 107 integration tests. The fixture's batches are not the fits', so the integration health check now expects `degraded`, with the reason. The hypothesis search covers the two new endpoints: no 500.
+>   - **`make test-host`: 14 tests in about 8 s, all passing** (main database and SSD, read-only). Recompute matched all 288 leads at 8 issue times: inside a fold of each split, both sides of a retrain boundary in each split, and both sides of the split boundary, each naming its own batch's `2025-08-01` files. It also matched where nothing was stored (2024-01-15 02:00 UTC) and at the first partly stored issue time. Explain passed E1 on 288 leads in each split.
+> - **Next: step 4** (`Dockerfile`, the Compose `api` service mounting `<data root>/models` read-only, `make api-up` / `api-down`; then `/health` and one recompute per split against the container, a smoke check, not P3). The container needs about 1.1 GB for the API beside Postgres in the 4 GB Docker VM.
+
 > **Update, 2026-11-23 (twenty-fourth session, later): step 2 done** (local, not pushed). The stored endpoints are in `src/gridcast/api/`.
 > - **Modules:**
 >   - `app.py`: the `create_app` factory; `make api` runs it with uvicorn `--factory`.

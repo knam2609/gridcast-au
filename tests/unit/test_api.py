@@ -192,6 +192,23 @@ def client() -> TestClient:
             {"start": "2025-10-01T00:00:00Z", "end": "2025-11-01T00:00:00Z", "after": "zz"},
             "cursor",
         ),
+        ("/v1/forecasts/demand/recompute", {}, "issue_time: Field required"),
+        ("/v1/forecasts/demand/recompute", {"issue_time": "2025-10-01T00:10:00Z"}, "grid"),
+        (
+            "/v1/forecasts/demand/explain",
+            {"issue_time": "2025-10-01T00:00:00Z", "lead": "289"},
+            "at most 288",
+        ),
+        (
+            "/v1/forecasts/demand/explain",
+            {"issue_time": "2025-10-01T00:00:00Z", "lead": "0"},
+            "lead",
+        ),
+        (
+            "/v1/forecasts/demand/explain",
+            {"issue_time": "2025-10-01T00:00:00Z", "lead": "x"},
+            "lead",
+        ),
         ("/v1/anomalies/0", {}, "event_id"),
         ("/v1/anomalies/abc", {}, "event_id"),
         ("/v1/anomalies/99999999999999999999", {}, "event_id"),
@@ -208,11 +225,14 @@ def test_invalid_inputs_are_422_with_a_message(
 
 
 def test_database_down_is_503_never_500(client: TestClient) -> None:
-    r = client.get("/v1/forecasts/demand", params={"issue_time": "2025-10-01T00:00:00Z"})
-    assert r.status_code == 503 and r.json() == {"detail": "database unavailable"}
+    for path in ("", "/recompute", "/explain"):
+        r = client.get(f"/v1/forecasts/demand{path}", params={"issue_time": "2025-10-01T00:00:00Z"})
+        assert r.status_code == 503 and r.json() == {"detail": "database unavailable"}
     h = client.get("/health")
     assert h.status_code == 503 and h.json()["status"] == "unavailable"
     assert not h.json()["checks"]["database"]["ok"]
+    context = h.json()["checks"]["feature_context"]
+    assert not context["ok"] and context["detail"] == "database unavailable"
     assert client.get("/v1/meta").status_code == 503
 
 
