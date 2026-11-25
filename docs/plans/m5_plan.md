@@ -109,7 +109,7 @@ It is idempotent, so a rerun inserts nothing new and checks again. `--check-only
 ### 2.6 Container
 
 - **Image:** `python:3.12-slim` (linux/arm64 on this Mac), the locked dependencies installed with `uv sync --frozen --no-dev`, and `libgomp1` for LightGBM.
-- **Compose service `api`:** waits for `db` to be healthy and publishes port 8000. It mounts `<data root>/models` read-only and has a health check on `/health`.
+- **Compose service `api`:** waits for `db` to be healthy and publishes port 8000. It mounts `<data root>/models` read-only and has a health check on `/health`. *Changed in step 4: the host port is `GRIDCAST_API_PORT` (default 8000), published on 127.0.0.1 only.*
 - **Make:** `make api` (local uvicorn, for development), `make api-up` / `make api-down` (Compose).
 
 ## 3. Success criteria (pre-registered)
@@ -203,6 +203,12 @@ Every criterion is judged on the **Compose service** (Linux, arm64), because tha
      - the container runs as a non-root user, with the code installed editable at `/app`, so `PROJECT_ROOT` resolves as it does on the host;
      - uv is pinned to the host's version;
      - no `restart` policy and no memory limit (memory is measured instead).
+   - **Outcome (2026-11-26):** code `97b8436`; see the handoff. Changed or found while building:
+     - **The host port is configurable** (`GRIDCAST_API_PORT`, default 8000; the container always listens on 8000). Another app holds port 8000 on this Mac, so `.env` sets 8001 here. The same clash would have hit `make api`.
+     - **Logging was never configured under uvicorn,** so `GRIDCAST_LOG_LEVEL` and `GRIDCAST_LOG_FORMAT` were ignored by `make api` too. uvicorn's factory is now `gridcast.api.app:serve`, which configures logging as the CLI does, then calls `create_app`. The container logs JSON.
+     - The image is 458 MB (the plan estimated about 1 GB). It has the host's Python (3.12.16), numpy (2.5.4), LightGBM (4.7.0) and pandas (3.1.0), on Linux aarch64 (glibc 2.41).
+     - **The smoke check passes** on the clean image of `97b8436`: `/health` is ok. At both issue times, recompute matches all 288 stored leads exactly, and explain passes E1's gate on all 288. These are the first values recomputed on Linux for forecasts made on macOS (informal; P3 is step 5's).
+     - **Without the SSD** (simulated with `MODELS_DIR=/nonexistent/models`), `make api-up` warned and started the API without the mount. `/health` was `degraded` and named the missing file relative to the data root. Recompute answered 503 with the reason, the stored forecast answered 200, and `api-smoke` exited 1.
 5. **Verification:**
    - **5a:** `gridcast api-verify` and `gridcast report-m5`, committed before any run.
    - **5b:** the run, then `reports/m5_api.md`.

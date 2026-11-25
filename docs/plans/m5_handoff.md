@@ -2,6 +2,34 @@
 
 Read this, then [`m5_plan.md`](m5_plan.md). For the M4 history, see [`m4_handoff.md`](m4_handoff.md) and [`m4_plan.md`](m4_plan.md).
 
+> **Update, 2026-11-26 (twenty-sixth session): step 4 done** (local, not pushed). The API runs as a Compose service.
+> - **Question round** (`5fa5a33`). The user chose every recommendation (plan §4, step 4):
+>   - without the SSD, the API starts without its model files;
+>   - the image records its commit and dirty flag, and `/health` serves them as `build`;
+>   - the smoke check is a committed command, `make api-smoke`.
+> - **Code `97b8436`:**
+>   - `Dockerfile` (python:3.12-slim, uv 0.13.6, `uv sync --frozen --no-dev`, editable at `/app`, non-root, one uvicorn worker) and an allowlist `.dockerignore`, so `.env`, `.venv` and data never enter the build context.
+>   - The Compose `api` service has profile `api`, so `docker compose up` alone does not build it. It listens on 127.0.0.1 only and has a health check on `/health`. `docker-compose.models.yml` mounts `<data root>/models` read-only at `/data/models` with `create_host_path: false`; `make api-up` adds it only when the directory exists.
+>   - `make api-up` (build with the commit and the dirty flag, start, wait for healthy), `make api-down` (Postgres keeps running), `make api-smoke`. `make db-down` now also stops the API.
+>   - `/health` gains `build`; `docs/openapi.json` is regenerated.
+>   - `gridcast api-smoke` (`src/gridcast/api/smoke.py`) and `serving.smoke` in the config. It saves its result to `<data root>/logs/api_smoke_<UTC time>.json`.
+> - **Found while building:**
+>   - **Port 8000 is taken on this Mac** by another app. The host port is now `GRIDCAST_API_PORT` (default 8000), and `.env` sets 8001 here (a line added to the user's `.env`; `.env.example` documents it).
+>   - **Logging was never configured under uvicorn,** so `GRIDCAST_LOG_LEVEL`/`GRIDCAST_LOG_FORMAT` had no effect (on the host too). The factory is now `gridcast.api.app:serve`. The container logs JSON.
+> - **Measured** (the container on Docker Desktop, 4 CPUs, 3.8 GB; informal, not P3 or P5; `<data root>/logs/api_smoke_20261125_142901.json`):
+>   - The clean image of `97b8436` is 458 MB (planned about 1 GB). Same Python, numpy, LightGBM and pandas versions as the host, on Linux aarch64.
+>   - `make api-up` took 14 s with a cached build. At startup the features loaded in 4.21 s and the 68 boosters in 1.15 s.
+>   - **Smoke: PASS.** At development 2024-03-15 02:00 UTC and holdout 2026-01-20 05:30 UTC, recompute matched 288 of 288 stored leads exactly, and explain passed E1's gate on 288 leads (0 forecast mismatches; max sum error 7.16e-12 and 1.09e-11).
+>   - Client-side times (3 requests each, the first cold): recompute 74/43/44 ms (development) and 44/42/42 ms (holdout). Explain took 341/337/351 ms (development) and 217/195/195 ms (holdout), at about 1 MB per response.
+>   - Memory after the smoke check: API 816 MiB, Postgres 284 MiB (`docker stats`).
+>   - Without the SSD (simulated, `make api-up MODELS_DIR=/nonexistent/models`): `degraded`, model files named by relative path, recompute 503 with the reason, stored forecast 200, `api-smoke` exit 1. The clean image was then restarted with the models.
+> - **Tests:** 590 unit tests (20 new: build record, Compose and Dockerfile guards, smoke logic, smoke on the synthetic walk-forward, the `serve` factory), 107 integration and 14 host tests pass.
+> - **For step 5's question round:**
+>   - **Development explain ran at about 340 ms** in the container, against P5's 500 ms limit (p95 over 200 seeded requests). The informal host median in step 3 was 174 ms. P5 is judged as pre-registered; the margin is narrower than the host suggested.
+>   - **A docs-only commit makes the running image "stale"** (its `git_sha` is no longer HEAD), and `api-smoke` then fails until `make api-up` rebuilds it (about 15 s). `api-verify` should either require a rebuild or compare only the files the image copies.
+>   - Should `api-verify` refuse a dirty image (`build.dirty`)?
+> - **Next: step 5a** (`gridcast api-verify` and `gridcast report-m5`, committed before any run), then 5b (the run and `reports/m5_api.md`).
+
 > **Update, 2026-11-26 (twenty-fifth session): step 3 done** (local, not pushed). Recompute and explain are in `src/gridcast/api/runtime.py` and two new endpoints.
 > - **Question round** (`48143d4`). The user chose every recommendation (plan §4, step 3):
 >   - gaps are reproduced;
