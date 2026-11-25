@@ -173,6 +173,17 @@ Every criterion is judged on the **Compose service** (Linux, arm64), because tha
      - `/v1/anomalies` returns an empty page, not 404, when no event matches;
      - the v2 anomaly runs are named in `serving.anomaly_runs` and checked at startup.
 3. **Model endpoints:** recompute and explain (§2.5), with integration tests on a few issue times from each split on the host.
+   - **Measured before the question round (2026-11-25, host, informal; not P3 or P5):**
+     - The feature context and weather load in 4.3 s, and the process then holds about 0.86 GB. All 64 distinct boosters load in 0.7 s, which brings it to about 1.1 GB.
+     - One issue time per split (dev 2024-03-15 02:00 UTC, holdout 2026-01-20 05:30 UTC) passed E1 on all 288 leads. Recompute and SHAP of every lead took about 0.9 s cold and 140–225 ms warm.
+     - 2024-01-15 02:00 UTC has no stored forecast (every feature row is incomplete). January 2024 has 636 of its 1,488 issue times stored.
+     - The 68 fits hold 64 distinct keys: `2025-08-01_<band>` is in both batches (run 2's last retrain and `holdout_main`'s first). The four file pairs are byte-identical, so M4's shared `ModelCache` (keyed by retrain and band) gave the same results. The API keys its own cache by model file, so it names the right batch's file. `explainability/` is frozen, so it is reused, not changed.
+   - **Decided in step 3's question round (2026-11-25; the user chose every recommendation):**
+     - **Gaps are reproduced.** M2 forecast only complete feature rows. `/recompute` answers with all 288 leads, `null` where the rebuilt row is incomplete, and `matches_stored` also requires those nulls to fall exactly where nothing was stored. `/explain` covers only stored leads; it answers 404 if the issue time, or the requested lead, has none.
+     - **Feature values are served** beside their contributions (the float32 the model saw), and the anchor names its terms (e.g. the residual form: `dem_same_time_yesterday`).
+     - **Boosters load at startup**, with the feature context (a change to §2.5, which loaded them on first use). `/health`'s model check means that every booster parsed and matched its record (trees, feature names). If the SSD is missing at startup, the next model request retries.
+     - **Real-model tests** carry a new opt-in pytest marker, `host` (`make test-host`), skipped by default. They use the main database and the SSD: a few issue times per split, a gap, a fold boundary, and the `2025-08-01` fits that both batches hold. They are informal; P3 is judged in the container in step 5. Fixture tests on small synthetic walk-forward models run in the normal suites.
+   - **Decided while planning the step (not asked):** model requests are serialized by one lock. They are CPU-bound, and LightGBM already uses `ml.lightgbm.num_threads` per call. Recompute serves the float32 M2 would have stored, as its exact float64, beside the stored value, and gives the largest float64 difference for information, as E1's gate does.
 4. **Container:** `Dockerfile`, the Compose service, `make api-up` / `api-down`. Then `/health` and one recompute per split against the container (a smoke check, not P3).
 5. **Verification:**
    - **5a:** `gridcast api-verify` and `gridcast report-m5`, committed before any run.
