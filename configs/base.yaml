@@ -373,6 +373,11 @@ serving:
     model_requests: 200         # recompute and explain
     stored_p95_ms: 100
     model_p95_ms: 500
+  smoke:
+    # `gridcast api-smoke` (m5_plan.md §4, step 4; informal, not P3 or P5): recompute and
+    # explain at one issue time per split, the two measured before step 3's question round.
+    issue_times: ["2024-03-15T02:00:00Z", "2026-01-20T05:30:00Z"]  # development, holdout
+    repeats: 3                  # per endpoint and issue time; the first request is cold
   output_dir: serving           # under the data root (api-verify results)
 
 aemo:

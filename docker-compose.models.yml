@@ -1,0 +1,13 @@
+# The API's model files, read-only (docs/plans/m5_plan.md §4, step 4). `make api-up` adds this
+# file only when <data root>/models exists. Without it, the stored endpoints still work and
+# /health reports the model files missing. create_host_path: false means Docker never creates
+# the source: with the drive unmounted, an empty folder must not appear where it mounts.
+services:
+  api:
+    volumes:
+      - type: bind
+        source: ${GRIDCAST_MODELS_DIR:?set by make api-up}
+        target: /data/models
+        read_only: true
+        bind:
+          create_host_path: false

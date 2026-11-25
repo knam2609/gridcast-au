@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from gridcast.api import queries as q
 from gridcast.api import runtime as rt
+from gridcast.api import smoke
 from gridcast.api.app import create_app
 from gridcast.api.catalogue import Catalogue, Published, RunInfo, read_only_engine
 from gridcast.config import AppConfig, LightGBMConfig, load_config
@@ -443,3 +444,35 @@ def test_a_stored_value_that_is_not_float32_is_a_json_server_fault(
             f"{DEMAND}/{path}", params={"issue_time": _iso(t)}
         )
         assert r.status_code == 500 and "not a float32 value" in r.json()["detail"]
+
+
+# --------------------------------------------------------------------------- api-smoke
+
+
+@pytest.mark.parametrize("split", ["dev", "holdout"])
+def test_the_smoke_checks_pass_on_a_partly_stored_issue_time(
+    world: World, monkeypatch: pytest.MonkeyPatch, split: str
+) -> None:
+    t = _partial(world, split).to_pydatetime()
+    client = _client(world, monkeypatch)
+    rc = smoke.check_recompute(client, t, repeats=2)
+    assert rc.ok, rc.detail
+    assert rc.target == f"{split} {_iso(pd.Timestamp(t))}" and len(rc.ms) == 2
+    assert "0 differ" in rc.detail
+    ex = smoke.check_explain(client, t, repeats=2)
+    assert ex.ok, ex.detail
+    assert "gate passed" in ex.detail and ex.kib is not None and ex.kib > 0
+
+
+def test_the_smoke_checks_fail_on_a_one_ulp_difference(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ts = _partial(world, "dev")
+    stored = world.points(ts)
+    h = max(stored)
+    stored[h] = float(np.nextafter(np.float32(stored[h]), np.float32(-np.inf)))
+    client = _client(world, monkeypatch, stored)
+    rc = smoke.check_recompute(client, ts.to_pydatetime(), repeats=1)
+    assert not rc.ok and "1 differ" in rc.detail
+    ex = smoke.check_explain(client, ts.to_pydatetime(), repeats=1)
+    assert not ex.ok and ex.detail.startswith("HTTP 500") and "'passed': False" in ex.detail

@@ -1260,6 +1260,52 @@
         ],
         "title": "AnomalySummary"
       },
+      "Build": {
+        "properties": {
+          "git_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Sha",
+            "description": "The commit it was built from (null if unknown)"
+          },
+          "dirty": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dirty",
+            "description": "Its files differed from that commit (image: any change to the files it copies, untracked included; checkout: tracked files)"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "image",
+              "checkout",
+              "unknown"
+            ],
+            "title": "Source",
+            "description": "image: build arguments recorded by `make api-up`; checkout: git"
+          }
+        },
+        "type": "object",
+        "required": [
+          "git_sha",
+          "dirty",
+          "source"
+        ],
+        "title": "Build",
+        "description": "The code this API runs."
+      },
       "DemandEvolution": {
         "properties": {
           "region": {
@@ -1971,6 +2017,9 @@
             ],
             "title": "Status"
           },
+          "build": {
+            "$ref": "#/components/schemas/Build"
+          },
           "checks": {
             "additionalProperties": {
               "$ref": "#/components/schemas/HealthCheck"
@@ -2052,6 +2101,7 @@
         "type": "object",
         "required": [
           "status",
+          "build",
           "checks",
           "demand_issue_times",
           "price_issue_times",

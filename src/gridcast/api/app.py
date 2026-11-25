@@ -35,6 +35,7 @@ from sqlalchemy.exc import OperationalError
 from gridcast.api import models as m
 from gridcast.api import queries as q
 from gridcast.api import runtime as rt
+from gridcast.api.build import BuildInfo, build_info
 from gridcast.api.catalogue import Catalogue, Published, latest_attempts, load_catalogue
 from gridcast.api.catalogue import read_only_engine as make_engine
 from gridcast.api.inputs import (
@@ -52,7 +53,7 @@ from gridcast.api.inputs import (
 from gridcast.api.meta import API_VERSION, build_meta
 from gridcast.config import SERVING_PRODUCTS, SERVING_SPLITS, AppConfig, get_settings, load_config
 from gridcast.explainability.treeshap import GateError, GateResult, require
-from gridcast.logs import get_logger
+from gridcast.logs import configure_logging, get_logger
 
 log = get_logger(__name__)
 
@@ -137,6 +138,7 @@ class ApiState:
         self.cfg = cfg
         self._engine = engine
         self._catalogue: Catalogue | None = None
+        self._build: BuildInfo | None = None
         self._lock = threading.RLock()  # catalogue() takes it, then engine does
         self.models = models if models is not None else rt.ModelRuntime(cfg, lambda: self.engine)
 
@@ -147,6 +149,12 @@ class ApiState:
                 if self._engine is None:
                     self._engine = make_engine(get_settings().database_url)
         return self._engine
+
+    @property
+    def build(self) -> BuildInfo:
+        if self._build is None:
+            self._build = build_info(get_settings())
+        return self._build
 
     def catalogue(self) -> Catalogue:
         if self._catalogue is None:
@@ -286,6 +294,14 @@ def _handler(status: int) -> Callable[[Request, Exception], Any]:
     return handle
 
 
+def serve() -> FastAPI:
+    """uvicorn's factory (``make api`` and the container): logging configured from
+    ``GRIDCAST_LOG_LEVEL`` and ``GRIDCAST_LOG_FORMAT``, as the CLI does, then :func:`create_app`."""
+    settings = get_settings()
+    configure_logging(settings.log_level, settings.log_format)
+    return create_app()
+
+
 def create_app(
     cfg: AppConfig | None = None,
     engine: Engine | None = None,
@@ -298,6 +314,8 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        b = state.build
+        log.info("api.build", git_sha=b.git_sha, dirty=b.dirty, source=b.source)
         try:
             state.catalogue()
         except Unavailable as exc:  # the stored endpoints answer 503 until it loads
@@ -390,8 +408,10 @@ def create_app(
         def pair(r: tuple[pd.Timestamp, pd.Timestamp] | None) -> Any:
             return None if r is None else (r[0].to_pydatetime(), r[1].to_pydatetime())
 
+        b = st.build
         return m.Health(
             status=status,  # type: ignore[arg-type]
+            build=m.Build(git_sha=b.git_sha, dirty=b.dirty, source=b.source),
             checks=checks,
             demand_issue_times=pair(cat.issue_range("demand_point")) if cat else None,
             price_issue_times=pair(cat.issue_range("price_persistence")) if cat else None,

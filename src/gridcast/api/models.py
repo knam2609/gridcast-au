@@ -277,8 +277,22 @@ class HealthCheck(BaseModel):
     detail: str
 
 
+class Build(BaseModel):
+    """The code this API runs."""
+
+    git_sha: str | None = Field(description="The commit it was built from (null if unknown)")
+    dirty: bool | None = Field(
+        description="Its files differed from that commit (image: any change to the files it "
+        "copies, untracked included; checkout: tracked files)"
+    )
+    source: Literal["image", "checkout", "unknown"] = Field(
+        description="image: build arguments recorded by `make api-up`; checkout: git"
+    )
+
+
 class Health(BaseModel):
     status: Literal["ok", "degraded", "unavailable"]
+    build: Build
     checks: dict[str, HealthCheck]
     demand_issue_times: tuple[dt.datetime, dt.datetime] | None
     price_issue_times: tuple[dt.datetime, dt.datetime] | None

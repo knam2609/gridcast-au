@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     )
     log_level: str = "INFO"
     log_format: Literal["console", "json"] = "console"
+    # The commit the API image was built from, and whether the files it copied differed from
+    # it (`make api-up` passes both as build arguments; m5_plan.md §4, step 4). Unset outside
+    # the image, where /health asks git instead.
+    build_git_sha: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
+    build_dirty: bool | None = None
+
+    @field_validator("build_git_sha", "build_dirty", mode="before")
+    @classmethod
+    def _empty_is_unset(cls, v: object) -> object:
+        return None if v == "" else v
 
 
 class PathsConfig(BaseModel):
@@ -596,6 +606,20 @@ class ServingVerifyConfig(BaseModel):
     model_p95_ms: float = Field(gt=0)
 
 
+class ServingSmokeConfig(BaseModel):
+    """``gridcast api-smoke`` (m5_plan.md §4, step 4): informal, not P3 or P5."""
+
+    issue_times: list[dt.datetime] = Field(min_length=1)  # UTC; recompute and explain each
+    repeats: int = Field(ge=1)  # requests per endpoint and issue time (the first is cold)
+
+    @field_validator("issue_times")
+    @classmethod
+    def _utc(cls, v: list[dt.datetime]) -> list[dt.datetime]:
+        if any(t.utcoffset() != dt.timedelta(0) for t in v):
+            raise ValueError("serving.smoke.issue_times must be UTC (end with Z)")
+        return v
+
+
 class ServingConfig(BaseModel):
     """Milestone 5: what the API serves (docs/plans/m5_plan.md). Outside every frozen hash."""
 
@@ -609,6 +633,7 @@ class ServingConfig(BaseModel):
     # The served anomaly runs (recipe v2), by split; checked against anomalies_v2's freeze.
     anomaly_runs: dict[str, ServingSourceRun]
     verify: ServingVerifyConfig
+    smoke: ServingSmokeConfig
     output_dir: Path = Path("serving")  # under the data root: api-verify results
 
     @field_validator("sources")

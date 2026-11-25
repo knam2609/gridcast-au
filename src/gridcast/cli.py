@@ -1469,6 +1469,31 @@ def api_schema() -> None:
     typer.echo(f"wrote {write_schema(create_app())}")
 
 
+@app.command("api-smoke")
+def api_smoke(
+    url: Annotated[
+        str, typer.Option(help="The running API (make api-smoke passes GRIDCAST_API_PORT's)")
+    ] = "http://127.0.0.1:8000",
+) -> None:
+    """M5 step 4: /health, then recompute and explain at serving.smoke's issue times, against a
+    running API (informal; not P3 or P5). Exit 1 unless every check passes."""
+    import httpx
+
+    from gridcast.api.smoke import render, run_smoke, save
+    from gridcast.provenance import git_sha
+
+    cfg = load_config()
+    with httpx.Client(base_url=url, timeout=120) as client:
+        result = run_smoke(client, cfg.serving.smoke, git_sha(), url)
+    typer.echo(render(result))
+    try:
+        typer.echo(f"saved {save(result, cfg)}")
+    except FileNotFoundError as exc:  # the data root is on an unmounted drive
+        typer.echo(f"not saved: {exc}")
+    if not result.passed:
+        raise typer.Exit(code=1)
+
+
 @app.command("feature-catalogue")
 def feature_catalogue() -> None:
     """Write docs/feature_catalogue.md from the feature catalogue in code (no database)."""

@@ -7,8 +7,18 @@ REGIONS ?= VIC1
 VERSION ?= 1
 DAYS ?= 2026-10-01
 CHECK_MONTH ?= 2026-09
+# M5 step 4, the API container: its model files come from the data root (GRIDCAST_DATA_ROOT in
+# .env, else ./data), mounted only when they exist. IMAGE_FILES are what the image copies; any
+# change to them, untracked files included, marks the build dirty.
+DATA_ROOT ?= $(or $(shell sed -n 's/^GRIDCAST_DATA_ROOT=//p' .env 2>/dev/null),data)
+MODELS_DIR ?= $(DATA_ROOT)/models
+# The API's port on this machine (GRIDCAST_API_PORT in .env, else 8000), for `make api`
+# and the container alike; inside the container it is always 8000.
+API_PORT ?= $(or $(shell sed -n 's/^GRIDCAST_API_PORT=//p' .env 2>/dev/null),8000)
+API_URL ?= http://127.0.0.1:$(API_PORT)
+IMAGE_FILES := Dockerfile .dockerignore pyproject.toml uv.lock README.md configs src
 
-.PHONY: help setup lint format typecheck test test-integration test-host db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe ingest-generation weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout anomaly-reference-events anomalies-smoke explain-smoke evidence-smoke anomalies-freeze-check anomalies-dev report-m4 anomalies-diagnose-v1 anomalies-reproduce evaluate-holdout-anomalies report-m4-holdout explain-dev explain-holdout report-m4-explain report-m4-explain-holdout publish publish-check api api-schema catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration test-host db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe ingest-generation weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout anomaly-reference-events anomalies-smoke explain-smoke evidence-smoke anomalies-freeze-check anomalies-dev report-m4 anomalies-diagnose-v1 anomalies-reproduce evaluate-holdout-anomalies report-m4-holdout explain-dev explain-holdout report-m4-explain report-m4-explain-holdout publish publish-check api api-schema api-up api-down api-smoke catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -40,8 +50,8 @@ test-host: ## Read-only checks on the main database and the stored models (needs
 db-up: ## Start PostgreSQL and wait until healthy
 	docker compose up -d --wait db
 
-db-down: ## Stop PostgreSQL (data volume is kept)
-	docker compose down
+db-down: ## Stop PostgreSQL and the API container (data volume is kept)
+	docker compose --profile api down
 
 migrate: ## Apply database migrations
 	$(UV) run alembic upgrade head
@@ -176,11 +186,29 @@ publish: ## M5 step 1: load forecasts, CQR rearranged intervals and price baseli
 publish-check: ## M5: check every published row against its parquet source again (no writes; exit 1 unless complete and exact)
 	$(UV) run gridcast publish --check-only
 
-api: ## M5: run the API locally on http://127.0.0.1:8000 (uvicorn; docs at /docs)
-	$(UV) run uvicorn gridcast.api.app:create_app --factory --host 127.0.0.1 --port 8000
+api: ## M5: run the API locally on 127.0.0.1, port GRIDCAST_API_PORT (default 8000; uvicorn; docs at /docs)
+	$(UV) run uvicorn gridcast.api.app:serve --factory --host 127.0.0.1 --port $(API_PORT)
 
 api-schema: ## M5: write docs/openapi.json from the app (the committed contract the tests check)
 	$(UV) run gridcast api-schema
+
+api-up: ## M5: build and start the API container on 127.0.0.1, port GRIDCAST_API_PORT (records the commit; model files read-only when the data root is mounted); waits for /health
+	@sha=$$(git rev-parse HEAD) && \
+	if [ -n "$$(git status --porcelain --untracked-files=all -- $(IMAGE_FILES))" ]; then dirty=true; else dirty=false; fi && \
+	files="-f docker-compose.yml" && \
+	if [ -d "$(MODELS_DIR)" ]; then files="$$files -f docker-compose.models.yml"; \
+	else echo "warning: $(MODELS_DIR) not found (is the drive mounted?): starting without the model files, so recompute and explain answer 503"; fi && \
+	echo "API image at $$sha (dirty: $$dirty)" && \
+	GRIDCAST_BUILD_GIT_SHA=$$sha GRIDCAST_BUILD_DIRTY=$$dirty GRIDCAST_MODELS_DIR="$(abspath $(MODELS_DIR))" \
+		GRIDCAST_API_PORT=$(API_PORT) \
+		docker compose $$files up -d --build --wait api
+
+api-down: ## M5: stop and remove the API container (PostgreSQL keeps running)
+	docker compose rm --stop --force api
+
+api-smoke: ## M5 step 4: /health, then recompute and explain per split against the running API (informal, not P3/P5), and the containers' memory
+	$(UV) run gridcast api-smoke --url $(API_URL)
+	@docker stats --no-stream --format 'table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}' gridcast-api gridcast-db
 
 catalogue: ## Regenerate docs/feature_catalogue.md from the feature catalogue in code
 	$(UV) run gridcast feature-catalogue
