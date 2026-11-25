@@ -192,6 +192,17 @@ Every criterion is judged on the **Compose service** (Linux, arm64), because tha
      - **`/health`** gains `feature_context` and `model_files`. When either fails the status is `degraded`, not 503, because the stored endpoints still work.
      - **The explain body is about 1.05 MB** for all 288 leads (one lead: about 4.7 KB). In the question round I estimated about 0.3 MB; the per-feature objects and the full-precision values make it larger.
 4. **Container:** `Dockerfile`, the Compose service, `make api-up` / `api-down`. Then `/health` and one recompute per split against the container (a smoke check, not P3).
+   - **Checked before the question round (2026-11-26):** a throwaway container on Docker Desktop read `<data root>/models` from the SSD read-only. The two published batches' model files take 304 MB (development) and 143 MB (holdout). Postgres used 0.7 GB of the VM's 3.8 GB.
+   - **Decided in step 4's question round (2026-11-26; the user chose every recommendation):**
+     - **Without the SSD, the API starts without models.** `make api-up` adds the read-only models mount (a Compose override file) only when `<data root>/models` exists. Otherwise it starts the API without the mount, so the stored endpoints work, `/health` reports `model_files`, and recompute and explain answer 503, as §2.5 says. The mount never creates its source (`create_host_path: false`), so Docker cannot create the path on the internal disk.
+     - **The image records its code, and `/health` serves it.** `make api-up` passes the commit and a dirty flag as build arguments. The flag is set by any change, untracked files included, to the files the image copies. `/health` gains `build` (`git_sha`, `dirty`, and whether these come from the image or a checkout), and `docs/openapi.json` is regenerated. Step 5's `api-verify` can then refuse a dirty or stale image.
+     - **The smoke check is a committed command:** `gridcast api-smoke` / `make api-smoke` (httpx). `/health` must be `ok`. Then recompute must report `matches_stored` and explain must pass its gate, at the two issue times measured before step 3's question round (development 2024-03-15 02:00 UTC, holdout 2026-01-20 05:30 UTC, also in the host tests). It reports client-side timings, and the Make target adds the containers' memory (`docker stats`). It is informal, not P3 or P5.
+   - **Decided while planning the step (not asked):**
+     - one uvicorn worker, because the model state takes about 1.1 GB per process and model requests are serialized anyway;
+     - the port is published on 127.0.0.1 only (there is no auth);
+     - the container runs as a non-root user, with the code installed editable at `/app`, so `PROJECT_ROOT` resolves as it does on the host;
+     - uv is pinned to the host's version;
+     - no `restart` policy and no memory limit (memory is measured instead).
 5. **Verification:**
    - **5a:** `gridcast api-verify` and `gridcast report-m5`, committed before any run.
    - **5b:** the run, then `reports/m5_api.md`.
