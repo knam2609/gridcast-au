@@ -511,10 +511,30 @@ def test_the_report_leads_with_the_first_run_and_lists_later_runs() -> None:
             "build": {"git_sha": "c" * 40},
             "passed": True,
             "checks": [
-                {"name": "explain", "target": "dev 2024-03-15T02:00:00Z", "ms": [341.2, 337.0]}
+                {
+                    "name": "explain",
+                    "target": "dev 2024-03-15T02:00:00Z",
+                    "ok": True,
+                    "ms": [341.2, 337.0],
+                }
             ],
         }
     ]
+    failed = {
+        "name": "health",
+        "target": "/health",
+        "ok": False,
+        "detail": "HTTP 200, status 'degraded', failing: model_files",
+        "ms": [5.0],
+    }
+    smokes.append(
+        {
+            "started_at": "2026-11-25T14:15:24Z",
+            "build": {"git_sha": "c" * 40, "dirty": True},
+            "passed": False,
+            "checks": [failed],
+        }
+    )
     log = {("a" * 40, "b" * 40): ["bbbbbbb Speed up explain"]}
     text_ = rep.render([first, second], _pubs(), smokes, cfg, lambda a, b: log[(a, b)])
     assert "**5 of 6 criteria pass** on the first verification run (2026-11-28T01:00:00Z" in text_
@@ -529,6 +549,11 @@ def test_the_report_leads_with_the_first_run_and_lists_later_runs() -> None:
     )
     assert f"{2 * (2 * H - 3) * 4:,} rows read back over 8 of 8 publications" in text_
     assert "0 of 1,146 published interval pairs are not nested" in text_
+    assert (
+        "| `ccccccc` (dirty) | fail: health: HTTP 200, status 'degraded', failing: model_files |"
+        in text_
+    )
+    assert "none of the sample fell after the baselines' last issue time" not in text_  # 1 did
     assert "341, 337" in text_ and "50.0%" in text_ and "4 CPUs, 4.0 GiB" in text_
     for d in rep.DISCLOSURES:
         assert d.text in text_

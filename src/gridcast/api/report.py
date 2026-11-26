@@ -196,12 +196,16 @@ def p2_text(run: dict[str, Any]) -> str:
     d, p = _get(run, "demand forecasts"), _get(run, "price baselines")
     e, a = _get(run, "forecast evolution"), _get(run, "actuals")
     an = _get(run, "anomaly events")
-    priced = p["requests"] - p["extra"].get("not_published", 0)
+    late = int(p["extra"].get("not_published", 0))
+    late_text = (
+        f"{n(late)} after the baselines' last issue time answered 404 as required"
+        if late
+        else "none of the sample fell after the baselines' last issue time"
+    )
     parts = [
         f"demand: {n(d['requests'])} issue times, {n(d['values_compared'])} values ({_tail(d)})",
-        f"price: {n(priced)} issue times, {n(p['values_compared'])} values, and "
-        f"{n(p['extra'].get('not_published', 0))} after the baselines' last issue time answered "
-        f"404 as required ({_tail(p)})",
+        f"price: {n(p['requests'] - late)} issue times, {n(p['values_compared'])} values; "
+        f"{late_text} ({_tail(p)})",
         f"evolution: {n(e['requests'])} targets, {n(e['extra'].get('items', 0))} items, "
         f"{n(e['values_compared'])} values ({_tail(e)})",
         f"actuals: {n(a['requests'])} days, {n(a['extra'].get('intervals', 0))} intervals, "
@@ -479,23 +483,23 @@ def _reported_section(run: dict[str, Any]) -> str:
     mem = rep.get("memory_after") or {}
     if mem and "error" not in mem:
         out.append(
-            "**Memory after the run** (`docker stats`): "
+            "- **Memory after the run** (`docker stats`): "
             + "; ".join(f"{k} {v['mem_usage']} ({v['mem_perc']})" for k, v in mem.items())
             + "."
         )
     elif mem:
-        out.append(f"**Memory after the run:** not measured ({mem['error']}).")
+        out.append(f"- **Memory after the run:** not measured ({mem['error']}).")
     env = run.get("environment") or {}
     vm, img = env.get("vm") or {}, env.get("api_container") or {}
     if vm and "error" not in vm:
         out.append(
-            f"\n**Docker VM:** {vm.get('NCPU')} CPUs, "
+            f"- **Docker VM:** {vm.get('NCPU')} CPUs, "
             f"{int(vm.get('MemTotal') or 0) / 2**30:.1f} GiB, {vm.get('OperatingSystem')} "
             f"({vm.get('Architecture')}), Docker {vm.get('ServerVersion')}."
         )
     if img and "error" not in img and img.get("image_size_bytes"):
         out.append(
-            f"**API image:** {int(img['image_size_bytes']) / 1e6:,.0f} MB, started "
+            f"- **API image:** {int(img['image_size_bytes']) / 1e6:,.0f} MB, started "
             f"{img.get('started_at')}."
         )
     return "\n".join(out)
@@ -512,12 +516,19 @@ def _smokes_section(smokes: Sequence[dict[str, Any]]) -> str:
     rows = []
     for s in smokes:
         by = {(c["name"], c["target"].split(" ")[0]): c for c in s["checks"]}
-
+        build = s.get("build") or {}
+        dirty = build.get("dirty")
+        state = "" if dirty is False else " (dirty)" if dirty is True else " (dirty unknown)"
+        failed = next((c for c in s["checks"] if not c["ok"]), None)
         rows.append(
             [
                 s["started_at"],
-                f"`{str((s.get('build') or {}).get('git_sha'))[:7]}`",
-                "pass" if s.get("passed") else "fail",
+                f"`{str(build.get('git_sha'))[:7]}`{state}",
+                "pass"
+                if s.get("passed")
+                else f"fail: {failed['name']}: {failed['detail']}"
+                if failed
+                else "fail",
                 _smoke_ms(by, "recompute", "dev"),
                 _smoke_ms(by, "recompute", "holdout"),
                 _smoke_ms(by, "explain", "dev"),
