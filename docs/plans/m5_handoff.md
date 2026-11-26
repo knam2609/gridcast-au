@@ -2,6 +2,16 @@
 
 Read this, then [`m5_plan.md`](m5_plan.md). For the M4 history, see [`m4_handoff.md`](m4_handoff.md) and [`m4_plan.md`](m4_plan.md).
 
+> **Update, 2026-11-27 (twenty-eighth session, end): M5 is complete** (local, not pushed; branch `m5-api`).
+> - **README `392c9f4`:** a method section, *The API* (what is served, the endpoints and their fields, how exactness is kept, P1–P6), then the M5 results first under *Results*. M5 lines were also added to *Failure cases*, *Operational implications*, *Limitations* and *Reproduction*, the diagram, the layer table, the status block and the layout. Every number comes from `reports/m5_api.md` or the earlier reports, and every curl line answered 200 against the container.
+> - **Failure cases written down:** explain's narrow margin (p95 427.0 ms against 500 ms; p99 537.8 ms, maximum 605.9 ms; one worker, no load test), and the point outside its own 50% interval (19.2% development, 29.3% holdout, mostly below).
+> - **For M6 (the dashboard):**
+>   - request explanations per lead, or cache them;
+>   - expect the point to sit outside the 50% band on some leads;
+>   - public hosting and authentication are open (plan §7);
+>   - a README commit makes the running image stale (the image copies `README.md`), so run `make api-up` before `api-smoke` or `api-verify`.
+> - **Next:** the user reviews the README. Push and merge only when they ask (as for M1–M4: push `m5-api`, PR, merge commit, fast-forward local `main`, keep the remote branch). M6 branches from `main` and starts with a question round.
+
 > **Update, 2026-11-27 (twenty-eighth session): step 6's question round** (local, not pushed). The user chose every recommendation (plan §4, step 6):
 > - the README shows a curl line per endpoint and the fields each returns (from `docs/openapi.json`), with no response values;
 > - M5 is written into the README as M2–M4 were (a method section, results first, failure cases, implications, limitations, reproduction);

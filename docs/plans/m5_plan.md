@@ -8,7 +8,7 @@
 
 Every value the API returns must be one that a milestone report scored, or an exact recomputation of one. A forecast can also be rebuilt from the stored model and explained on demand, and both must reproduce the stored forecast exactly. That shows there is no train/serve skew.
 
-**Status:** planned 2026-11-22 after three question rounds with the user, on branch `m5-api` from `main` at `e338672` (M1–M4 merged). The user chose every recommendation except the storage layout (§1). The success criteria in §3 were fixed before any API code or measurement existed.
+**Status:** planned 2026-11-22 after three question rounds with the user, on branch `m5-api` from `main` at `e338672` (M1–M4 merged). The user chose every recommendation except the storage layout (§1). The success criteria in §3 were fixed before any API code or measurement existed. **M5 is complete (2026-11-27):** all six criteria passed on the first verification run (`reports/m5_api.md`), and the README has its API section (step 6). Local, not pushed.
 
 ## 1. Decisions (agreed 2026-11-22)
 
@@ -271,6 +271,11 @@ Every criterion is judged on the **Compose service** (Linux, arm64), because tha
      - **Explain's narrow margin goes under *Failure cases*.** P5 passes at p95 (427.0 ms against 500 ms), but its p99 (537.8 ms) and maximum (605.9 ms) exceed the limit, and model requests are serialised by one lock in one worker. No load test was run (§3.2).
      - **The point outside its own 50% interval** (19.2% development, 29.3% holdout, mostly below) also goes under *Failure cases*, as something a client drawing both must know.
      - **The curl lines use the smoke check's issue times** (`serving.smoke.issue_times`), already in the config, and the default port 8000 (`GRIDCAST_API_PORT`).
+   - **Outcome (2026-11-27):** README `392c9f4`: 148 lines added and 9 removed, written as decided in the question round.
+     - **Numbers:** every number added comes from `reports/m5_api.md`, `reports/m3_holdout.md` or the README's earlier sections. A script found none on the added lines that is missing from the reports or the config, apart from a migration number and the loopback address. The UTC → NEM conversions were checked; one comment's 16:30 was corrected to 15:30 before the commit.
+     - **The curl lines** were each run against the running container (the clean image of `9e70b42`), and all ten answered 200, `/docs` included.
+     - **Found while writing:** `README.md` is one of the files the API image copies (for `pyproject.toml`), so a README commit also makes the running image stale. `make api-up` rebuilds it (step 5's rule); no verification was rerun, because none is needed for a docs change.
+     - 615 unit tests pass.
 
 ## 5. New dependencies and compute
 
