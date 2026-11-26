@@ -2,6 +2,15 @@
 
 Read this, then [`m5_plan.md`](m5_plan.md). For the M4 history, see [`m4_handoff.md`](m4_handoff.md) and [`m4_plan.md`](m4_plan.md).
 
+> **Update, 2026-11-27 (twenty-seventh session): step 5's question round** (local, not pushed). The user chose every recommendation (plan §4, step 5):
+> - `api-verify` refuses unless the image is the checkout's HEAD, and both are clean;
+> - P5 is run as pre-registered, with nothing tuned before the first run;
+> - P5's timed requests go in one seeded, interleaved order.
+>
+> - **Seen before any verification run (informal):** a cost model of explain from the model files (each fold's leaves weighted by the leads each band serves). It puts the heaviest served fold, 2024-08-01, at about 1.2× the step-4 smoke's development fold: roughly 400–430 ms against P5's 500 ms. This is an estimate; the plan records it.
+> - **Decided while planning (not asked; plan §4, step 5):** the sampling domains, what "equal" means, P3 checking the bodies, P5's timing. P6 is also judged against the container, so the invalid-input table moves to `gridcast.api.contract`. The results go to `<data root>/serving/`.
+> - **Next: step 5a** (`gridcast api-verify`, `gridcast report-m5`, tests on the fixtures; committed before any run), then 5b.
+
 > **Update, 2026-11-26 (twenty-sixth session): step 4 done** (local, not pushed). The API runs as a Compose service.
 > - **Question round** (`5fa5a33`). The user chose every recommendation (plan §4, step 4):
 >   - without the SSD, the API starts without its model files;

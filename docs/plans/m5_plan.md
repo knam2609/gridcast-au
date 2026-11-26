@@ -212,6 +212,40 @@ Every criterion is judged on the **Compose service** (Linux, arm64), because tha
 5. **Verification:**
    - **5a:** `gridcast api-verify` and `gridcast report-m5`, committed before any run.
    - **5b:** the run, then `reports/m5_api.md`.
+   - **Decided in step 5's question round (2026-11-27; the user chose every recommendation):**
+     - **The image must be the checkout, clean.** `api-verify` refuses, stores nothing, and exits 2 unless `/health`'s build comes from the image, its commit is the checkout's HEAD, the image is clean, and the checkout's tracked files are clean (the client that measures is the checkout's code). So one commit names the whole run, and `make api-up` rebuilds after any commit (about 15 s).
+     - **P5 is run as pre-registered.** Nothing is tuned before the first run, and its verdicts lead the report. Two informal figures were seen before it:
+       - step 4's smoke check: development explain about 340 ms, holdout about 200 ms, at one issue time each;
+       - the question round's cost model (each fold's leaves weighted by the leads each band serves). It puts the heaviest served fold, 2024-08-01, at about 1.2× the smoke's development fold (2024-02-01): roughly 400–430 ms, an estimate, not a measurement.
+
+       If P5 fails, a speed-up that changes no value is a disclosed change, and the rerun is shown beside the first run (§3.1).
+     - **P5's timed requests are interleaved:** all 3,400 in one seeded random order, after the warm-ups.
+   - **Decided while planning the step (not asked):**
+     - **Samples.** Each draw has its own stream from `serving.verify.seed`.
+       - P2/P3 issue times come from each retrain fold of the published fits, clipped to its split's published issue times (9 development + 5 holdout folds). From each fold, 20 issue times are drawn without replacement, among those with at least one stored lead, since explain is defined only there. P3's 80,640 pairs include the leads without a stored forecast, whose recomputation must also be null.
+       - Price is checked at the same 280 issue times. One after the price baselines' last issue time (2026-09-29 14:00 UTC) must answer 404.
+       - Evolution: 280 targets drawn uniformly on the 5-minute grid over (first published issue time, last + 24 h]. The served issue times must be exactly the published ones in [*T* − 24 h, *T*).
+       - Actuals: 50 NEM days drawn among the days stored in full. Each request runs from that day's NEM midnight to the next (288 intervals) and is compared field by field with `market_intervals`, read by `api-verify`'s own SQL.
+       - Anomalies: every v2 event, paged through with the default limit (100), and every event by id, against its database row (every field, evidence included).
+     - **"Equal"** means that a served number, cast to float32, has the parquet's bits, and is itself exactly that float32 (§1). A served null must fall exactly where the parquet has NaN. Each response's split, run ids, leads and target times are checked too.
+     - **P3 checks the bodies, not only their flags:**
+       - recomputed and stored values against the parquet;
+       - explain's leads without a forecast, and each explained lead's forecast;
+       - per lead, anchor + base + Σ contributions against the float64 forecast within `explain.sum_tolerance`, as well as the gate's `passed`.
+     - **P5:**
+       - The time runs client-side, from sending the request to the last byte of its body (httpx), one request at a time on one keep-alive connection.
+       - p95 is numpy's default (linear) percentile. A timed response that is not 200 fails P5 for its endpoint.
+       - Its parameters are drawn separately from P2's. Forecast and price issue times are uniform over every published one; recompute and explain over those with a stored lead. Evolution targets use P2's domain. Actuals take one NEM day, anomalies one NEM calendar month (limit 100), and the event endpoint one v2 event, uniformly.
+     - **P6 is also judged against the container,** since §3 judges every criterion there; the suites' tests stay. `api-verify` checks:
+       - that the served `/openapi.json` equals `docs/openapi.json`, and every path's 200 response has a typed schema;
+       - the invalid-input table, which moves from the unit tests to `gridcast.api.contract` (both use it): 422 with its message;
+       - a 404 table for the main data: before the published range, region NSW1, a v1 event, a day without actuals, explain where nothing is stored;
+       - the integration suite's hypothesis search over query parameters (derandomised, 300 examples): no 500.
+     - **Every check runs to the end.** The results record counts and up to 20 mismatches per check. The order is: the build check and `/health`, then P6, P2, P3 and P5.
+     - **Results** go to `<data root>/serving/verify_<UTC time>.json`, never overwritten. The file records:
+       - the build, the Docker VM (`docker info`: CPUs, memory), the samples and every latency;
+       - reported only: the containers' memory after the run (`docker stats`), and the share of pairs whose point lies outside the 50% interval (SQL over every published pair, by split).
+     - **`gridcast report-m5`** reads every stored verification run and the publications (P1, P4). The first run's verdicts lead. Each later run is shown with the commits between it and the run before. Tables only, no figures.
 6. **README** (an API section from the report), and the outcome in this plan and the handoff.
 
 ## 5. New dependencies and compute
