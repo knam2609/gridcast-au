@@ -2,6 +2,13 @@
 
 Read this, then [`m5_plan.md`](m5_plan.md). For the M4 history, see [`m4_handoff.md`](m4_handoff.md) and [`m4_plan.md`](m4_plan.md).
 
+> **Update, 2026-11-27 (twenty-eighth session): step 6's question round** (local, not pushed). The user chose every recommendation (plan §4, step 6):
+> - the README shows a curl line per endpoint and the fields each returns (from `docs/openapi.json`), with no response values;
+> - M5 is written into the README as M2–M4 were (a method section, results first, failure cases, implications, limitations, reproduction);
+> - the README and the outcome are committed locally, and nothing is pushed until the user has reviewed them.
+>
+> - **Next:** the README commit, then the outcome in the plan and this handoff. Then ask whether to push and merge.
+
 > **Update, 2026-11-27 (twenty-seventh session, end): step 5 done; all six criteria pass on the first verification run** (local, not pushed). The report is `reports/m5_api.md`.
 > - **The run** (`make api-up`, then `make api-verify`) used the clean image of `9e70b42` and took 3.7 min (`<data root>/serving/verify_20261126_140655.json`). Nothing was rerun.
 > - **P2 and P3:** 0 mismatches. 80,640 of 80,640 pairs were recomputed equal on Linux, and 280 of 280 issue times were explained with the gate passed.

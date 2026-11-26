@@ -263,6 +263,14 @@ Every criterion is judged on the **Compose service** (Linux, arm64), because tha
      - **Reported only:** the point lies outside the 50% interval in 19.2% (development) and 29.3% (holdout) of pairs, mostly below it. The API held 795 MiB after the run.
      - **After the run,** three wording fixes in `report-m5` (`7b0176f`) changed no number or verdict. A zero count of late price issue times now reads as such, a failed smoke check names its failing check, and the reported-only lines are a list.
 6. **README** (an API section from the report), and the outcome in this plan and the handoff.
+   - **Decided in step 6's question round (2026-11-27; the user chose every recommendation):**
+     - **Commands and fields, no values.** Each endpoint gets a curl line and a table of what it returns. The field names come from `docs/openapi.json`, and the table points to `/docs` (FastAPI's interactive page). No response body is pasted, so the README has no served value that is not in a report.
+     - **Written like M2–M4.** The README gains a method section, *The API*, after *Anomaly detection*, and the M5 results lead *Results*. M5 lines are added to *Failure cases*, *Operational implications*, *Limitations* and *Reproduction*, and to the architecture diagram, the layer table, the status block and the layout.
+     - **Review before merging.** The README and the outcome are committed locally. Nothing is pushed until the user has read the README and asks for it.
+   - **Decided while planning the step (not asked):**
+     - **Explain's narrow margin goes under *Failure cases*.** P5 passes at p95 (427.0 ms against 500 ms), but its p99 (537.8 ms) and maximum (605.9 ms) exceed the limit, and model requests are serialised by one lock in one worker. No load test was run (§3.2).
+     - **The point outside its own 50% interval** (19.2% development, 29.3% holdout, mostly below) also goes under *Failure cases*, as something a client drawing both must know.
+     - **The curl lines use the smoke check's issue times** (`serving.smoke.issue_times`), already in the config, and the default port 8000 (`GRIDCAST_API_PORT`).
 
 ## 5. New dependencies and compute
 
