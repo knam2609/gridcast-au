@@ -255,6 +255,13 @@ Every criterion is judged on the **Compose service** (Linux, arm64), because tha
      - **The search accepts only 200, 404 and 422** against the container, so a 503 also counts as a failure there.
      - **Explain's check** also requires each lead's family contributions to sum to its feature contributions within the tolerance.
      - The source matrices come from publish's reader, so the truth's interval bounds are the frozen rearrangement of the parquet bounds, as P1's are.
+   - **5b outcome (2026-11-27):** **all six criteria pass on the first verification run** (`reports/m5_api.md`). The run took 3.7 min against the clean image of `9e70b42` (`<data root>/serving/verify_20261126_140655.json`).
+     - **P2:** 0 mismatches over 564,480 demand values, 161,280 price values, 13,404 evolution items, 14,400 actual intervals, and 1,127 v2 events (paged, and by id).
+     - **P3:** 80,640 of 80,640 pairs were recomputed equal on Linux, and 280 of 280 issue times were explained with the gate passed (80,382 leads).
+     - **P5:** the stored endpoints' p95 is 2.8–23.5 ms, recompute's 52.8 ms, and **explain's 427.0 ms against the 500 ms limit**. Reported only: explain's p99 is 537.8 ms and its maximum 605.9 ms.
+     - **P6:** the served schema equals the committed one, with 10 typed paths. 19 invalid inputs answer 422 and 11 unpublished requests answer 404. The search's 300 examples found no 500.
+     - **Reported only:** the point lies outside the 50% interval in 19.2% (development) and 29.3% (holdout) of pairs, mostly below it. The API held 795 MiB after the run.
+     - **After the run,** three wording fixes in `report-m5` (`7b0176f`) changed no number or verdict. A zero count of late price issue times now reads as such, a failed smoke check names its failing check, and the reported-only lines are a list.
 6. **README** (an API section from the report), and the outcome in this plan and the handoff.
 
 ## 5. New dependencies and compute

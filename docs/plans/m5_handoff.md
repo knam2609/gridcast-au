@@ -2,6 +2,15 @@
 
 Read this, then [`m5_plan.md`](m5_plan.md). For the M4 history, see [`m4_handoff.md`](m4_handoff.md) and [`m4_plan.md`](m4_plan.md).
 
+> **Update, 2026-11-27 (twenty-seventh session, end): step 5 done; all six criteria pass on the first verification run** (local, not pushed). The report is `reports/m5_api.md`.
+> - **The run** (`make api-up`, then `make api-verify`) used the clean image of `9e70b42` and took 3.7 min (`<data root>/serving/verify_20261126_140655.json`). Nothing was rerun.
+> - **P2 and P3:** 0 mismatches. 80,640 of 80,640 pairs were recomputed equal on Linux, and 280 of 280 issue times were explained with the gate passed.
+> - **P5:** stored endpoints' p95 is 2.8–23.5 ms, recompute's 52.8 ms. **Explain's is 427.0 ms against 500 ms**, with p99 537.8 ms (reported only). The margin is narrow, as the question round's cost model suggested.
+> - **P6** passes in the container: schema equal, 19 → 422, 11 → 404, and the search found no 500. P1 and P4 come from the publications (step 1b).
+> - **Reported only:** the point lies outside the 50% interval in 19.2% (development) and 29.3% (holdout) of pairs, mostly below it. The API held 795 MiB after the run.
+> - **After the run,** `7b0176f` fixed three wordings in `report-m5`; no number or verdict changed (plan §4, step 5b).
+> - **Next: step 6:** the README's API section, written from `reports/m5_api.md`, and the outcome in the plan and this handoff. Ask first whether to merge M5 afterwards (push only on request).
+
 > **Update, 2026-11-27 (twenty-seventh session, later): step 5a done** (local, not pushed). `api-verify` and `report-m5` are committed; no verification run has been made.
 > - **Modules:**
 >   - `src/gridcast/api/verify.py`: `gridcast api-verify` / `make api-verify`. It refuses unless the image is HEAD and clean, reads the truth without the API, runs P6, P2, P3 and P5 in that order, and saves `<data root>/serving/verify_<UTC time>.json`.
