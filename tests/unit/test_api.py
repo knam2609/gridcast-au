@@ -15,6 +15,7 @@ from hypothesis import strategies as st
 from gridcast.api import models as m
 from gridcast.api.app import create_app
 from gridcast.api.catalogue import read_only_engine
+from gridcast.api.contract import INVALID_INPUTS
 from gridcast.api.inputs import (
     InputError,
     check_grid,
@@ -154,66 +155,7 @@ def client() -> TestClient:
     return TestClient(create_app(engine=engine), raise_server_exceptions=False)
 
 
-@pytest.mark.parametrize(
-    ("path", "params", "message"),
-    [
-        ("/v1/forecasts/demand", {}, "issue_time: Field required"),
-        ("/v1/forecasts/demand", {"issue_time": "2025-10-01T00:00:00"}, "offset"),
-        ("/v1/forecasts/demand", {"issue_time": "2025-10-01T00:05:00Z"}, "30-minute grid"),
-        ("/v1/forecasts/demand/evolution", {"target_end": "2025-10-01T00:01:00Z"}, "5-minute"),
-        ("/v1/forecasts/price", {"issue_time": "noon"}, "ISO 8601"),
-        (
-            "/v1/actuals",
-            {"start": "2025-10-01T00:00:00Z", "end": "2025-10-09T00:00:00Z"},
-            "at most",
-        ),
-        (
-            "/v1/actuals",
-            {"start": "2025-10-01T00:00:00Z", "end": "2025-10-01T00:00:00Z"},
-            "after start",
-        ),
-        (
-            "/v1/anomalies",
-            {"start": "2025-10-01T00:00:00Z", "end": "2025-11-01T00:00:00Z", "tier": "huge"},
-            "tier",
-        ),
-        (
-            "/v1/anomalies",
-            {"start": "2025-10-01T00:00:00Z", "end": "2025-11-01T00:00:00Z", "limit": "0"},
-            "limit",
-        ),
-        (
-            "/v1/anomalies",
-            {"start": "2025-10-01T00:00:00Z", "end": "2025-11-01T00:00:00Z", "limit": "501"},
-            "limit",
-        ),
-        (
-            "/v1/anomalies",
-            {"start": "2025-10-01T00:00:00Z", "end": "2025-11-01T00:00:00Z", "after": "zz"},
-            "cursor",
-        ),
-        ("/v1/forecasts/demand/recompute", {}, "issue_time: Field required"),
-        ("/v1/forecasts/demand/recompute", {"issue_time": "2025-10-01T00:10:00Z"}, "grid"),
-        (
-            "/v1/forecasts/demand/explain",
-            {"issue_time": "2025-10-01T00:00:00Z", "lead": "289"},
-            "at most 288",
-        ),
-        (
-            "/v1/forecasts/demand/explain",
-            {"issue_time": "2025-10-01T00:00:00Z", "lead": "0"},
-            "lead",
-        ),
-        (
-            "/v1/forecasts/demand/explain",
-            {"issue_time": "2025-10-01T00:00:00Z", "lead": "x"},
-            "lead",
-        ),
-        ("/v1/anomalies/0", {}, "event_id"),
-        ("/v1/anomalies/abc", {}, "event_id"),
-        ("/v1/anomalies/99999999999999999999", {}, "event_id"),
-    ],
-)
+@pytest.mark.parametrize(("path", "params", "message"), INVALID_INPUTS)
 def test_invalid_inputs_are_422_with_a_message(
     client: TestClient, path: str, params: dict[str, str], message: str
 ) -> None:

@@ -246,6 +246,15 @@ Every criterion is judged on the **Compose service** (Linux, arm64), because tha
        - the build, the Docker VM (`docker info`: CPUs, memory), the samples and every latency;
        - reported only: the containers' memory after the run (`docker stats`), and the share of pairs whose point lies outside the 50% interval (SQL over every published pair, by split).
      - **`gridcast report-m5`** reads every stored verification run and the publications (P1, P4). The first run's verdicts lead. Each later run is shown with the commits between it and the run before. Tables only, no figures.
+   - **5a outcome (2026-11-27):** committed before any verification run; see the handoff. Clarified while building:
+     - **The build must come from the image** (`build.source` is `image`), so `make api` on the host cannot be verified. `/health` is read again at the end, and the run fails if its build changed during the run. A refused run exits 2 and stores nothing.
+     - **The 404 table**, built from the published data:
+       - demand before and after the published range, region NSW1, a target before every issue time, price after its last issue time;
+       - recompute and explain before the range, explain where nothing is stored, and a lead without a stored forecast (one of each per split where one exists);
+       - a day before the first actual, and a v1 event.
+     - **The search accepts only 200, 404 and 422** against the container, so a 503 also counts as a failure there.
+     - **Explain's check** also requires each lead's family contributions to sum to its feature contributions within the tolerance.
+     - The source matrices come from publish's reader, so the truth's interval bounds are the frozen rearrangement of the parquet bounds, as P1's are.
 6. **README** (an API section from the report), and the outcome in this plan and the handoff.
 
 ## 5. New dependencies and compute

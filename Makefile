@@ -18,7 +18,7 @@ API_PORT ?= $(or $(shell sed -n 's/^GRIDCAST_API_PORT=//p' .env 2>/dev/null),800
 API_URL ?= http://127.0.0.1:$(API_PORT)
 IMAGE_FILES := Dockerfile .dockerignore pyproject.toml uv.lock README.md configs src
 
-.PHONY: help setup lint format typecheck test test-integration test-host db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe ingest-generation weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout anomaly-reference-events anomalies-smoke explain-smoke evidence-smoke anomalies-freeze-check anomalies-dev report-m4 anomalies-diagnose-v1 anomalies-reproduce evaluate-holdout-anomalies report-m4-holdout explain-dev explain-holdout report-m4-explain report-m4-explain-holdout publish publish-check api api-schema api-up api-down api-smoke catalogue feature-audit pipeline
+.PHONY: help setup lint format typecheck test test-integration test-host db-up db-down migrate ingest ingest-daily ingest-aemo ingest-aemo-poe ingest-generation weather calendar dq backtest backtest-ml evaluate-holdout weather-ablation report report-m2 report-aemo report-holdout intervals-conformal backtest-qr intervals-cqr intervals-halfhour intervals-freeze-check backtest-qr-holdout evaluate-holdout-intervals report-m3 report-m3-aemo report-m3-holdout anomaly-reference-events anomalies-smoke explain-smoke evidence-smoke anomalies-freeze-check anomalies-dev report-m4 anomalies-diagnose-v1 anomalies-reproduce evaluate-holdout-anomalies report-m4-holdout explain-dev explain-holdout report-m4-explain report-m4-explain-holdout publish publish-check api api-schema api-up api-down api-smoke api-verify report-m5 catalogue feature-audit pipeline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -209,6 +209,12 @@ api-down: ## M5: stop and remove the API container (PostgreSQL keeps running)
 api-smoke: ## M5 step 4: /health, then recompute and explain per split against the running API (informal, not P3/P5), and the containers' memory
 	$(UV) run gridcast api-smoke --url $(API_URL)
 	@docker stats --no-stream --format 'table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}' gridcast-api gridcast-db
+
+api-verify: ## M5 step 5: P2, P3, P5 and P6 against the running API container (refused unless the image is HEAD and clean; make api-up first); saved under <data root>/serving/
+	$(UV) run gridcast api-verify --url $(API_URL)
+
+report-m5: ## M5 step 5: write reports/m5_api.md from every stored verification run and the publications
+	$(UV) run gridcast report-m5
 
 catalogue: ## Regenerate docs/feature_catalogue.md from the feature catalogue in code
 	$(UV) run gridcast feature-catalogue

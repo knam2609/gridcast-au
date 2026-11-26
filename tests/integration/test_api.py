@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from sqlalchemy.exc import DBAPIError
 
 from gridcast.api.app import create_app
 from gridcast.api.catalogue import read_only_engine
+from gridcast.api.contract import SEARCH_EXAMPLES, SEARCH_LITERALS, SEARCH_PARAMETERS
 from gridcast.config import ServingSourceRun
 from gridcast.database.load import start_ingestion_run, upsert_market_intervals
 from gridcast.serving.publish import publish
@@ -121,8 +123,10 @@ def _batch(db: Engine, run_id: int) -> str:
         )
 
 
-@pytest.fixture
-def env(db: Engine, tmp_path: Path) -> Iterator[Env]:
+@contextmanager
+def make_env(db: Engine, tmp_path: Path) -> Iterator[Env]:
+    """The published fixture, actuals and events, and the app on them (also used by the
+    api-verify tests)."""
     fx = _setup(db, tmp_path)
     results = publish(db, fx.cfg, check_only=False, sha=SHA)
     assert {r.status for r in results} == {"success"}
@@ -134,6 +138,12 @@ def env(db: Engine, tmp_path: Path) -> Iterator[Env]:
     with TestClient(create_app(fx.cfg, engine), raise_server_exceptions=False) as client:
         yield Env(fx, client, db, events, v1, tmp_path)
     engine.dispose()
+
+
+@pytest.fixture
+def env(db: Engine, tmp_path: Path) -> Iterator[Env]:
+    with make_env(db, tmp_path) as e:
+        yield e
 
 
 def _rearranged(fx: Fixture, split: str) -> np.ndarray:
@@ -325,43 +335,12 @@ def test_valid_but_unpublished_inputs(
     assert r.status_code == status and isinstance(r.json()["detail"], str)
 
 
-TEXT = st.one_of(
-    st.text(max_size=40),
-    st.sampled_from(
-        [
-            "2023-08-30T14:00:00Z",
-            "2025-09-30T14:00:00+00:00",
-            "9999-12-31T23:30:00-23:59",
-            "0001-01-01T00:00:00+14:00",
-            "2023-08-30T14:00:00\x00",
-            "2023-08-31T00:00:00 10:00",
-        ]
-    ),
-)
+TEXT = st.one_of(st.text(max_size=40), st.sampled_from(SEARCH_LITERALS))
 
 
-@given(
-    path=st.sampled_from(
-        [
-            ("/v1/forecasts/demand", "issue_time"),
-            ("/v1/forecasts/demand/evolution", "target_end"),
-            ("/v1/forecasts/price", "issue_time"),
-            ("/v1/actuals", "start"),
-            ("/v1/actuals", "end"),
-            ("/v1/anomalies", "start"),
-            ("/v1/anomalies", "category"),
-            ("/v1/anomalies", "after"),
-            ("/v1/anomalies", "limit"),
-            ("/v1/forecasts/demand", "region"),
-            ("/v1/forecasts/demand/recompute", "issue_time"),
-            ("/v1/forecasts/demand/explain", "issue_time"),
-            ("/v1/forecasts/demand/explain", "lead"),
-        ]
-    ),
-    value=TEXT,
-)
+@given(path=st.sampled_from(SEARCH_PARAMETERS), value=TEXT)
 @settings(
-    max_examples=300,
+    max_examples=SEARCH_EXAMPLES,
     deadline=None,
     suppress_health_check=[HealthCheck.function_scoped_fixture],
 )

@@ -100,9 +100,8 @@ class World:
         return self.times[(self.times < HOLDOUT) == (split == "dev")]
 
 
-@pytest.fixture(scope="module")
-def world(tmp_path_factory: pytest.TempPathFactory) -> World:
-    root = tmp_path_factory.mktemp("data")
+def build_world(root: Path) -> World:
+    """The synthetic walk-forward under ``root`` (also used by the api-verify tests)."""
     cfg = _cfg(root)
     builder = _builder()
     retrains = [nem_midnight_utc(d) for d in RETRAINS]
@@ -132,6 +131,11 @@ def world(tmp_path_factory: pytest.TempPathFactory) -> World:
     times = pd.DatetimeIndex(builder.ctx.times[origins]).as_unit("us")
     features = rt.Features(builder, fits, 0.0)
     return World(root, cfg, features, times, result.predictions["lgbm_C"])
+
+
+@pytest.fixture(scope="module")
+def world(tmp_path_factory: pytest.TempPathFactory) -> World:
+    return build_world(tmp_path_factory.mktemp("data"))
 
 
 def _catalogue(w: World, dev_batch: str | None = None) -> Catalogue:

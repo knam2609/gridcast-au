@@ -2,6 +2,17 @@
 
 Read this, then [`m5_plan.md`](m5_plan.md). For the M4 history, see [`m4_handoff.md`](m4_handoff.md) and [`m4_plan.md`](m4_plan.md).
 
+> **Update, 2026-11-27 (twenty-seventh session, later): step 5a done** (local, not pushed). `api-verify` and `report-m5` are committed; no verification run has been made.
+> - **Modules:**
+>   - `src/gridcast/api/verify.py`: `gridcast api-verify` / `make api-verify`. It refuses unless the image is HEAD and clean, reads the truth without the API, runs P6, P2, P3 and P5 in that order, and saves `<data root>/serving/verify_<UTC time>.json`.
+>   - `src/gridcast/api/report.py`: `gridcast report-m5` / `make report-m5` → `reports/m5_api.md`.
+>   - `src/gridcast/api/contract.py`: the invalid-input table and the no-500 search's parameters, now shared by the unit and integration tests and by `api-verify`.
+> - **Tests:**
+>   - unit: 615 (25 new). They cover float32 equality, the refusals, the samples and P5's interleaving, P6 against the app, and P3 on the synthetic walk-forward (a one-ulp change, a tampered decomposition), plus the report.
+>   - integration: 110 (3 new) on the published fixture. Every stored-endpoint check passes; a one-ulp change in the database and an edited event are caught; a whole run completes, is saved once and renders.
+>   - host: 17 (3 new). On the main data: 14 folds (the retrains as planned), 280 issue times, 3,400 timed requests. They send no API request.
+> - **Next: step 5b.** `make api-up` (the image must be this commit), `make api-verify` (minutes), `make report-m5`, then commit the report. A failure is reported as found; a fix and a rerun are disclosed (plan §3.1).
+
 > **Update, 2026-11-27 (twenty-seventh session): step 5's question round** (local, not pushed). The user chose every recommendation (plan §4, step 5):
 > - `api-verify` refuses unless the image is the checkout's HEAD, and both are clean;
 > - P5 is run as pre-registered, with nothing tuned before the first run;

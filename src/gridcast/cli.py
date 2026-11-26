@@ -1494,6 +1494,59 @@ def api_smoke(
         raise typer.Exit(code=1)
 
 
+@app.command("api-verify")
+def api_verify(
+    url: Annotated[
+        str,
+        typer.Option(help="The running API container (make api-verify passes GRIDCAST_API_PORT's)"),
+    ] = "http://127.0.0.1:8000",
+) -> None:
+    """M5 step 5: P2, P3, P5 and P6 against the running API container (m5_plan.md §3), saved
+    under <data root>/serving/. Refused (exit 2, nothing saved) unless the image is the
+    checkout's HEAD and both are clean; exit 1 if a criterion fails."""
+    import json
+
+    import httpx
+
+    from gridcast.api.catalogue import read_only_engine
+    from gridcast.api.schema import SCHEMA_PATH
+    from gridcast.api.verify import VerifyRefused, render, run_verify, save
+    from gridcast.config import get_settings
+    from gridcast.provenance import git_sha
+
+    cfg = load_config()
+    committed = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    engine = read_only_engine(get_settings().database_url)
+    try:
+        with httpx.Client(base_url=url, timeout=120) as client:
+            result = run_verify(client, engine, cfg, git_sha(), url, committed)
+    except VerifyRefused as exc:
+        typer.echo(f"refused, nothing measured or saved: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    finally:
+        engine.dispose()
+    path = save(result, cfg)
+    typer.echo(render(result))
+    typer.echo(f"saved {path}")
+    if not result.passed:
+        raise typer.Exit(code=1)
+
+
+@app.command("report-m5")
+def report_m5() -> None:
+    """M5 step 5: write reports/m5_api.md from every stored verification run (api-verify) and
+    the publications records (P1, P4)."""
+    from gridcast.api.catalogue import read_only_engine
+    from gridcast.api.report import write_report
+    from gridcast.config import get_settings
+
+    engine = read_only_engine(get_settings().database_url)
+    try:
+        typer.echo(f"wrote {write_report(engine, load_config())}")
+    finally:
+        engine.dispose()
+
+
 @app.command("feature-catalogue")
 def feature_catalogue() -> None:
     """Write docs/feature_catalogue.md from the feature catalogue in code (no database)."""
