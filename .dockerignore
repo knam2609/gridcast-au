@@ -1,0 +1,10 @@
+# Only what the Dockerfile copies goes into the build context (never .env, .venv or data).
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!configs/
+!src/
+**/__pycache__
+**/*.py[cod]
+**/.DS_Store

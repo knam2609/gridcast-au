@@ -4,12 +4,13 @@
 
 GridCast-AU is a production-style data-science system for Australia's National Electricity Market (NEM). It ingests official AEMO market data and archived weather forecasts into PostgreSQL, checks data quality, and evaluates 24-hour-ahead forecasts of regional **demand** and **wholesale spot price** with a leakage-safe, walk-forward backtest.
 
-> **Status: milestones 1–4 of 7 are complete.**
+> **Status: milestones 1–5 of 7 are complete.**
 > - Milestone 1 delivered a reproducible Victorian data pipeline and correctly evaluated baseline forecasts for demand and price.
 > - Milestone 2 added weather-aware machine-learning forecasts of **demand**. They were judged against success criteria written before any result existed, compared with AEMO's own forecasts, and scored once on a holdout year that was set aside before the model was built.
 > - Milestone 3 added **prediction intervals** for demand: conformalised quantile regression on the milestone-2 model. They were judged against pre-registered criteria, compared with AEMO's probabilistic forecasts, and scored once on the same holdout year.
 > - Milestone 4 added **market anomaly detection** with a stated false-alarm rate and fact-only evidence for every alert, **SHAP explanations** of the milestone-2 demand model, and a descriptive analysis of when high and negative prices occur. The detectors were frozen before their development run. A disclosed revision of two detectors followed, and both versions were scored once on the holdout year.
-> - Price models, the API and the dashboard are planned and **not built yet**; the sections below say so explicitly.
+> - Milestone 5 serves these results through a read-only **HTTP API**: the demand forecasts with their prediction intervals, the price baselines, the actuals and the anomaly events. On request it rebuilds any demand forecast from the stored model and explains it. Criteria written before any API code existed check that every value it serves equals the stored one exactly.
+> - Price models and the dashboard are planned and **not built yet**; the sections below say so explicitly.
 >
 > Every number in this README comes from a generated report:
 > - [`reports/m1_baseline.md`](reports/m1_baseline.md): the M1 baselines.
@@ -23,6 +24,7 @@ GridCast-AU is a production-style data-science system for Australia's National E
 > - [`reports/m4_anomalies_v2.md`](reports/m4_anomalies_v2.md): the disclosed revision (v2), development, post hoc.
 > - [`reports/m4_holdout.md`](reports/m4_holdout.md): both anomaly recipes on the holdout, scored once each.
 > - [`reports/m4_explainability.md`](reports/m4_explainability.md) and [`reports/m4_explainability_holdout.md`](reports/m4_explainability_holdout.md): SHAP and price associations, development and holdout.
+> - [`reports/m5_api.md`](reports/m5_api.md): the API's parity, latency and contract checks.
 
 ---
 
@@ -38,7 +40,7 @@ GridCast-AU answers five questions for Victoria (`VIC1`):
 4. When is the market behaving abnormally?
 5. Which factors are associated with unusually high demand or price?
 
-Milestone 1 answers the question that has to come first: **what does a forecast need to beat?** Milestone 2 answers question 1 for demand. It also tests whether the answer holds up on a year the model never saw, and how it compares with the operator's own forecast. Milestone 3 answers question 3 for demand: how wide the uncertainty is, and whether an interval's stated level can be trusted. Milestone 4 answers questions 4 and 5. It flags abnormal market intervals at a stated false-alarm rate, with the observable facts around each one. It also describes which conditions are associated with high demand and extreme prices, without claiming causes.
+Milestone 1 answers the question that has to come first: **what does a forecast need to beat?** Milestone 2 answers question 1 for demand. It also tests whether the answer holds up on a year the model never saw, and how it compares with the operator's own forecast. Milestone 3 answers question 3 for demand: how wide the uncertainty is, and whether an interval's stated level can be trusted. Milestone 4 answers questions 4 and 5. It flags abnormal market intervals at a stated false-alarm rate, with the observable facts around each one. It also describes which conditions are associated with high demand and extreme prices, without claiming causes. Milestone 5 serves those answers over HTTP, so that a dashboard or another system can use them. It also shows that what it serves is exactly what was scored.
 
 ## Why electricity forecasting matters
 
@@ -99,6 +101,11 @@ flowchart LR
     Q --> SH[TreeSHAP of the<br/>stored models]
     SH --> AN
     E --> R[Generated reports<br/>reports/*.md]
+    Q --> PB[gridcast publish<br/>every row read back]
+    I --> PB
+    PB -->|forecasts<br/>forecast_intervals| E
+    E --> API[Read-only API<br/>FastAPI in Compose]
+    L -->|stored models,<br/>read-only| API
 ```
 
 | Layer | Implementation |
@@ -112,7 +119,9 @@ flowchart LR
 | Intervals | `intervals/`: rolling conformal calibration with exact rolling order statistics, quantile LightGBM, CQR, the half-hour recalibration for the AEMO comparison, the recipe freeze and the holdout lock (`intervals/holdout.py`) |
 | Anomalies | `anomalies/`: six detectors with rolling conformal p-values (milestone 3's order statistics), the event merge, evidence and fact-only summaries, synthetic injection, the recipe freeze per version and the holdout lock (`anomalies/holdout.py`) |
 | Explanations | `explainability/`: TreeSHAP of the stored milestone-2 boosters behind the E1 reproduction gate, the whole-forecast decomposition, and the price associations |
-| Tooling | uv, Python 3.12, ruff, mypy, pytest + hypothesis, structlog, typer CLI, LightGBM, scikit-learn |
+| Serving | `serving/`: `gridcast publish` loads the scored forecasts, the rearranged intervals and the price baselines into Postgres (binary COPY, migration `0009`). It reads every row back against its parquet source and records each publication |
+| API | `api/`: FastAPI on uvicorn with typed pydantic responses and a read-only engine. Recompute and explain run through milestone 2's and milestone 4's own code. The OpenAPI contract is committed (`docs/openapi.json`), and `api-verify` checks the container (`Dockerfile`, Compose service `api`) |
+| Tooling | uv, Python 3.12, ruff, mypy, pytest + hypothesis, structlog, typer CLI, LightGBM, scikit-learn, FastAPI, httpx |
 
 The schema keys every table by `region_id`, so adding another NEM region is a configuration change (`configs/base.yaml`), not a migration.
 
@@ -298,7 +307,105 @@ Two fixed price lines, $300 and $5,000/MWh, flag high prices whatever the recent
 
 **Price associations** are the rates of prices above $300/MWh and below $0 by same-interval conditions, with day-block bootstrap intervals. They are associations only.
 
+## The API
+
+**Milestone 5: serve what was scored, and check that it is.** The design and the criteria P1–P6 were fixed in [`docs/plans/m5_plan.md`](docs/plans/m5_plan.md) before any API code or measurement existed. The API adds no data and no forecast. Every value it returns was scored by a milestone report, or is an exact recomputation of one.
+
+**What is served.** Victoria, at issue times every 30 minutes from 1 August 2023 to 30 September 2026 (NEM time): the development period, then the holdout year. Every response names its split.
+
+| Product | Source | Served as |
+|---|---|---|
+| Demand forecasts | LightGBM C (milestone 2): the second development run, then the single holdout run | 288 leads per issue time, `null` where nothing was stored (286,080 development pairs, none in the holdout) |
+| Demand intervals, 50%, 80% and 95% | CQR (milestone 3), with each pair's six bounds sorted so that the levels nest | Three lower and three upper bounds beside each point |
+| Price | Milestone 1's baselines: persistence and the 28-day median profile | Labelled as baselines, with no intervals. Their last issue time is 00:00 on 30 September 2026 |
+| Anomaly events | Recipe v2 (milestone 4), development (from 1 May 2022) and holdout | A page of events, or one event with its evidence |
+| Actuals | 5-minute demand and price, with AEMO's price flags | Up to 7 days per request |
+
+**Endpoints.** Every endpoint is a GET. Times are ISO 8601 with an offset (such as `Z`), and a time without one is rejected. `region` defaults to `VIC1`, the only region published. The interactive documentation is served at `/docs`, and the contract is committed as [`docs/openapi.json`](docs/openapi.json).
+
+| Path | Parameters | Returns |
+|---|---|---|
+| `/health` | none | `status` (`ok` or `degraded`), the image's `build` (commit and dirty flag), one check per dependency, and the published ranges |
+| `/v1/meta` | none | Each product's runs, batches, commits, config hashes, issue-time ranges and scored metrics by split; the disclosures; the licences and attribution |
+| `/v1/forecasts/demand` | `issue_time` (30-minute grid) | `split`, the run ids and the interval method. Per lead: `target_end`, `lead_minutes`, `point_mw`, and `lo95_mw` … `hi95_mw` |
+| `/v1/forecasts/demand/evolution` | `target_end` (5-minute grid) | Every forecast issued for that target in the 24 hours before it (at most 48): issue time, split, lead, point and bounds |
+| `/v1/forecasts/demand/recompute` | `issue_time` | The forecast rebuilt from the stored model: `matches_stored`, `leads_differing`, `max_abs_diff_mw` and the fits used. Per lead: `recomputed_mw` beside `stored_mw` |
+| `/v1/forecasts/demand/explain` | `issue_time`, optional `lead` | E1's `gate`. Per lead: `forecast_mw` = `anchor` + `base_value_mw` + the contributions, by feature (with the value the model saw) and by family |
+| `/v1/forecasts/price` | `issue_time` | Both baselines per lead (`persistence_aud_mwh`, `median_profile_aud_mwh`), labelled as baselines |
+| `/v1/actuals` | `start`, `end` (at most 7 days) | Per 5-minute interval: `demand_mw`, `price_aud_mwh`, the price status and AEMO's flag bits |
+| `/v1/anomalies` | `start`, `end`; optional `tier`, `category`, `detector`, `limit` (at most 500, default 100), `after` | v2 events (times, tier, detectors, categories, lowest p, summary), paged with a keyset cursor (`next`) |
+| `/v1/anomalies/{event_id}` | none | One event with its full evidence |
+
+```bash
+make api-up   # build and start the API container on 127.0.0.1, port GRIDCAST_API_PORT (default 8000)
+curl -s http://127.0.0.1:8000/health
+# 288 leads issued at 15:30 NEM time on 20 January 2026 (holdout); then the same forecast rebuilt, and lead 48 explained
+curl -s 'http://127.0.0.1:8000/v1/forecasts/demand?issue_time=2026-01-20T05:30:00Z'
+curl -s 'http://127.0.0.1:8000/v1/forecasts/demand/recompute?issue_time=2026-01-20T05:30:00Z'
+curl -s 'http://127.0.0.1:8000/v1/forecasts/demand/explain?issue_time=2026-01-20T05:30:00Z&lead=48'
+# every forecast of one target, the price baselines, one NEM day of actuals, a month's severe anomalies
+curl -s 'http://127.0.0.1:8000/v1/forecasts/demand/evolution?target_end=2026-01-21T05:30:00Z'
+curl -s 'http://127.0.0.1:8000/v1/forecasts/price?issue_time=2026-01-20T05:30:00Z'
+curl -s 'http://127.0.0.1:8000/v1/actuals?start=2026-01-19T14:00:00Z&end=2026-01-20T14:00:00Z'
+curl -s 'http://127.0.0.1:8000/v1/anomalies?start=2026-07-01T00:00:00Z&end=2026-08-01T00:00:00Z&tier=severe'
+```
+
+**How the served values stay exact.**
+- **Publication.** `gridcast publish` loads the forecasts, intervals and price baselines into Postgres, one row per lead: 63,378,240 rows. It then reads every row back and compares it with its parquet source bit for bit (P1), and checks that every interval pair nests (P4). A CHECK constraint also rejects a row that does not nest.
+- **Floats.** The forecasts and bounds are float32. Postgres holds them exactly (points in `forecasts`' `double precision` column, bounds as `real`). The API writes each one as the exact float64 value of the stored float32, so a client that casts back to float32 recovers the stored bits.
+- **Read-only.** Every database connection is read-only (`default_transaction_read_only`), and the API has no write path.
+- **Recompute** rebuilds an issue time's 288 feature rows from the database and runs the stored boosters through milestone 2's own code. Each lead must equal the stored float32, and must be `null` exactly where nothing was stored. The forecasts were made on macOS and the container runs Linux, so this is a real check for train/serve skew.
+- **Explain** runs milestone 4's TreeSHAP behind E1's gate. If the decomposition does not reproduce the forecast, the explanation is withheld (a 500 carrying the gate's result) rather than served.
+- **Errors.** An invalid input returns 422, a valid one with nothing published 404, and a dependency that is down 503, each as `{"detail": "<message>"}`. User input never produces a 500. Without the drive that holds the model files, the stored endpoints keep working, and recompute and explain answer 503.
+- **The container** is `python:3.12-slim` with the locked dependencies, running one uvicorn worker as a non-root user. It listens on 127.0.0.1 only, has no authentication, and allows GET requests from any origin, for the dashboard (milestone 6). The image records its commit and whether the files it copies were dirty, and `/health` serves both.
+
+**Pre-registered criteria** (judged on the Compose service, Linux arm64):
+- **P1, publication parity:** every published value equals its parquet source, with every row read back. The interval hit counts recomputed from Postgres equal milestone 3's.
+- **P2, API parity:** on a seeded sample, every served value equals its source. The sample is 20 issue times per retrain fold (280 in all), 280 evolution targets and 50 days of actuals, plus every v2 event, paged and by id.
+- **P3, recompute parity:** at the same 280 issue times, all 288 leads rebuilt equal the stored float32, and explain passes E1's gate.
+- **P4, nesting:** lo95 ≤ lo80 ≤ lo50 ≤ hi50 ≤ hi80 ≤ hi95 in every published pair.
+- **P5, latency:** client-side p95 at most 100 ms for each stored endpoint (500 requests each), and at most 500 ms for recompute and for explain of all leads (200 each). Requests go one at a time from the host, in one seeded order.
+- **P6, contract:** the served schema equals the committed one, and a table of invalid inputs returns its documented 4xx with a message. A property-based search over the query parameters finds no 500.
+
+**How the check was protected.**
+- `gridcast api-verify` refuses to run unless the running image is the checkout's commit and both are clean, so one commit names the whole run. Every run is kept.
+- This is a software check, not a statistical holdout. A fix and a rerun would be allowed, shown beside the first run; none was needed.
+- The criteria cover neither accuracy (nothing is re-scored) nor load (there is no concurrency test).
+
 ## Results
+
+### The API: parity, latency and contract (milestone 5)
+
+From [`reports/m5_api.md`](reports/m5_api.md): the first verification run, against the Compose service on Linux (arm64), image `9e70b4277ce1`. P1 and P4 come from the publications.
+
+| # | Pre-registered criterion | Result |
+|---|---|---|
+| P1 | Every published value equals its source | **PASS**: 63,378,240 rows read back over 8 publications, every value equal; interval hit counts equal milestone 3's in both splits |
+| P2 | Every served value equals its source (seeded sample) | **PASS**: 0 mismatches over 564,480 demand values, 161,280 price values, 93,828 evolution values, 144,050 fields of actuals and 1,127 v2 events (paged, and by id) |
+| P3 | Recompute and explain reproduce the stored forecast | **PASS**: 80,640 of 80,640 pairs recomputed equal; 280 of 280 issue times explained with the gate passed (80,382 leads) |
+| P4 | The interval levels nest | **PASS**: 0 of 15,708,288 published interval pairs are not nested |
+| P5 | p95 latency | **PASS**: 2.8–23.5 ms for the stored endpoints (limit 100 ms); 52.8 ms for recompute and 427.0 ms for explain (limit 500 ms) |
+| P6 | The contract | **PASS**: the served schema equals `docs/openapi.json` (10 paths, each typed); 19 invalid inputs → 422 and 11 unpublished requests → 404, each with its message; 300 searched examples, no 500 |
+
+**6 of 6 criteria pass on the first verification run.** Nothing was rerun.
+
+| Endpoint (P5, client-side) | p50 (ms) | p95 (ms) | p99 (ms) | Max (ms) | p95 limit (ms) | Median response (KiB) |
+|---|---:|---:|---:|---:|---:|---:|
+| `/v1/forecasts/demand` | 5.5 | 8.5 | 16.6 | 37.0 | 100 | 71.1 |
+| `/v1/forecasts/demand/evolution` | 15.2 | 23.5 | 29.1 | 37.9 | 100 | 14.5 |
+| `/v1/forecasts/price` | 4.7 | 7.8 | 13.1 | 18.7 | 100 | 42.7 |
+| `/v1/actuals` (one day) | 3.2 | 5.1 | 7.1 | 8.8 | 100 | 82.2 |
+| `/v1/anomalies` (one month, limit 100) | 1.9 | 2.8 | 4.0 | 5.1 | 100 | 10.2 |
+| `/v1/anomalies/{event_id}` | 1.8 | 3.0 | 4.8 | 14.5 | 100 | 10.3 |
+| `/v1/forecasts/demand/recompute` | 43.0 | 52.8 | 85.3 | 140.1 | 500 | 44.0 |
+| `/v1/forecasts/demand/explain` (all leads) | 265.9 | 427.0 | 537.8 | 605.9 | 500 | 1,031.5 |
+
+- **Every sampled forecast was rebuilt exactly on another platform.**
+  - The forecasts were computed on macOS. The container recomputed all 80,640 sampled pairs on Linux, and each equals the stored float32 bit for bit.
+  - So the sample shows no train/serve skew. All 280 explanations also reproduced their forecasts within E1's tolerance.
+- **The stored endpoints are fast; explain is not.** Every stored endpoint had a p95 of at most 23.5 ms, and recompute 52.8 ms. Explaining all 288 leads returns about 1 MB and had a p95 of 427.0 ms, close to its 500 ms limit (see *Failure cases*).
+- **The served intervals are milestone 3's rearranged CQR.** Pooled over every lead, their 80% coverage was 79.3% in development and 79.6% in the holdout, against 79.4% and 79.7% for the pre-registered headline (`reports/m3_holdout.md`).
+- **The API runs beside the database on a laptop.** After the run it held 794.9 MiB, and Postgres 317.3 MiB, in a Docker VM with 3.8 GiB. The image is 458 MB.
 
 ### Market anomalies (milestone 4)
 
@@ -516,6 +623,16 @@ These M1 numbers cover a longer period than M2's development period, which start
 
 ## Failure cases
 
+### The API (milestone 5)
+
+- **Explain has little headroom.**
+  - It passed P5 at p95: 427.0 ms against 500 ms. But its p99 was 537.8 ms and its slowest request 605.9 ms, both above 500 ms (P5 judges only the p95).
+  - Model requests run one at a time in a single worker, and no load test was run. Concurrent clients would queue behind each other; how long they would wait was not measured.
+- **The point forecast is not always inside its own 50% interval.**
+  - CQR's bounds come from separate quantile models, not from the point. The point lies outside the 50% interval in 19.2% of development pairs and 29.3% of holdout pairs.
+  - It is mostly below the interval: in the holdout, 1,417,766 pairs fall below it and 59,029 above.
+  - A chart that draws both will show this. It comes from the method, not from serving, and is reported only.
+
 ### Anomaly detection (milestone 4)
 
 - **D1 cannot reliably see a large shift in demand level.**
@@ -612,6 +729,10 @@ These M1 numbers cover a longer period than M2's development period, which start
   - It often misses a sustained demand-level shift (D1) and a day-ahead miss (D3).
   - Any price at or above $300/MWh is flagged by the fixed lines by definition. D4 adds whether a price is unusual for its time of day.
 - **Every alert comes with facts, not a story.** The evidence lists what was observed and what was known at the time. For a demand event it also shows what the model expected, and the SHAP breakdown of how it arrived there. It deliberately does not say why the market moved. That judgement stays with an analyst.
+- **A consumer of the API can check what it is given.**
+  - Every response names its split and run ids. `/v1/meta` serves the scored metrics and the disclosures beside the data.
+  - Recompute rebuilds any served demand forecast from the stored model, so a forecast can be audited after the fact.
+- **Budget for explain, not for the stored endpoints.** A dashboard can draw forecasts, intervals and anomalies on demand. An explanation of all 288 leads takes hundreds of milliseconds, and model requests are served one at a time, so it is better to request single leads (`lead=`) or cache the explanations. Neither was measured.
 - **Holdout comparisons need context.**
   - Price errors are lower in the holdout year for every baseline: the median profile's MAE is $40.4/MWh versus $62.9/MWh in development. The market was calmer; no model improved.
   - For demand it went the other way: every baseline did worse in the holdout. Model comparisons must always be made against baselines evaluated on the same period.
@@ -630,8 +751,8 @@ These M1 numbers cover a longer period than M2's development period, which start
   - The headline model uses temperature only, because the other forecast variables are archived only from 2024-01-19.
   - Open-Meteo's free tier is for non-commercial use.
 - **One holdout year** is one draw of weather and demand conditions. The 2026 winter shows how much a single season can move the error.
-- **Development numbers are slightly optimistic.** Two development runs looked at the same period. The holdout numbers are not optimistic in this way.
-- **Intervals for demand only**, at fixed 50%, 80% and 95% levels. Price intervals need a price model. Intervals are stored with each run but not yet served: the `forecasts` table and the API come in milestone 5.
+- **Development numbers are slightly optimistic.** Two development runs looked at the same period, and the API serves the second. The holdout numbers are not optimistic in this way.
+- **Intervals for demand only**, at fixed 50%, 80% and 95% levels. Price intervals need a price model.
 - **The interval design was not blind.** Its candidate grid, including the adaptive steps, was designed after milestone 2's development and holdout point errors had been seen. Settings are re-selected from past data only, and the holdout was scored once, but the holdout is new for intervals only.
 - **The anomaly detectors were not designed blind.**
   - They were designed after milestones 2 and 3, and the planning saw some holdout facts: the price calm, 8 July 2026, and the demand jumps of 6 and 10 November 2025.
@@ -640,6 +761,10 @@ These M1 numbers cover a longer period than M2's development period, which start
   - A2 rests on 7 AEMO-flagged development events, and the holdout has no such event.
   - Detection power is measured on synthetic injections of fixed shapes, which real disturbances need not resemble.
 - **SHAP describes the model, and the price tables describe co-occurrence.** Neither identifies a cause. Correlated inputs share SHAP credit, which is why the summaries use feature families.
+- **The API is an archive, not a live service.** Nothing issued after the holdout year is served. Live data belongs to milestone 7.
+- **The API is local and open.** It has no authentication or rate limiting, listens on 127.0.0.1 only, and was not load-tested. Public hosting is decided with the dashboard (milestone 6).
+- **The served intervals are not milestone 3's headline.** They are its reported-only *CQR, rearranged* row. Sorting the bounds was added after milestone 3's step-3 results were seen.
+- **Recompute and explain need the model files** on the data root. Without them, only the stored endpoints work.
 - **Market cap values** for some financial years come from secondary sources. They are used only as data-quality bounds.
 
 ## Reproduction
@@ -691,6 +816,14 @@ make explain-holdout       # M4: the same for the holdout models (~5 min)
 make evaluate-holdout-anomalies VERSION=2  # M4: the holdout run of one version (~7 min); refuses to run twice
 make report-m4-holdout     # M4: reports/m4_holdout.md (both versions)
 make report-m4-explain-holdout  # M4: reports/m4_explainability_holdout.md
+make publish               # M5: forecasts, rearranged intervals and price baselines into Postgres; every row read back (P1, P4; minutes)
+make publish-check         # M5: every published row checked against its parquet source again (no writes)
+make api                   # M5: the API on the host, with uvicorn (development; docs at /docs)
+make api-up                # M5: build and start the API container (records its commit; model files mounted read-only)
+make api-smoke             # M5: /health, then recompute and explain at one issue time per split (informal)
+make api-verify            # M5: P2, P3, P5 and P6 against the container (minutes); refuses unless the image is HEAD and clean
+make report-m5             # M5: reports/m5_api.md from every stored verification run and the publications
+make api-down              # M5: stop the API container (PostgreSQL keeps running)
 ```
 
 `make evaluate-holdout` checks before it starts, and refuses to run unless all of these hold:
@@ -710,17 +843,22 @@ On a fresh database it would score the holdout once; on this one it refuses, bec
 
 `make evaluate-holdout-anomalies` refuses unless the version's recipe matches its freeze, the working tree is clean, the version's development run is stored, and no holdout run exists for its hash. Before scoring, it recomputes the stored development run and requires every value to match exactly.
 
+`make publish` refuses to write unless the working tree is clean and every source run succeeded, with the batch and model that the configuration names. It is idempotent: a second run inserts nothing and checks every row again. `make api-verify` refuses, and stores nothing, unless the running image is the checkout's commit, built from clean files, and the checkout's tracked files are clean too. Every verification run is kept under `<data root>/serving/`, and `make report-m5` shows each one.
+
 Quality gates:
 
 ```bash
 make lint typecheck test   # ruff, mypy, unit tests (incl. leakage property tests)
 make test-integration      # against a dedicated *_test database
+make test-host             # read-only checks on the main database and the stored models (needs the data root)
 ```
 
 The backtests are deterministic: re-running them reproduces every metric exactly. Both holdout runs checked this. Before scoring anything:
 - milestone 2's run reproduced the development run's stored forecasts and model fits for Aug–Sep 2025 exactly;
 - milestone 3's run reproduced every stored development interval exactly;
 - milestone 4's runs reproduced their development anomaly runs exactly: every per-interval value, injection, event, evidence field and summary.
+
+Milestone 5's API, in its Linux container, recomputed every sampled forecast exactly.
 
 Each run records its git commit, configuration and batch id in `model_runs`.
 
@@ -730,8 +868,9 @@ Each run records its git commit, configuration and batch id in `model_runs`.
 configs/            base.yaml (regions, windows, forecast and ML setup, frozen config hash), market_limits.yaml
 sql/schema/         migration bodies (plain SQL)     sql/migrations/  Alembic env + revisions
 sql/checks/         data-quality queries
-src/gridcast/       ingestion/ validation/ database/ features/ weather/ forecasting/ models/ evaluation/ intervals/ anomalies/ explainability/
-tests/              unit/ (no DB) and integration/ (PostgreSQL)
-docs/               data_sources.md, feature_catalogue.md, m2_data_spike.md, m3_data_spike.md, m3_prescoring_spike.md, m4_reference_events.md, m4_v1_diagnosis.md, plans/ (milestone plans)
+src/gridcast/       ingestion/ validation/ database/ features/ weather/ forecasting/ models/ evaluation/ intervals/ anomalies/ explainability/ serving/ api/
+tests/              unit/ (no DB), integration/ (PostgreSQL) and host/ (main database and stored models, opt-in)
+docs/               data_sources.md, feature_catalogue.md, openapi.json (the API contract), m2_data_spike.md, m3_data_spike.md, m3_prescoring_spike.md, m4_reference_events.md, m4_v1_diagnosis.md, plans/ (milestone plans)
 reports/            generated milestone reports + figures
+Dockerfile          the API image      docker-compose.yml, docker-compose.models.yml   PostgreSQL, the API, the read-only model mount
 ```

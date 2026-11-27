@@ -1,0 +1,2763 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "GridCast-AU API",
+    "description": "Read-only archive of GridCast-AU's scored outputs for Victoria (VIC1): LightGBM C demand forecasts with CQR prediction intervals, the M1 price baselines, actuals and anomaly events (recipe v2), for issue times 1 Aug 2023 → 30 Sep 2026 (NEM time). Timestamps are ISO 8601 in UTC; inputs need an explicit offset (`Z`, or `%2B10:00` in a query string). See `/v1/meta` for provenance, scored metrics, disclosures and licences.",
+    "version": "1"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "service"
+        ],
+        "summary": "Health",
+        "description": "Database, publications (the latest attempt of each succeeded), anomaly runs, and\nwhat recompute and explain need: the feature context and every model file.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Stored endpoints unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/meta": {
+      "get": {
+        "tags": [
+          "service"
+        ],
+        "summary": "Meta",
+        "description": "What is served, its provenance and scored metrics, disclosures and licences.",
+        "operationId": "meta_v1_meta_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Meta"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database or a product is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/forecasts/demand": {
+      "get": {
+        "tags": [
+          "forecasts"
+        ],
+        "summary": "Demand",
+        "description": "All 288 leads of one issue time: LightGBM C's point and the 50/80/95% bounds\n(``null`` where nothing was stored).",
+        "operationId": "demand_v1_forecasts_demand_get",
+        "parameters": [
+          {
+            "name": "issue_time",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Issue time on the 30-minute grid",
+              "title": "Issue Time"
+            },
+            "description": "Issue time on the 30-minute grid"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "NEM region; only VIC1 is published",
+              "default": "VIC1",
+              "title": "Region"
+            },
+            "description": "NEM region; only VIC1 is published"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemandForecast"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Valid input, nothing published there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database or a product is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/forecasts/demand/evolution": {
+      "get": {
+        "tags": [
+          "forecasts"
+        ],
+        "summary": "Evolution",
+        "description": "Every forecast published for one target: the issue times in [T − 24 h, T).",
+        "operationId": "evolution_v1_forecasts_demand_evolution_get",
+        "parameters": [
+          {
+            "name": "target_end",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Target interval end, 5-minute grid",
+              "title": "Target End"
+            },
+            "description": "Target interval end, 5-minute grid"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "NEM region; only VIC1 is published",
+              "default": "VIC1",
+              "title": "Region"
+            },
+            "description": "NEM region; only VIC1 is published"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemandEvolution"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Valid input, nothing published there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database or a product is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/forecasts/demand/recompute": {
+      "get": {
+        "tags": [
+          "model"
+        ],
+        "summary": "Recompute",
+        "description": "One issue time's LightGBM C forecast rebuilt from the stored model (M2's code path)\nand compared with the stored forecast, lead by lead.",
+        "operationId": "recompute_v1_forecasts_demand_recompute_get",
+        "parameters": [
+          {
+            "name": "issue_time",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Issue time on the 30-minute grid",
+              "title": "Issue Time"
+            },
+            "description": "Issue time on the 30-minute grid"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "NEM region; only VIC1 is published",
+              "default": "VIC1",
+              "title": "Region"
+            },
+            "description": "NEM region; only VIC1 is published"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Recompute"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Valid input, nothing published there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database, the feature context or the model files are unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A published issue time has no stored fit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/forecasts/demand/explain": {
+      "get": {
+        "tags": [
+          "model"
+        ],
+        "summary": "Explain",
+        "description": "SHAP of the stored forecast, per lead: forecast = anchor + base value + Σ\ncontributions, by feature (with its value) and by family. Only leads with a stored\nforecast are explained; withheld (500) if E1's gate fails.",
+        "operationId": "explain_v1_forecasts_demand_explain_get",
+        "parameters": [
+          {
+            "name": "issue_time",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Issue time on the 30-minute grid",
+              "title": "Issue Time"
+            },
+            "description": "Issue time on the 30-minute grid"
+          },
+          {
+            "name": "lead",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One lead, 1…288 (default: every lead)",
+              "title": "Lead"
+            },
+            "description": "One lead, 1…288 (default: every lead)"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "NEM region; only VIC1 is published",
+              "default": "VIC1",
+              "title": "Region"
+            },
+            "description": "NEM region; only VIC1 is published"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Explanation"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Valid input, nothing published there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database, the feature context or the model files are unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "E1's gate failed (explanations withheld), or a server fault",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GateFailure"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/forecasts/price": {
+      "get": {
+        "tags": [
+          "forecasts"
+        ],
+        "summary": "Price",
+        "description": "All 288 leads of both M1 price baselines for one issue time (labelled baselines).",
+        "operationId": "price_v1_forecasts_price_get",
+        "parameters": [
+          {
+            "name": "issue_time",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Issue time on the 30-minute grid",
+              "title": "Issue Time"
+            },
+            "description": "Issue time on the 30-minute grid"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "NEM region; only VIC1 is published",
+              "default": "VIC1",
+              "title": "Region"
+            },
+            "description": "NEM region; only VIC1 is published"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceForecast"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Valid input, nothing published there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database or a product is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/actuals": {
+      "get": {
+        "tags": [
+          "actuals"
+        ],
+        "summary": "Actuals",
+        "description": "5-minute demand, price and market flags of the intervals inside [start, end].",
+        "operationId": "actuals_v1_actuals_get",
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Window start (inclusive)",
+              "title": "Start"
+            },
+            "description": "Window start (inclusive)"
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Window end (inclusive); at most 7 days",
+              "title": "End"
+            },
+            "description": "Window end (inclusive); at most 7 days"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "NEM region; only VIC1 is published",
+              "default": "VIC1",
+              "title": "Region"
+            },
+            "description": "NEM region; only VIC1 is published"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Actuals"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Valid input, nothing published there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database or a product is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/anomalies": {
+      "get": {
+        "tags": [
+          "anomalies"
+        ],
+        "summary": "Anomalies",
+        "description": "Anomaly events (recipe v2) without evidence, one page at a time.",
+        "operationId": "anomalies_v1_anomalies_get",
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "First interval end from (inclusive)",
+              "title": "Start"
+            },
+            "description": "First interval end from (inclusive)"
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "First interval end before (exclusive)",
+              "title": "End"
+            },
+            "description": "First interval end before (exclusive)"
+          },
+          {
+            "name": "tier",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One of ['notable', 'severe']",
+              "title": "Tier"
+            },
+            "description": "One of ['notable', 'severe']"
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "An event category",
+              "title": "Category"
+            },
+            "description": "An event category"
+          },
+          {
+            "name": "detector",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A detector that fired",
+              "title": "Detector"
+            },
+            "description": "A detector that fired"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`next` of the previous page",
+              "title": "After"
+            },
+            "description": "`next` of the previous page"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "NEM region; only VIC1 is published",
+              "default": "VIC1",
+              "title": "Region"
+            },
+            "description": "NEM region; only VIC1 is published"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnomalyPage"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Valid input, nothing published there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database or a product is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/anomalies/{event_id}": {
+      "get": {
+        "tags": [
+          "anomalies"
+        ],
+        "summary": "Anomaly",
+        "description": "One served event with its full evidence.",
+        "operationId": "anomaly_v1_anomalies__event_id__get",
+        "parameters": [
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "maximum": 9223372036854775807,
+              "minimum": 1,
+              "title": "Event Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnomalyEvent"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Valid input, nothing published there",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database or a product is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ActualInterval": {
+        "properties": {
+          "interval_start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Interval Start"
+          },
+          "interval_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Interval End"
+          },
+          "demand_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Demand Mw"
+          },
+          "price_aud_mwh": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Aud Mwh"
+          },
+          "price_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Status"
+          },
+          "apc_flag_bits": {
+            "type": "integer",
+            "title": "Apc Flag Bits",
+            "description": "DISPATCHPRICE.APCFLAG, a 5-bit field"
+          },
+          "administered_price_binding": {
+            "type": "boolean",
+            "title": "Administered Price Binding"
+          },
+          "market_cap_floor_binding": {
+            "type": "boolean",
+            "title": "Market Cap Floor Binding"
+          },
+          "price_manually_overwritten": {
+            "type": "boolean",
+            "title": "Price Manually Overwritten"
+          },
+          "market_suspended": {
+            "type": "boolean",
+            "title": "Market Suspended"
+          }
+        },
+        "type": "object",
+        "required": [
+          "interval_start",
+          "interval_end",
+          "demand_mw",
+          "price_aud_mwh",
+          "price_status",
+          "apc_flag_bits",
+          "administered_price_binding",
+          "market_cap_floor_binding",
+          "price_manually_overwritten",
+          "market_suspended"
+        ],
+        "title": "ActualInterval"
+      },
+      "Actuals": {
+        "properties": {
+          "region": {
+            "type": "string",
+            "title": "Region"
+          },
+          "start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End"
+          },
+          "intervals": {
+            "items": {
+              "$ref": "#/components/schemas/ActualInterval"
+            },
+            "type": "array",
+            "title": "Intervals",
+            "description": "5-minute intervals lying inside [start, end]: start ≤ interval start and interval end ≤ end"
+          }
+        },
+        "type": "object",
+        "required": [
+          "region",
+          "start",
+          "end",
+          "intervals"
+        ],
+        "title": "Actuals"
+      },
+      "Anchor": {
+        "properties": {
+          "mw": {
+            "type": "number",
+            "title": "Mw",
+            "description": "The target form's fixed term (0 for direct)"
+          },
+          "terms": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Terms",
+            "description": "The features it adds up, each with weight 1"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mw",
+          "terms"
+        ],
+        "title": "Anchor"
+      },
+      "AnomalyEvent": {
+        "properties": {
+          "event_id": {
+            "type": "integer",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "integer",
+            "title": "Run Id"
+          },
+          "split": {
+            "type": "string",
+            "enum": [
+              "dev",
+              "holdout"
+            ],
+            "title": "Split"
+          },
+          "first_interval_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First Interval End"
+          },
+          "last_interval_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Interval End"
+          },
+          "peak_interval_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Peak Interval End"
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "notable",
+              "severe"
+            ],
+            "title": "Tier"
+          },
+          "detectors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Detectors"
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Categories"
+          },
+          "min_p": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min P"
+          },
+          "lines_only": {
+            "type": "boolean",
+            "title": "Lines Only"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Evidence"
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "split",
+          "first_interval_end",
+          "last_interval_end",
+          "peak_interval_end",
+          "tier",
+          "detectors",
+          "categories",
+          "min_p",
+          "lines_only",
+          "summary",
+          "evidence"
+        ],
+        "title": "AnomalyEvent"
+      },
+      "AnomalyPage": {
+        "properties": {
+          "region": {
+            "type": "string",
+            "title": "Region"
+          },
+          "start": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/AnomalySummary"
+            },
+            "type": "array",
+            "title": "Events",
+            "description": "Events whose first interval end lies in [start, end), ordered by first interval end then event id"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next",
+            "description": "Pass as `after` for the next page; null at the end"
+          }
+        },
+        "type": "object",
+        "required": [
+          "region",
+          "start",
+          "end",
+          "limit",
+          "events",
+          "next"
+        ],
+        "title": "AnomalyPage"
+      },
+      "AnomalyRun": {
+        "properties": {
+          "split": {
+            "type": "string",
+            "enum": [
+              "dev",
+              "holdout"
+            ],
+            "title": "Split"
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunRef"
+          },
+          "recipe_version": {
+            "type": "integer",
+            "title": "Recipe Version"
+          },
+          "events": {
+            "type": "integer",
+            "title": "Events"
+          },
+          "first_event": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Event"
+          },
+          "last_event": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Event"
+          }
+        },
+        "type": "object",
+        "required": [
+          "split",
+          "run",
+          "recipe_version",
+          "events",
+          "first_event",
+          "last_event"
+        ],
+        "title": "AnomalyRun"
+      },
+      "AnomalySummary": {
+        "properties": {
+          "event_id": {
+            "type": "integer",
+            "title": "Event Id"
+          },
+          "run_id": {
+            "type": "integer",
+            "title": "Run Id"
+          },
+          "split": {
+            "type": "string",
+            "enum": [
+              "dev",
+              "holdout"
+            ],
+            "title": "Split"
+          },
+          "first_interval_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First Interval End"
+          },
+          "last_interval_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Interval End"
+          },
+          "peak_interval_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Peak Interval End"
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "notable",
+              "severe"
+            ],
+            "title": "Tier"
+          },
+          "detectors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Detectors"
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Categories"
+          },
+          "min_p": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min P"
+          },
+          "lines_only": {
+            "type": "boolean",
+            "title": "Lines Only"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_id",
+          "run_id",
+          "split",
+          "first_interval_end",
+          "last_interval_end",
+          "peak_interval_end",
+          "tier",
+          "detectors",
+          "categories",
+          "min_p",
+          "lines_only",
+          "summary"
+        ],
+        "title": "AnomalySummary"
+      },
+      "Build": {
+        "properties": {
+          "git_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Sha",
+            "description": "The commit it was built from (null if unknown)"
+          },
+          "dirty": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dirty",
+            "description": "Its files differed from that commit (image: any change to the files it copies, untracked included; checkout: tracked files)"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "image",
+              "checkout",
+              "unknown"
+            ],
+            "title": "Source",
+            "description": "image: build arguments recorded by `make api-up`; checkout: git"
+          }
+        },
+        "type": "object",
+        "required": [
+          "git_sha",
+          "dirty",
+          "source"
+        ],
+        "title": "Build",
+        "description": "The code this API runs."
+      },
+      "DemandEvolution": {
+        "properties": {
+          "region": {
+            "type": "string",
+            "title": "Region"
+          },
+          "target_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Target End"
+          },
+          "unit": {
+            "type": "string",
+            "const": "MW",
+            "title": "Unit",
+            "default": "MW"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EvolutionItem"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "Every published issue time in [T − 24 h, T)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "region",
+          "target_end",
+          "items"
+        ],
+        "title": "DemandEvolution"
+      },
+      "DemandForecast": {
+        "properties": {
+          "region": {
+            "type": "string",
+            "title": "Region"
+          },
+          "issue_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Issue Time"
+          },
+          "split": {
+            "type": "string",
+            "enum": [
+              "dev",
+              "holdout"
+            ],
+            "title": "Split"
+          },
+          "unit": {
+            "type": "string",
+            "const": "MW",
+            "title": "Unit",
+            "default": "MW"
+          },
+          "point_run_id": {
+            "type": "integer",
+            "title": "Point Run Id"
+          },
+          "interval_run_id": {
+            "type": "integer",
+            "title": "Interval Run Id"
+          },
+          "interval_method": {
+            "type": "string",
+            "title": "Interval Method"
+          },
+          "leads": {
+            "items": {
+              "$ref": "#/components/schemas/DemandLead"
+            },
+            "type": "array",
+            "title": "Leads"
+          }
+        },
+        "type": "object",
+        "required": [
+          "region",
+          "issue_time",
+          "split",
+          "point_run_id",
+          "interval_run_id",
+          "interval_method",
+          "leads"
+        ],
+        "title": "DemandForecast"
+      },
+      "DemandLead": {
+        "properties": {
+          "lead": {
+            "type": "integer",
+            "title": "Lead",
+            "description": "Lead in 5-minute steps, 1…288"
+          },
+          "lead_minutes": {
+            "type": "integer",
+            "title": "Lead Minutes"
+          },
+          "target_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Target End",
+            "description": "End of the 5-minute target interval (UTC)"
+          },
+          "point_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Point Mw",
+            "description": "LightGBM C point forecast"
+          },
+          "lo95_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lo95 Mw"
+          },
+          "lo80_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lo80 Mw"
+          },
+          "lo50_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lo50 Mw"
+          },
+          "hi50_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hi50 Mw"
+          },
+          "hi80_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hi80 Mw"
+          },
+          "hi95_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hi95 Mw"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lead",
+          "lead_minutes",
+          "target_end",
+          "point_mw",
+          "lo95_mw",
+          "lo80_mw",
+          "lo50_mw",
+          "hi50_mw",
+          "hi80_mw",
+          "hi95_mw"
+        ],
+        "title": "DemandLead"
+      },
+      "Disclosure": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sources"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "text",
+          "sources"
+        ],
+        "title": "Disclosure"
+      },
+      "ErrorBody": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorBody",
+        "description": "Every error response: 404 (nothing published), 422 (invalid input), 503 (unavailable)."
+      },
+      "EvolutionItem": {
+        "properties": {
+          "issue_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Issue Time"
+          },
+          "split": {
+            "type": "string",
+            "enum": [
+              "dev",
+              "holdout"
+            ],
+            "title": "Split"
+          },
+          "point_run_id": {
+            "type": "integer",
+            "title": "Point Run Id"
+          },
+          "interval_run_id": {
+            "type": "integer",
+            "title": "Interval Run Id"
+          },
+          "lead": {
+            "type": "integer",
+            "title": "Lead"
+          },
+          "lead_minutes": {
+            "type": "integer",
+            "title": "Lead Minutes"
+          },
+          "point_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Point Mw"
+          },
+          "lo95_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lo95 Mw"
+          },
+          "lo80_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lo80 Mw"
+          },
+          "lo50_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lo50 Mw"
+          },
+          "hi50_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hi50 Mw"
+          },
+          "hi80_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hi80 Mw"
+          },
+          "hi95_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hi95 Mw"
+          }
+        },
+        "type": "object",
+        "required": [
+          "issue_time",
+          "split",
+          "point_run_id",
+          "interval_run_id",
+          "lead",
+          "lead_minutes",
+          "point_mw",
+          "lo95_mw",
+          "lo80_mw",
+          "lo50_mw",
+          "hi50_mw",
+          "hi80_mw",
+          "hi95_mw"
+        ],
+        "title": "EvolutionItem"
+      },
+      "ExplainedLead": {
+        "properties": {
+          "lead": {
+            "type": "integer",
+            "title": "Lead"
+          },
+          "lead_minutes": {
+            "type": "integer",
+            "title": "Lead Minutes"
+          },
+          "target_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Target End"
+          },
+          "fit": {
+            "type": "integer",
+            "title": "Fit",
+            "description": "Index into `fits`"
+          },
+          "target_form": {
+            "type": "string",
+            "title": "Target Form"
+          },
+          "forecast_mw": {
+            "type": "number",
+            "title": "Forecast Mw",
+            "description": "The stored forecast (float32)"
+          },
+          "forecast_float64_mw": {
+            "type": "number",
+            "title": "Forecast Float64 Mw",
+            "description": "M2's forecast before the float32 cast: anchor + base value + Σ contributions (within the gate's tolerance)"
+          },
+          "anchor": {
+            "$ref": "#/components/schemas/Anchor"
+          },
+          "base_value_mw": {
+            "type": "number",
+            "title": "Base Value Mw",
+            "description": "The booster's expected raw prediction"
+          },
+          "families": {
+            "items": {
+              "$ref": "#/components/schemas/FamilyContribution"
+            },
+            "type": "array",
+            "title": "Families"
+          },
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureContribution"
+            },
+            "type": "array",
+            "title": "Features"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lead",
+          "lead_minutes",
+          "target_end",
+          "fit",
+          "target_form",
+          "forecast_mw",
+          "forecast_float64_mw",
+          "anchor",
+          "base_value_mw",
+          "families",
+          "features"
+        ],
+        "title": "ExplainedLead"
+      },
+      "Explanation": {
+        "properties": {
+          "region": {
+            "type": "string",
+            "title": "Region"
+          },
+          "issue_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Issue Time"
+          },
+          "split": {
+            "type": "string",
+            "enum": [
+              "dev",
+              "holdout"
+            ],
+            "title": "Split"
+          },
+          "unit": {
+            "type": "string",
+            "const": "MW",
+            "title": "Unit",
+            "default": "MW"
+          },
+          "point_run_id": {
+            "type": "integer",
+            "title": "Point Run Id"
+          },
+          "method": {
+            "type": "string",
+            "title": "Method"
+          },
+          "gate": {
+            "$ref": "#/components/schemas/Gate"
+          },
+          "leads_without_forecast": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Leads Without Forecast",
+            "description": "Requested leads with no stored forecast (not explained)"
+          },
+          "fits": {
+            "items": {
+              "$ref": "#/components/schemas/FitUsed"
+            },
+            "type": "array",
+            "title": "Fits"
+          },
+          "leads": {
+            "items": {
+              "$ref": "#/components/schemas/ExplainedLead"
+            },
+            "type": "array",
+            "title": "Leads"
+          }
+        },
+        "type": "object",
+        "required": [
+          "region",
+          "issue_time",
+          "split",
+          "point_run_id",
+          "method",
+          "gate",
+          "leads_without_forecast",
+          "fits",
+          "leads"
+        ],
+        "title": "Explanation"
+      },
+      "FamilyContribution": {
+        "properties": {
+          "family": {
+            "type": "string",
+            "title": "Family"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "contribution_mw": {
+            "type": "number",
+            "title": "Contribution Mw"
+          }
+        },
+        "type": "object",
+        "required": [
+          "family",
+          "title",
+          "contribution_mw"
+        ],
+        "title": "FamilyContribution"
+      },
+      "FeatureContribution": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "family": {
+            "type": "string",
+            "title": "Family"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value",
+            "description": "The float32 feature value the model saw"
+          },
+          "contribution_mw": {
+            "type": "number",
+            "title": "Contribution Mw"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "family",
+          "value",
+          "contribution_mw"
+        ],
+        "title": "FeatureContribution"
+      },
+      "FitUsed": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index",
+            "description": "Position in `fits`; leads refer to it"
+          },
+          "batch_id": {
+            "type": "string",
+            "title": "Batch Id"
+          },
+          "retrain": {
+            "type": "string",
+            "title": "Retrain",
+            "description": "NEM date of the retrain"
+          },
+          "first_lead": {
+            "type": "integer",
+            "title": "First Lead"
+          },
+          "last_lead": {
+            "type": "integer",
+            "title": "Last Lead"
+          },
+          "target_form": {
+            "type": "string",
+            "title": "Target Form",
+            "description": "direct, latest, residual or anchored (M2)"
+          },
+          "objective": {
+            "type": "string",
+            "title": "Objective"
+          },
+          "num_leaves": {
+            "type": "integer",
+            "title": "Num Leaves"
+          },
+          "n_trees": {
+            "type": "integer",
+            "title": "N Trees"
+          },
+          "model_file": {
+            "type": "string",
+            "title": "Model File",
+            "description": "Relative to the data root"
+          },
+          "leads_recomputed": {
+            "type": "integer",
+            "title": "Leads Recomputed",
+            "description": "Leads of this issue time it forecast"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "batch_id",
+          "retrain",
+          "first_lead",
+          "last_lead",
+          "target_form",
+          "objective",
+          "num_leaves",
+          "n_trees",
+          "model_file",
+          "leads_recomputed"
+        ],
+        "title": "FitUsed",
+        "description": "One stored LightGBM C fit (M2's retrain record) that forecast this issue time."
+      },
+      "Gate": {
+        "properties": {
+          "n": {
+            "type": "integer",
+            "title": "N"
+          },
+          "forecast_mismatches": {
+            "type": "integer",
+            "title": "Forecast Mismatches",
+            "description": "float32(recomputed) ≠ stored"
+          },
+          "max_forecast_diff_mw": {
+            "type": "number",
+            "title": "Max Forecast Diff Mw"
+          },
+          "sum_failures": {
+            "type": "integer",
+            "title": "Sum Failures",
+            "description": "|base value + Σ contributions − raw| > tolerance"
+          },
+          "max_sum_error": {
+            "type": "number",
+            "title": "Max Sum Error"
+          },
+          "tolerance": {
+            "type": "number",
+            "title": "Tolerance"
+          },
+          "passed": {
+            "type": "boolean",
+            "title": "Passed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "n",
+          "forecast_mismatches",
+          "max_forecast_diff_mw",
+          "sum_failures",
+          "max_sum_error",
+          "tolerance",
+          "passed"
+        ],
+        "title": "Gate",
+        "description": "Criterion E1's gate over the explained leads (m4_plan.md §3)."
+      },
+      "GateFailure": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "gate": {
+            "$ref": "#/components/schemas/Gate"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail",
+          "gate"
+        ],
+        "title": "GateFailure",
+        "description": "HTTP 500: E1's gate failed, so the explanations are withheld."
+      },
+      "Health": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded",
+              "unavailable"
+            ],
+            "title": "Status"
+          },
+          "build": {
+            "$ref": "#/components/schemas/Build"
+          },
+          "checks": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/HealthCheck"
+            },
+            "type": "object",
+            "title": "Checks"
+          },
+          "demand_issue_times": {
+            "anyOf": [
+              {
+                "prefixItems": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 2,
+                "minItems": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Demand Issue Times"
+          },
+          "price_issue_times": {
+            "anyOf": [
+              {
+                "prefixItems": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 2,
+                "minItems": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Issue Times"
+          },
+          "actuals": {
+            "anyOf": [
+              {
+                "prefixItems": [
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                ],
+                "type": "array",
+                "maxItems": 2,
+                "minItems": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actuals",
+            "description": "First and last stored interval end"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "build",
+          "checks",
+          "demand_issue_times",
+          "price_issue_times",
+          "actuals"
+        ],
+        "title": "Health"
+      },
+      "HealthCheck": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "detail"
+        ],
+        "title": "HealthCheck"
+      },
+      "Licence": {
+        "properties": {
+          "data": {
+            "type": "string",
+            "title": "Data"
+          },
+          "licence": {
+            "type": "string",
+            "title": "Licence"
+          },
+          "attribution": {
+            "type": "string",
+            "title": "Attribution"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "licence",
+          "attribution"
+        ],
+        "title": "Licence"
+      },
+      "Meta": {
+        "properties": {
+          "api_version": {
+            "type": "string",
+            "title": "Api Version"
+          },
+          "region": {
+            "type": "string",
+            "title": "Region"
+          },
+          "leads": {
+            "type": "integer",
+            "title": "Leads"
+          },
+          "lead_minutes": {
+            "type": "integer",
+            "title": "Lead Minutes"
+          },
+          "issue_every_minutes": {
+            "type": "integer",
+            "title": "Issue Every Minutes"
+          },
+          "interval_levels": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Interval Levels"
+          },
+          "splits": {
+            "$ref": "#/components/schemas/Splits"
+          },
+          "products": {
+            "items": {
+              "$ref": "#/components/schemas/Product"
+            },
+            "type": "array",
+            "title": "Products"
+          },
+          "anomalies": {
+            "items": {
+              "$ref": "#/components/schemas/AnomalyRun"
+            },
+            "type": "array",
+            "title": "Anomalies"
+          },
+          "disclosures": {
+            "items": {
+              "$ref": "#/components/schemas/Disclosure"
+            },
+            "type": "array",
+            "title": "Disclosures"
+          },
+          "licences": {
+            "items": {
+              "$ref": "#/components/schemas/Licence"
+            },
+            "type": "array",
+            "title": "Licences"
+          }
+        },
+        "type": "object",
+        "required": [
+          "api_version",
+          "region",
+          "leads",
+          "lead_minutes",
+          "issue_every_minutes",
+          "interval_levels",
+          "splits",
+          "products",
+          "anomalies",
+          "disclosures",
+          "licences"
+        ],
+        "title": "Meta"
+      },
+      "MetricSet": {
+        "properties": {
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Where the values are stored (forecast_metrics row set)"
+          },
+          "n": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N",
+            "description": "Scored pairs"
+          },
+          "values": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Values"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "n",
+          "values"
+        ],
+        "title": "MetricSet"
+      },
+      "PriceForecast": {
+        "properties": {
+          "region": {
+            "type": "string",
+            "title": "Region"
+          },
+          "issue_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Issue Time"
+          },
+          "split": {
+            "type": "string",
+            "enum": [
+              "dev",
+              "holdout"
+            ],
+            "title": "Split"
+          },
+          "unit": {
+            "type": "string",
+            "const": "AUD/MWh",
+            "title": "Unit",
+            "default": "AUD/MWh"
+          },
+          "baselines": {
+            "type": "boolean",
+            "const": true,
+            "title": "Baselines",
+            "default": true
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "persistence_run_id": {
+            "type": "integer",
+            "title": "Persistence Run Id"
+          },
+          "median_profile_run_id": {
+            "type": "integer",
+            "title": "Median Profile Run Id"
+          },
+          "leads": {
+            "items": {
+              "$ref": "#/components/schemas/PriceLead"
+            },
+            "type": "array",
+            "title": "Leads"
+          }
+        },
+        "type": "object",
+        "required": [
+          "region",
+          "issue_time",
+          "split",
+          "label",
+          "persistence_run_id",
+          "median_profile_run_id",
+          "leads"
+        ],
+        "title": "PriceForecast"
+      },
+      "PriceLead": {
+        "properties": {
+          "lead": {
+            "type": "integer",
+            "title": "Lead"
+          },
+          "lead_minutes": {
+            "type": "integer",
+            "title": "Lead Minutes"
+          },
+          "target_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Target End"
+          },
+          "persistence_aud_mwh": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persistence Aud Mwh"
+          },
+          "median_profile_aud_mwh": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Profile Aud Mwh"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lead",
+          "lead_minutes",
+          "target_end",
+          "persistence_aud_mwh",
+          "median_profile_aud_mwh"
+        ],
+        "title": "PriceLead"
+      },
+      "Product": {
+        "properties": {
+          "product": {
+            "type": "string",
+            "title": "Product"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "point",
+              "interval"
+            ],
+            "title": "Kind"
+          },
+          "baseline": {
+            "type": "boolean",
+            "title": "Baseline"
+          },
+          "endpoint": {
+            "type": "string",
+            "title": "Endpoint"
+          },
+          "splits": {
+            "items": {
+              "$ref": "#/components/schemas/PublishedSplit"
+            },
+            "type": "array",
+            "title": "Splits"
+          }
+        },
+        "type": "object",
+        "required": [
+          "product",
+          "label",
+          "unit",
+          "kind",
+          "baseline",
+          "endpoint",
+          "splits"
+        ],
+        "title": "Product"
+      },
+      "PublishedSplit": {
+        "properties": {
+          "split": {
+            "type": "string",
+            "enum": [
+              "dev",
+              "holdout"
+            ],
+            "title": "Split"
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunRef"
+          },
+          "source_run": {
+            "$ref": "#/components/schemas/RunRef"
+          },
+          "first_issue": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First Issue"
+          },
+          "last_issue": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Issue"
+          },
+          "issue_times": {
+            "type": "integer",
+            "title": "Issue Times"
+          },
+          "rows": {
+            "type": "integer",
+            "title": "Rows"
+          },
+          "missing_pairs": {
+            "type": "integer",
+            "title": "Missing Pairs"
+          },
+          "publication_id": {
+            "type": "integer",
+            "title": "Publication Id"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "metrics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MetricSet"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "split",
+          "run",
+          "source_run",
+          "first_issue",
+          "last_issue",
+          "issue_times",
+          "rows",
+          "missing_pairs",
+          "publication_id",
+          "published_at",
+          "metrics"
+        ],
+        "title": "PublishedSplit"
+      },
+      "Recompute": {
+        "properties": {
+          "region": {
+            "type": "string",
+            "title": "Region"
+          },
+          "issue_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Issue Time"
+          },
+          "split": {
+            "type": "string",
+            "enum": [
+              "dev",
+              "holdout"
+            ],
+            "title": "Split"
+          },
+          "unit": {
+            "type": "string",
+            "const": "MW",
+            "title": "Unit",
+            "default": "MW"
+          },
+          "point_run_id": {
+            "type": "integer",
+            "title": "Point Run Id"
+          },
+          "matches_stored": {
+            "type": "boolean",
+            "title": "Matches Stored",
+            "description": "Every lead matches: the same leads are null, the others are equal float32"
+          },
+          "leads_stored": {
+            "type": "integer",
+            "title": "Leads Stored"
+          },
+          "leads_recomputed": {
+            "type": "integer",
+            "title": "Leads Recomputed"
+          },
+          "leads_differing": {
+            "type": "integer",
+            "title": "Leads Differing"
+          },
+          "max_abs_diff_mw": {
+            "type": "number",
+            "title": "Max Abs Diff Mw",
+            "description": "Largest |recomputed − stored| (float32 values)"
+          },
+          "max_float64_diff_mw": {
+            "type": "number",
+            "title": "Max Float64 Diff Mw",
+            "description": "Largest |M2's float64 forecast − stored float32|, for information"
+          },
+          "fits": {
+            "items": {
+              "$ref": "#/components/schemas/FitUsed"
+            },
+            "type": "array",
+            "title": "Fits"
+          },
+          "leads": {
+            "items": {
+              "$ref": "#/components/schemas/RecomputeLead"
+            },
+            "type": "array",
+            "title": "Leads"
+          }
+        },
+        "type": "object",
+        "required": [
+          "region",
+          "issue_time",
+          "split",
+          "point_run_id",
+          "matches_stored",
+          "leads_stored",
+          "leads_recomputed",
+          "leads_differing",
+          "max_abs_diff_mw",
+          "max_float64_diff_mw",
+          "fits",
+          "leads"
+        ],
+        "title": "Recompute"
+      },
+      "RecomputeLead": {
+        "properties": {
+          "lead": {
+            "type": "integer",
+            "title": "Lead"
+          },
+          "lead_minutes": {
+            "type": "integer",
+            "title": "Lead Minutes"
+          },
+          "target_end": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Target End"
+          },
+          "recomputed_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recomputed Mw",
+            "description": "M2's code path on the rebuilt feature row, cast to float32 as M2 stored it; null where the row is incomplete (M2 forecast only complete rows)"
+          },
+          "stored_mw": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stored Mw"
+          },
+          "matches": {
+            "type": "boolean",
+            "title": "Matches",
+            "description": "Both null, or equal float32 values"
+          },
+          "fit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fit",
+            "description": "Index into `fits`; null where nothing was recomputed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lead",
+          "lead_minutes",
+          "target_end",
+          "recomputed_mw",
+          "stored_mw",
+          "matches",
+          "fit"
+        ],
+        "title": "RecomputeLead"
+      },
+      "RunRef": {
+        "properties": {
+          "run_id": {
+            "type": "integer",
+            "title": "Run Id"
+          },
+          "batch_id": {
+            "type": "string",
+            "title": "Batch Id"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name"
+          },
+          "git_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Sha"
+          },
+          "config_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Hash"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "batch_id",
+          "model_name",
+          "git_sha",
+          "config_hash"
+        ],
+        "title": "RunRef"
+      },
+      "Splits": {
+        "properties": {
+          "dev": {
+            "prefixItems": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "string",
+                "format": "date-time"
+              }
+            ],
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Dev",
+            "description": "Issue times [first, holdout start)"
+          },
+          "holdout": {
+            "prefixItems": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "string",
+                "format": "date-time"
+              }
+            ],
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Holdout",
+            "description": "Issue times [start, end)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dev",
+          "holdout"
+        ],
+        "title": "Splits"
+      }
+    }
+  }
+}

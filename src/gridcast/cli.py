@@ -1409,6 +1409,144 @@ def anomalies_diagnose_v1(region: Annotated[str, typer.Option(help="Region id")]
     typer.echo(f"wrote {path}")
 
 
+@app.command("publish")
+def publish(
+    check_only: Annotated[
+        bool,
+        typer.Option("--check-only", help="Check what is stored against the sources; no writes"),
+    ] = False,
+    product: Annotated[
+        list[str] | None,
+        typer.Option(help="Only these products (repeatable; default: all four)"),
+    ] = None,
+    split: Annotated[
+        list[str] | None, typer.Option(help="Only these splits: dev, holdout (repeatable)")
+    ] = None,
+) -> None:
+    """M5: load the scored forecasts, intervals and price baselines into Postgres, then read
+    every row back and check it against its parquet source (P1, P4, interval metrics)."""
+    import time
+
+    from gridcast.config import SERVING_PRODUCTS, SERVING_SPLITS
+    from gridcast.database.engine import get_engine
+    from gridcast.provenance import git_sha
+    from gridcast.serving.publish import (
+        SUMMARY_HEADERS,
+        PublishRefused,
+        summary_rows,
+    )
+    from gridcast.serving.publish import (
+        publish as run_publish,
+    )
+
+    products = tuple(product or SERVING_PRODUCTS)
+    splits = tuple(split or SERVING_SPLITS)
+    unknown = (set(products) - set(SERVING_PRODUCTS)) | (set(splits) - set(SERVING_SPLITS))
+    if unknown:
+        raise typer.BadParameter(f"unknown product or split: {sorted(unknown)}")
+    t0 = time.perf_counter()
+    try:
+        results = run_publish(get_engine(), load_config(), check_only, git_sha(), products, splits)
+    except PublishRefused as exc:
+        typer.echo(f"refused, nothing written: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(tabulate(summary_rows(results), headers=SUMMARY_HEADERS, tablefmt="github"))
+    for r in results:
+        if r.after is not None and not r.after.complete:
+            typer.echo(f"{r.label}: {r.after.describe()}")
+    typer.echo(f"took {(time.perf_counter() - t0) / 60:.1f} min")
+    good = {"complete"} if check_only else {"success"}
+    if any(r.status not in good for r in results):
+        raise typer.Exit(code=1)
+
+
+@app.command("api-schema")
+def api_schema() -> None:
+    """Write docs/openapi.json, the API contract a unit test checks the app against."""
+    from gridcast.api.app import create_app
+    from gridcast.api.schema import write_schema
+
+    typer.echo(f"wrote {write_schema(create_app())}")
+
+
+@app.command("api-smoke")
+def api_smoke(
+    url: Annotated[
+        str, typer.Option(help="The running API (make api-smoke passes GRIDCAST_API_PORT's)")
+    ] = "http://127.0.0.1:8000",
+) -> None:
+    """M5 step 4: /health, then recompute and explain at serving.smoke's issue times, against a
+    running API (informal; not P3 or P5). Exit 1 unless every check passes."""
+    import httpx
+
+    from gridcast.api.smoke import render, run_smoke, save
+    from gridcast.provenance import git_sha
+
+    cfg = load_config()
+    with httpx.Client(base_url=url, timeout=120) as client:
+        result = run_smoke(client, cfg.serving.smoke, git_sha(), url)
+    typer.echo(render(result))
+    try:
+        typer.echo(f"saved {save(result, cfg)}")
+    except FileNotFoundError as exc:  # the data root is on an unmounted drive
+        typer.echo(f"not saved: {exc}")
+    if not result.passed:
+        raise typer.Exit(code=1)
+
+
+@app.command("api-verify")
+def api_verify(
+    url: Annotated[
+        str,
+        typer.Option(help="The running API container (make api-verify passes GRIDCAST_API_PORT's)"),
+    ] = "http://127.0.0.1:8000",
+) -> None:
+    """M5 step 5: P2, P3, P5 and P6 against the running API container (m5_plan.md §3), saved
+    under <data root>/serving/. Refused (exit 2, nothing saved) unless the image is the
+    checkout's HEAD and both are clean; exit 1 if a criterion fails."""
+    import json
+
+    import httpx
+
+    from gridcast.api.catalogue import read_only_engine
+    from gridcast.api.schema import SCHEMA_PATH
+    from gridcast.api.verify import VerifyRefused, render, run_verify, save
+    from gridcast.config import get_settings
+    from gridcast.provenance import git_sha
+
+    cfg = load_config()
+    committed = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    engine = read_only_engine(get_settings().database_url)
+    try:
+        with httpx.Client(base_url=url, timeout=120) as client:
+            result = run_verify(client, engine, cfg, git_sha(), url, committed)
+    except VerifyRefused as exc:
+        typer.echo(f"refused, nothing measured or saved: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    finally:
+        engine.dispose()
+    path = save(result, cfg)
+    typer.echo(render(result))
+    typer.echo(f"saved {path}")
+    if not result.passed:
+        raise typer.Exit(code=1)
+
+
+@app.command("report-m5")
+def report_m5() -> None:
+    """M5 step 5: write reports/m5_api.md from every stored verification run (api-verify) and
+    the publications records (P1, P4)."""
+    from gridcast.api.catalogue import read_only_engine
+    from gridcast.api.report import write_report
+    from gridcast.config import get_settings
+
+    engine = read_only_engine(get_settings().database_url)
+    try:
+        typer.echo(f"wrote {write_report(engine, load_config())}")
+    finally:
+        engine.dispose()
+
+
 @app.command("feature-catalogue")
 def feature_catalogue() -> None:
     """Write docs/feature_catalogue.md from the feature catalogue in code (no database)."""

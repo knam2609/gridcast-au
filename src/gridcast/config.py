@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     )
     log_level: str = "INFO"
     log_format: Literal["console", "json"] = "console"
+    # The commit the API image was built from, and whether the files it copied differed from
+    # it (`make api-up` passes both as build arguments; m5_plan.md §4, step 4). Unset outside
+    # the image, where /health asks git instead.
+    build_git_sha: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
+    build_dirty: bool | None = None
+
+    @field_validator("build_git_sha", "build_dirty", mode="before")
+    @classmethod
+    def _empty_is_unset(cls, v: object) -> object:
+        return None if v == "" else v
 
 
 class PathsConfig(BaseModel):
@@ -565,6 +575,87 @@ class ExplainReportConfig(BaseModel):
     report: Path = Path("reports/m4_explainability.md")
 
 
+SERVING_PRODUCTS: tuple[str, ...] = (
+    "demand_point",
+    "demand_interval",
+    "price_persistence",
+    "price_median_profile",
+)
+SERVING_SPLITS: tuple[str, ...] = ("dev", "holdout")
+
+
+class ServingSourceRun(BaseModel):
+    """A stored run that ``gridcast publish`` loads; refused unless the row matches."""
+
+    run_id: int = Field(gt=0)
+    batch_id: str
+    model_name: str
+
+
+class ServingVerifyConfig(BaseModel):
+    """Sample sizes and limits of P2, P3 and P5 (m5_plan.md §3), fixed before any measurement."""
+
+    seed: int
+    issue_times_per_fold: int = Field(gt=0)  # P2/P3: per retrain fold of each split
+    evolution_targets: int = Field(gt=0)  # P2: seeded targets for /forecasts/demand/evolution
+    actual_days: int = Field(gt=0)  # P2: seeded days for /actuals
+    warmup_requests: int = Field(ge=0)  # P5: per endpoint, before timing
+    stored_requests: int = Field(gt=0)  # P5: per stored endpoint
+    model_requests: int = Field(gt=0)  # P5: recompute and explain
+    stored_p95_ms: float = Field(gt=0)
+    model_p95_ms: float = Field(gt=0)
+
+
+class ServingSmokeConfig(BaseModel):
+    """``gridcast api-smoke`` (m5_plan.md §4, step 4): informal, not P3 or P5."""
+
+    issue_times: list[dt.datetime] = Field(min_length=1)  # UTC; recompute and explain each
+    repeats: int = Field(ge=1)  # requests per endpoint and issue time (the first is cold)
+
+    @field_validator("issue_times")
+    @classmethod
+    def _utc(cls, v: list[dt.datetime]) -> list[dt.datetime]:
+        if any(t.utcoffset() != dt.timedelta(0) for t in v):
+            raise ValueError("serving.smoke.issue_times must be UTC (end with Z)")
+        return v
+
+
+class ServingConfig(BaseModel):
+    """Milestone 5: what the API serves (docs/plans/m5_plan.md). Outside every frozen hash."""
+
+    # First published issue day (NEM). Development runs to backtest.holdout_start, the
+    # holdout to backtest.holdout_end.
+    first_issue: dt.date
+    region: str
+    interval_levels: list[int]  # the published bounds, percent
+    interval_model: str  # model_runs name of the published (rearranged) intervals
+    sources: dict[str, dict[str, ServingSourceRun]]  # product -> split -> source run
+    # The served anomaly runs (recipe v2), by split; checked against anomalies_v2's freeze.
+    anomaly_runs: dict[str, ServingSourceRun]
+    verify: ServingVerifyConfig
+    smoke: ServingSmokeConfig
+    output_dir: Path = Path("serving")  # under the data root: api-verify results
+
+    @field_validator("sources")
+    @classmethod
+    def _every_product_and_split(
+        cls, v: dict[str, dict[str, ServingSourceRun]]
+    ) -> dict[str, dict[str, ServingSourceRun]]:
+        if set(v) != set(SERVING_PRODUCTS):
+            raise ValueError(f"serving.sources must name exactly {list(SERVING_PRODUCTS)}")
+        for product, splits in v.items():
+            if set(splits) != set(SERVING_SPLITS):
+                raise ValueError(f"serving.sources.{product} must name {list(SERVING_SPLITS)}")
+        return v
+
+    @field_validator("anomaly_runs")
+    @classmethod
+    def _every_split(cls, v: dict[str, ServingSourceRun]) -> dict[str, ServingSourceRun]:
+        if set(v) != set(SERVING_SPLITS):
+            raise ValueError(f"serving.anomaly_runs must name {list(SERVING_SPLITS)}")
+        return v
+
+
 class WeatherVariableConfig(BaseModel):
     unit: str  # unit string Open-Meteo must report (checked on every response)
     kind: Literal["instant", "preceding_hour_mean"]
@@ -694,6 +785,7 @@ class AppConfig(BaseModel):
     anomalies: AnomaliesConfig
     anomalies_v2: AnomaliesV2Config
     explain_report: ExplainReportConfig
+    serving: ServingConfig
 
     @model_validator(mode="after")
     def _weather_regions_known(self) -> AppConfig:
@@ -724,6 +816,18 @@ class AppConfig(BaseModel):
             )
         if an.residual_first_day <= self.ml.first_issue:
             raise ValueError("anomalies.residual_first_day must follow ml.first_issue (QR warm-up)")
+        sv = self.serving
+        if not self.intervals.first_issue <= sv.first_issue < self.backtest.holdout_start:
+            # Every served demand forecast has its intervals.
+            raise ValueError(
+                "expected intervals.first_issue <= serving.first_issue < backtest.holdout_start"
+            )
+        if self.backtest.holdout_end is None:
+            raise ValueError("serving needs backtest.holdout_end (the last published day)")
+        if sv.region not in self.regions:
+            raise ValueError(f"serving.region {sv.region!r} is not a configured region")
+        if sorted(sv.interval_levels) != sorted(self.intervals.levels):
+            raise ValueError("serving.interval_levels must be the interval levels")
         return self
 
     def resolve(self, path: Path) -> Path:

@@ -1,5 +1,5 @@
-# Local, reproducible infrastructure. Milestone 1 only needs PostgreSQL;
-# FastAPI and Streamlit services are added in later milestones.
+# Local, reproducible infrastructure: PostgreSQL (M1) and the read-only API (M5).
+# The dashboard (Streamlit) is added in a later milestone.
 services:
   db:
     image: postgres:17
@@ -20,6 +20,38 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  api:
+    # M5 (docs/plans/m5_plan.md §2.6). Start it with `make api-up`, which records the commit
+    # and adds the model files (docker-compose.models.yml) when the data root is mounted.
+    profiles: ["api"]
+    build:
+      context: .
+      args:
+        GIT_SHA: ${GRIDCAST_BUILD_GIT_SHA:-}
+        GIT_DIRTY: ${GRIDCAST_BUILD_DIRTY:-}
+    image: gridcast-api
+    container_name: gridcast-api
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GRIDCAST_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-gridcast}
+      GRIDCAST_LOG_LEVEL: ${GRIDCAST_LOG_LEVEL:-INFO}
+    ports:
+      # Local only (there is no auth). The host port is GRIDCAST_API_PORT (.env), else 8000.
+      - "127.0.0.1:${GRIDCAST_API_PORT:-8000}:8000"
+    healthcheck:
+      # /health is 503 only when the stored endpoints can't work (degraded is still 200).
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"
+      interval: 10s
+      timeout: 6s
+      retries: 3
+      start_period: 60s
 
 volumes:
   pgdata:

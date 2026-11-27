@@ -2,6 +2,8 @@
 
 Read this, then [`m4_plan.md`](m4_plan.md). For the M3 history, see [`m3_handoff.md`](m3_handoff.md) and [`m3_plan.md`](m3_plan.md).
 
+> **Update, 2026-11-22 (M4 closed, M5 started):** the note below says "All commits are local; nothing is pushed", but it was written before the push. **M4 was pushed and merged into `main` on 2026-11-22** (merge commit: PR #4 → `e338672`). The remote branch `m4-anomalies-explainability` is kept. M5 continues on `m5-api`, branched from `main`; start from [`m5_handoff.md`](m5_handoff.md).
+
 > **Update, 2026-11-21 (twenty-second session, later): step 6 done, M4 complete.** All commits are local; nothing is pushed. Details and numbers are in [`m4_plan.md`](m4_plan.md), step 6 outcome.
 > - **6b `a44cc9b`:** `explain-holdout` ran once: 20 fits, 386,496 pairs, 4.6 min. **E1 passes on every pair.**
 > - **6c `8aad8fd`:** `evaluate-holdout-anomalies --version 1|2`, with `--check-only` (passed for both versions).

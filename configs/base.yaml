@@ -336,6 +336,50 @@ explain_report:
                                     # (added after the first draft; changes no number)
   report: reports/m4_explainability.md
 
+serving:
+  # Milestone 5: what `gridcast publish` loads into Postgres and the API serves
+  # (docs/plans/m5_plan.md §2.1, user 2026-11-22). Outside every frozen hash. Each source run
+  # is checked by id, batch and model name (and must be 'success') before anything is written.
+  first_issue: "2023-08-01"     # NEM day = intervals.first_issue; holdout from backtest.holdout_start
+  region: VIC1
+  interval_levels: [50, 80, 95]
+  # CQR on LightGBM C with each pair's six bounds sorted as quantiles (M3's reported-only
+  # "CQR, rearranged" row; intervals.scores.rearrange_bounds). One model_runs row per split.
+  interval_model: cqr_lgbm_C_rearranged
+  sources:
+    demand_point:               # LightGBM C: M2 run 2 ("main") and holdout_main
+      dev: {run_id: 39, batch_id: "6d783932-5834-4e18-a9e8-0e3567db46e6", model_name: lgbm_C}
+      holdout: {run_id: 61, batch_id: "fcb6abb6-49a3-4923-9d79-64e05a44d75f", model_name: lgbm_C}
+    demand_interval:            # CQR (M3 steps 3 and 6), rearranged on publication
+      dev: {run_id: 86, batch_id: "484194d7-2e62-4176-80b0-b8f117354929", model_name: cqr_lgbm_C}
+      holdout: {run_id: 97, batch_id: "2744fd09-4e6d-41c5-9579-a13c8fe9a5b0", model_name: cqr_lgbm_C}
+    price_persistence:          # M1 baselines (the batch reports/m1_baseline.md reports)
+      dev: {run_id: 11, batch_id: "07acd3a0-8b48-43b1-8d23-908ba23ac0c6", model_name: persistence}
+      holdout: {run_id: 11, batch_id: "07acd3a0-8b48-43b1-8d23-908ba23ac0c6", model_name: persistence}
+    price_median_profile:
+      dev: {run_id: 14, batch_id: "07acd3a0-8b48-43b1-8d23-908ba23ac0c6", model_name: median_profile}
+      holdout: {run_id: 14, batch_id: "07acd3a0-8b48-43b1-8d23-908ba23ac0c6", model_name: median_profile}
+  anomaly_runs:                 # recipe v2 (M4: "M5 and M6 serve v2"); v1's runs are not served
+    dev: {run_id: 106, batch_id: "0ff972b0-9d46-4ca0-a84f-86d85c450be1", model_name: anomalies}
+    holdout: {run_id: 108, batch_id: "96ac5ebd-1220-4f5b-aec0-04f53c9963ca", model_name: anomalies}
+  verify:
+    # P2, P3 and P5 (m5_plan.md §3), fixed 2026-11-22 before any API code or measurement.
+    seed: 505
+    issue_times_per_fold: 20    # per retrain fold: 9 development + 5 holdout folds = 280
+    evolution_targets: 280
+    actual_days: 50
+    warmup_requests: 20         # per endpoint, not timed
+    stored_requests: 500        # per stored endpoint
+    model_requests: 200         # recompute and explain
+    stored_p95_ms: 100
+    model_p95_ms: 500
+  smoke:
+    # `gridcast api-smoke` (m5_plan.md §4, step 4; informal, not P3 or P5): recompute and
+    # explain at one issue time per split, the two measured before step 3's question round.
+    issue_times: ["2024-03-15T02:00:00Z", "2026-01-20T05:30:00Z"]  # development, holdout
+    repeats: 3                  # per endpoint and issue time; the first request is cold
+  output_dir: serving           # under the data root (api-verify results)
+
 aemo:
   # AEMO's own demand forecasts: every run of 30-minute pre-dispatch and 5-minute
   # pre-dispatch (MMSDM "all runs" archives, ~50 MB a month each, cached under raw/).
